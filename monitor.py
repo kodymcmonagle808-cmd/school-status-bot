@@ -16,30 +16,37 @@ def main():
         print(f"Error fetching page: {e}")
         return
 
-    # Parse and clean up text
     soup = BeautifulSoup(response.text, 'html.parser')
-    current_status = soup.get_text().strip()
     
-    # Clean up massive whitespace gaps
-    cleaned_status_text = " ".join(current_status.split()[:80])
+    # Target the specific CSS classes HCPSS uses for status headers and alert content
+    status_elements = soup.find_all(class_=["status-header", "alert-content", "field-name-field-status-text"])
     
-    # This will print the exact text to your GitHub Action run summary logs
-    print(f"\n--- CURRENT WEB CONTENT DETECTED ---\n{cleaned_status_text}\n------------------------------------\n")
+    if status_elements:
+        current_status = " | ".join([el.get_text().strip() for el in status_elements if el.get_text().strip()])
+    else:
+        # Fallback to heading tags if specific classes aren't matched
+        headings = soup.find_all(['h1', 'h2', 'h3'])
+        current_status = " | ".join([h.get_text().strip() for h in headings if h.get_text().strip()])
 
-    # Send a live test alert directly to your Discord channel showing the current page content
+    # Final fallback if text extraction is empty
+    if not current_status:
+        current_status = "Could not isolate status text element."
+
+    print(f"\n--- TARGETED STATUS DETECTED ---\n{current_status}\n--------------------------------\n")
+
+    # Send the specific text block directly to Discord
     test_payload = {
-        "content": f"🧪 **HCPSS Monitor Live Test Setup Success!**\n\n**Current Live Page Text Snippet:**\n```\n{cleaned_status_text[:300]}...\n```\n🔗 View page here: {URL}"
+        "content": f"🚨 **HCPSS Monitor Live Test**\n\n**Current Operating Status:**\n```\n{current_status}\n```\n🔗 View details here: {URL}"
     }
     
     if WEBHOOK_URL:
-        print("Sending live test payload to Discord webhook...")
+        print("Sending update payload to Discord...")
         requests.post(WEBHOOK_URL, json=test_payload)
     else:
-        print("Error: DISCORD_WEBHOOK_URL environment variable is missing.")
+        print("Error: DISCORD_WEBHOOK_URL variable is missing.")
 
-    # Save the status locally so future automated runs track differences from this moment on
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
-        f.write(cleaned_status_text)
+        f.write(current_status)
 
 if __name__ == "__main__":
     main()
