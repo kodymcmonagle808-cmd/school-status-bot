@@ -3,14 +3,13 @@ import requests
 from bs4 import BeautifulSoup
 
 # Configuration
-URL = "https://status.hcpss.org/"
+URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 def main():
     print("Fetching HCPSS website...")
     try:
-        # Request the precise status page URL directly
         response = requests.get(URL, timeout=15)
         response.raise_for_status()
     except Exception as e:
@@ -19,54 +18,67 @@ def main():
 
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # 1. Target the exact text title block of the main operational widget banner
-    status_header_el = soup.find(class_="status-header")
+    # Target the parent container enclosing the entire dynamic status content area
+    main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
     
-    if status_header_el:
-        current_status = status_header_el.get_text().strip()
+    if main_block:
+        paragraphs = main_block.find_all(['p', 'h1', 'h2', 'h3', 'div', 'span'])
+        seen_lines = set()
+        extracted_lines = []
+        
+        for element in paragraphs:
+            text = element.get_text().strip()
+            if text and len(text) > 5 and text not in seen_lines:
+                if not any(nav in text.lower() for nav in ["skip to main", "main menu", "languages"]):
+                    clean_line = " ".join(text.split())
+                    if not any(clean_line in existing for existing in extracted_lines):
+                        extracted_lines.append(clean_line)
+                        seen_lines.add(text)
+        
+        if extracted_lines:
+            # Capture up to 5 lines of alerts/dates to compare accurately
+            current_status = "\n\n• ".join(extracted_lines[:5])
+        else:
+            current_status = "Normal Operations"
     else:
-        # Fallback layout parsing option if structural tags adapt
-        fallback_h1 = soup.find('h1')
-        current_status = fallback_h1.get_text().strip() if fallback_h1 else "Unknown Status"
+        current_status = "Normal Operations"
 
-    # Clean up excess internal system whitespace or line breaks
-    current_status = " ".join(current_status.split())
-    print(f"\n--- LIVE OPERATION STATUS IS DETECTED AS: '{current_status}' ---\n")
+    print(f"\n--- LIVE OPERATION STATUS BLOCK ---\n{current_status}\n-----------------------------------\n")
 
-    # 2. Read the previous status state
+    # Read the previous status state file
     previous_status = ""
     if os.path.exists(STATUS_FILE):
         with open(STATUS_FILE, "r", encoding="utf-8") as f:
             previous_status = f.read().strip()
 
-    # 3. Process status logic and ping conditions
+    # Process notification logic if anything changes (new text, new date, or multiple alerts)
     if current_status != previous_status:
-        print(f"Status mismatch! Updating state track from '{previous_status}' to '{current_status}'")
+        print("Status update mismatch detected! Registering change tracking.")
         
-        # Save state right away to prevent loop triggers
+        # Lock in state tracking instantly
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
             f.write(current_status)
 
-        # Baseline skip check to ensure it doesn't alert on the first deployment initialization
+        # Baseline check to ensure it doesn't alert on the very first script deployment run
         if previous_status == "":
             print("First run baseline setup complete. Quiet mode active.")
             return
 
-        # Core alert logic block
-        # If the status is NOT normal operations, it triggers a critical server broadcast notice
+        # Core alert logic tracking emergency statuses versus normalized parameters
         if "normal operations" not in current_status.lower():
-            content_message = f"🚨 **@everyone EMERGENCY OPERATING STATUS CHANGE DETECTED!**\n\nCurrent Status: **{current_status}**\n\n🔗 Verify online here: {URL}"
+            content_message = f"🚨 **@everyone EMERGENCY OPERATING STATUS CHANGE DETECTED!**\n\n• {current_status}\n\n🔗 Verify online here: {URL}"
         else:
-            content_message = f"✅ **HCPSS Status Restored**\n\nCurrent Status: **{current_status}**\n\n🔗 Link: {URL}"
+            content_message = f"✅ **HCPSS Status Restored**\n\n• {current_status}\n\n🔗 Link: {URL}"
 
         payload = {"content": content_message}
         
         if WEBHOOK_URL:
             requests.post(WEBHOOK_URL, json=payload)
+            print("Successfully fired matching alert payload to Discord channel.")
         else:
-            print("Discord URL target missing.")
+            print("Missing Discord URL secret endpoint context.")
     else:
-        print("Status is identical to the last check. No notification required.")
+        print("Status block perfectly matches past track snapshot. No update needed.")
 
 if __name__ == "__main__":
     main()
