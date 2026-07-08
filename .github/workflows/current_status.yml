@@ -39,36 +39,53 @@ jobs:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Target the specific core alert wrapper elements used on the HCPSS status app
-            status_element = soup.find(class_=["status-header", "field-name-field-status-text"])
+            # Target the parent container enclosing the entire dynamic status content area
+            main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
             
-            if status_element:
-                status_text = status_element.get_text().strip()
-            else:
-                # If specific containers aren't matched, find the first localized banner block
-                banner = soup.find(id="block-system-main")
-                if banner:
-                    status_text = banner.get_text().strip()
+            if main_block:
+                # Find all distinct paragraph blocks, headers, or updates listed in the status dashboard
+                paragraphs = main_block.find_all(['p', 'h1', 'h2', 'h3', 'div', 'span'])
+                
+                # Filter out generic site elements and extract unique sentences/announcements
+                seen_lines = set()
+                extracted_lines = []
+                
+                for element in paragraphs:
+                    text = element.get_text().strip()
+                    # Keep paragraphs that contain letters/numbers, and filter generic nav items out
+                    if text and len(text) > 5 and text not in seen_lines:
+                        if not any(nav in text.lower() for nav in ["skip to main", "main menu", "languages"]):
+                            # Compress any weird internal white spaces
+                            clean_line = " ".join(text.split())
+                            # Basic duplication screening for layered HTML trees
+                            if not any(clean_line in existing for existing in extracted_lines):
+                                extracted_lines.append(clean_line)
+                                seen_lines.add(text)
+                
+                # Combine distinct status nodes using standard code dividers
+                if extracted_lines:
+                    # Capture up to 5 unique stacked status blocks to protect layout length limits
+                    status_text = "\n\n• ".join(extracted_lines[:5])
                 else:
-                    # Clean absolute baseline backup filter
-                    status_text = "Normal Operations (Default Baseline)"
+                    status_text = "Normal Operations (No Active Alerts)"
+            else:
+                status_text = "Normal Operations"
+
+            # Truncate slightly if structural metadata grows too massive
+            if len(status_text) > 1500:
+                status_text = status_text[:1450] + "..."
             
-            # Clean up double spacing and compress string text safely
-            status_text = " ".join(status_text.split())
-            if len(status_text) > 100:
-                status_text = status_text[:100] + "..."
-            
-            # Send immediate message to Discord regardless of what the text says
+            # Formulate layout container
             payload = {
-                "content": f"ℹ️ **HCPSS On-Demand Status Request**\n\nCurrent Live Status: **{status_text}**\n🔗 Link: {URL}"
+                "content": f"ℹ️ **HCPSS Comprehensive On-Demand Status Report**\n\n• {status_text}\n\n🔗 Source Verification: {URL}"
             }
             
             if WEBHOOK_URL:
                 requests.post(WEBHOOK_URL, json=payload)
-                print(f"Successfully posted status to Discord: {status_text}")
+                print("Successfully dispatched complete text dump snapshot layout.")
             else:
-                print("Error: Webhook secret not found.")
+                print("Missing target Webhook configuration endpoint.")
                 
         except Exception as e:
-            print(f"Error checking status: {e}")
+            print(f"Pipeline error: {e}")
         EOF
