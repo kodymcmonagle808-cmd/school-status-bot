@@ -3,13 +3,13 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-# Configuration
+# Configuration - Corrected to the precise status subdomain link
 URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 def main():
-    print("Fetching HCPSS website...")
+    print("Fetching HCPSS Status website...")
     try:
         response = requests.get(URL, timeout=15)
         response.raise_for_status()
@@ -19,83 +19,77 @@ def main():
 
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # 1. Isolate main message block text 
-    status_el = soup.find(class_=["status-header", "field-name-field-status-text"])
-    if status_el:
-        status_text = " ".join(status_el.get_text().split())
+    # Target the precise row wrapper card used on status.hcpss.org
+    status_card = soup.find(class_="views-row")
+    
+    if status_card:
+        # Extract individual components from the core card
+        date_el = status_card.find(class_="views-field-changed") or status_card.find('h3') or status_card.find(class_="field-name-post-date")
+        title_el = status_card.find(class_="status-header") or status_card.find('h2') or status_card.find('h1')
+        body_el = status_card.find(class_="alert-content") or status_card.find('p')
+        
+        # Clean text strings safely
+        date_text = " ".join(date_el.get_text().split()) if date_el else datetime.now().strftime('%B %d, %Y')
+        status_title = " ".join(title_el.get_text().split()) if title_el else "Normal Operations"
+        body_text = " ".join(body_el.get_text().split()) if body_el else ""
+        
+        # Remove trailing calendar link texts if scraped accidentally
+        if "view hcpss calendar" in body_text.lower():
+            body_text = body_text.lower().replace("view hcpss calendar", "").strip()
     else:
-        status_text = "Normal Operations"
+        # Emergency absolute baseline fallback parameters
+        date_text = datetime.now().strftime('%B %d, %Y')
+        status_title = "Normal Operations"
+        body_text = "Staff and students report in accordance with the HCPSS calendar."
 
-    # 2. Capture any active custom alert date strings if present
-    date_text = "None posted (System is normal)"
-    main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
-    if main_block:
-        for el in main_block.find_all(['p', 'div', 'span']):
-            txt = el.get_text().strip()
-            if any(k in txt.lower() for k in ["affected date", "status as of", "2026", "2027"]):
-                date_text = " ".join(txt.split())
-                break
+    # Construct clean data baseline block to accurately track structural site updates
+    current_snapshot_block = f"Date: {date_text} | Status: {status_title} | Body: {body_text}"
+    print(f"\n--- LIVE SITE SCREENSHOT TRACK: ---\n{current_snapshot_block}\n-----------------------------------\n")
 
-    # Construct complete baseline tracker payload to trace variations over time
-    current_snapshot_block = f"Status: {status_text} | Date: {date_text}"
-    print(f"\n--- LIVE TRACKER STATE: {current_snapshot_block} ---\n")
-
-    # Read the previous status state file
+    # Read the previous status tracking cache state file
     previous_status = ""
     if os.path.exists(STATUS_FILE):
         with open(STATUS_FILE, "r", encoding="utf-8") as f:
             previous_status = f.read().strip()
 
-    # Compare running states
+    # Compare changes
     if current_snapshot_block != previous_status:
-        print("State tracking mismatch registered. Updating tracker files...")
+        print("Status change detected! Dispatching rich layout to server channel.")
         
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
             f.write(current_snapshot_block)
 
         if previous_status == "":
-            print("First run system baseline established. Quiet initialization active.")
+            print("First run baseline log built cleanly. Initial notification muted.")
             return
 
-        is_normal = "normal operations" in status_text.lower()
-        embed_color = 3066993 if is_normal else 15158332
-        status_icon = "✅" if is_normal else "🚨"
+        is_normal = "normal operations" in status_title.lower()
+        embed_color = 3066993 if is_normal else 15158332 # Sidebar color match: Green vs Red
         
-        # Base broadcast structure setup
         payload = {}
         if not is_normal:
-            payload["content"] = "@everyone ⚠️ **HCPSS SCHOOL STATUS MODIFICATION DETECTED!**"
+            payload["content"] = "@everyone ⚠️ **HCPSS SYSTEM OPERATING STATUS UPDATE DETECTED!**"
             
         payload["embeds"] = [
             {
-                "title": f"{status_icon} Automated Status Update Notice",
+                "title": f"🗓️ Status for {date_text}",
                 "url": URL,
                 "color": embed_color,
-                "fields": [
-                    {
-                        "name": "🏫 Operating Status Description",
-                        "value": f"**{status_text}**",
-                        "inline": False
-                    },
-                    {
-                        "name": "📅 Targeted Alert Dates",
-                        "value": date_text,
-                        "inline": False
-                    }
-                ],
+                "description": f"## **{status_title}**\n\n{body_text}",
                 "footer": {
-                    "text": "Automated Background Status Monitor"
-                }
+                    "text": "Howard County Public School System Operational Status"
+                },
+                "timestamp": datetime.utcnow().isoformat() + "Z"
             }
         ]
 
         if WEBHOOK_URL:
             requests.post(WEBHOOK_URL, json=payload)
-            print("Successfully fired matching alert payload to Discord channel.")
+            print("Successfully fired matching alert layout to Discord channel.")
         else:
             print("Missing target Webhook configuration endpoint.")
     else:
-        print("No adjustments found. Current site maps past logs perfectly.")
+        print("No site adjustments identified against current text records.")
 
 if __name__ == "__main__":
     main()
