@@ -2,23 +2,25 @@ name: Check HCPSS Status
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Runs every 15 minutes automatically
-  workflow_dispatch: # Allows you to manually trigger it for testing
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   check:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Allows the script to remember the previous status state
+      contents: write
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4.2.2 # Fixed Node.js deprecation warning
+      uses: actions/checkout@v4.2.2
 
     - name: Set up Python
-      uses: actions/setup-python@v5.4.0 # Fixed Node.js deprecation warning
+      uses: actions/setup-python@v5.4.0
       with:
-        python-version: '3.11' # Fixed typo 'python-python' to 'python-version'
+        python-version: '3.11'
 
     - name: Install Dependencies
       run: |
