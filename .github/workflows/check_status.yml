@@ -11,7 +11,7 @@ jobs:
     permissions:
       contents: write
     env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true' # Tells GitHub to run the actions directly using Node 24
 
     steps:
     - name: Checkout Repository
