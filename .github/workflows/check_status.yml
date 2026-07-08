@@ -13,12 +13,12 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4.2.2 # Fixed Node.js deprecation warning
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v5.4.0 # Fixed Node.js deprecation warning
       with:
-        python-python: '3.x'
+        python-version: '3.11' # Fixed typo 'python-python' to 'python-version'
 
     - name: Install Dependencies
       run: |
