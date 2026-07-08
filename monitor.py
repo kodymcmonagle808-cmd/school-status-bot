@@ -8,6 +8,9 @@ URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
+# Your verified custom Discord Role ID string wrapper tag
+STUDENT_ROLE_PING = "<@&1521688178057154683>"
+
 def main():
     print("Fetching HCPSS Status website...")
     try:
@@ -40,25 +43,23 @@ def main():
 
     current_snapshot_block = f"Date: {date_text} | Status: {status_title} | Body: {body_text}"
     
-    # Check if this exact 15-minute run happens to be the daily 12:01 AM window
+    # Track daily 12:01 AM window targets
     now = datetime.now()
     is_daily_broadcast_time = (now.hour == 0 and 0 <= now.minute <= 15)
 
-    # Read the previous status tracking cache file
+    # Read tracking database log cache
     previous_status = ""
     if os.path.exists(STATUS_FILE):
         with open(STATUS_FILE, "r", encoding="utf-8") as f:
             previous_status = f.read().strip()
 
-    # Determine if we should post (due to a change OR because it's midnight)
+    # Determine posting validation conditions
     should_post_update = (current_snapshot_block != previous_status)
     
     if should_post_update or is_daily_broadcast_time:
-        # Save state right away to track future structural changes
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
             f.write(current_snapshot_block)
 
-        # Baseline check to ensure it doesn't alert on the very first script deployment initialization
         if previous_status == "" and not is_daily_broadcast_time:
             print("First run baseline log built cleanly. Initial notification muted.")
             return
@@ -68,9 +69,9 @@ def main():
         
         payload = {}
         
-        # Heading layout tags: Emergency ping to @Student vs Normal Daily layout header
+        # Pings the structured clickable student role tag when text is altered from Normal Operations
         if not is_normal:
-            payload["content"] = "@Student ⚠️ **HCPSS SYSTEM OPERATING STATUS UPDATE DETECTED!**"
+            payload["content"] = f"{STUDENT_ROLE_PING} ⚠️ **HCPSS SYSTEM OPERATING STATUS UPDATE DETECTED!**"
         elif is_daily_broadcast_time and not should_post_update:
             payload["content"] = "☀️ **Good Morning! Here is your Daily HCPSS Status Report:**"
 
@@ -89,9 +90,9 @@ def main():
 
         if WEBHOOK_URL:
             requests.post(WEBHOOK_URL, json=payload)
-            print("Successfully fired payload to Discord channel.")
+            print("Successfully fired targeted alert card layout to Discord.")
         else:
-            print("Missing Webhook Endpoint secret.")
+            print("Webhook configuration string values are missing.")
     else:
         print("No changes found, and it is not midnight. Staying quiet.")
 
