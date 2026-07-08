@@ -8,7 +8,7 @@ STATUS_FILE = "last_status.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 def main():
-    # 1. Fetch the HCPSS status page
+    print("Fetching HCPSS website...")
     try:
         response = requests.get(URL, timeout=15)
         response.raise_for_status()
@@ -16,50 +16,30 @@ def main():
         print(f"Error fetching page: {e}")
         return
 
-    # 2. Parse the HTML text
+    # Parse and clean up text
     soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Cleans and extracts text content safely
     current_status = soup.get_text().strip()
     
-    # Fallback to broad text chunking if page structure is minimal
-    if not current_status:
-        print("Could not parse text from page.")
-        return
+    # Clean up massive whitespace gaps
+    cleaned_status_text = " ".join(current_status.split()[:80])
+    
+    # This will print the exact text to your GitHub Action run summary logs
+    print(f"\n--- CURRENT WEB CONTENT DETECTED ---\n{cleaned_status_text}\n------------------------------------\n")
 
-    # Shorten text to avoid capturing variable system timestamps if necessary
-    # Usually the main operational status is at the very top
-    current_status_snapshot = " ".join(current_status.split()[:50])
-
-    # 3. Read the previous saved status
-    previous_status = ""
-    if os.path.exists(STATUS_FILE):
-        with open(STATUS_FILE, "r", encoding="utf-8") as f:
-            previous_status = f.read().strip()
-
-    # 4. Compare status states
-    if current_status_snapshot != previous_status:
-        print("Status change detected!")
-        
-        # Save the new status locally
-        with open(STATUS_FILE, "w", encoding="utf-8") as f:
-            f.write(current_status_snapshot)
-
-        # Skip sending a Discord alert on the very first script run
-        if previous_status == "":
-            print("Initial baseline established. No alert sent.")
-            return
-
-        # 5. Send alert to Discord
-        payload = {
-            "content": f"🚨 **HCPSS Operating Status Change Detected!**\nCheck details here: {URL}"
-        }
-        if WEBHOOK_URL:
-            requests.post(WEBHOOK_URL, json=payload)
-        else:
-            print("Discord Webhook URL secret is missing.")
+    # Send a live test alert directly to your Discord channel showing the current page content
+    test_payload = {
+        "content": f"🧪 **HCPSS Monitor Live Test Setup Success!**\n\n**Current Live Page Text Snippet:**\n```\n{cleaned_status_text[:300]}...\n```\n🔗 View page here: {URL}"
+    }
+    
+    if WEBHOOK_URL:
+        print("Sending live test payload to Discord webhook...")
+        requests.post(WEBHOOK_URL, json=test_payload)
     else:
-        print("No changes detected. Status matches previous check.")
+        print("Error: DISCORD_WEBHOOK_URL environment variable is missing.")
+
+    # Save the status locally so future automated runs track differences from this moment on
+    with open(STATUS_FILE, "w", encoding="utf-8") as f:
+        f.write(cleaned_status_text)
 
 if __name__ == "__main__":
     main()
