@@ -40,168 +40,47 @@ jobs:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 1. Isolate the main alert message block
-            status_el = soup.find(class_=["status-header", "field-name-field-status-text"])
-            if status_el:
-                status_text = " ".join(status_el.get_text().split())
-            else:
-                status_text = "Normal Operations"
-
-            # 2. Extract any text containing date keywords if explicitly posted on-screen
-            date_text = "None posted (System is normal)"
-            main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
-            if main_block:
-                for el in main_block.find_all(['p', 'div', 'span']):
-                    txt = el.get_text().strip()
-                    if any(k in txt.lower() for k in ["affected date", "status as of", "2026", "2027"]):
-                        date_text = " ".join(txt.split())
-                        break
-
-            # Choose embed color scheme (Green for normal operations, Bright Orange/Red for alerts)
-            is_normal = "normal operations" in status_text.lower()
-            embed_color = 3066993 if is_normal else 15158332 # Decimal Color Codes (Green vs Red)
-            status_icon = "✅" if is_normal else "⚠️"
-
-            # Rich Discord Embed Payload Layout Configuration
-            payload = {
-                "embeds": [
-                    {
-                        "title": f"{status_icon} HCPSS Operating Status Report",
-                        "url": URL,
-                        "color": embed_color,
-                        "fields": [
-                            {
-                                "name": "🏫 Current Operational Status",
-                                "value": f"**{status_text}**",
-                                "inline": False
-                            },
-                            {
-                                "name": "📅 Affected Dates / Website Timestamp",
-                                "value": date_text,
-                                "inline": False
-                            },
-                            {
-                                "name": "⏰ Checked On-Demand At",
-                                "value": datetime.now().strftime('%Y-%m-%d %I:%M %p UTC'),
-                                "inline": True
-                            }
-                        ],
-                        "footer": {
-                            "text": "Howard County Public School System Live Monitor"
-                        }
-                    }
-                ]
-            }
+            status_card = soup.find(class_="views-row")
             
-            if WEBHOOK_URL:
-                requests.post(WEBHOOK_URL, json=payload)
-                print("Successfully dispatched rich embed card to Discord.")
-            else:
-                print("Missing Webhook Endpoint secret.")
+            if status_card:
+                date_el = status_card.find(class_="views-field-changed") or status_card.find('h3') or status_card.find(class_="field-name-post-date")
+                title_el = status_card.find(class_="status-header") or status_card.find('h2') or status_card.find('h1')
+                body_el = status_card.find(class_="alert-content") or status_card.find('p')
                 
-        except Exception as e:
-            print(f"Pipeline error: {e}")
-        EOF
-name: Get Current Status On-Demand
-
-on:
-  workflow_dispatch:
-
-jobs:
-  check-now:
-    runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4.2.2
-
-    - name: Set up Python
-      uses: actions/setup-python@v5.4.0
-      with:
-        python-version: '3.11'
-
-    - name: Install Dependencies
-      run: |
-        pip install requests beautifulsoup4
-
-    - name: Run Immediate Status Check
-      env:
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: |
-        python - << 'EOF'
-        import os
-        import requests
-        from bs4 import BeautifulSoup
-        from datetime import datetime
-
-        URL = "https://hcpss.org"
-        WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
-        try:
-            response = requests.get(URL, timeout=15)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 1. Isolate the main alert message block
-            status_el = soup.find(class_=["status-header", "field-name-field-status-text"])
-            if status_el:
-                status_text = " ".join(status_el.get_text().split())
+                date_text = " ".join(date_el.get_text().split()) if date_el else datetime.now().strftime('%B %d, %Y')
+                status_title = " ".join(title_el.get_text().split()) if title_el else "Normal Operations"
+                body_text = " ".join(body_el.get_text().split()) if body_el else ""
+                
+                if "view hcpss calendar" in body_text.lower():
+                    body_text = body_text.lower().replace("view hcpss calendar", "").strip()
             else:
-                status_text = "Normal Operations"
+                date_text = datetime.now().strftime('%B %d, %Y')
+                status_title = "Normal Operations"
+                body_text = "Staff and students report in accordance with the HCPSS calendar."
 
-            # 2. Extract any text containing date keywords if explicitly posted on-screen
-            date_text = "None posted (System is normal)"
-            main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
-            if main_block:
-                for el in main_block.find_all(['p', 'div', 'span']):
-                    txt = el.get_text().strip()
-                    if any(k in txt.lower() for k in ["affected date", "status as of", "2026", "2027"]):
-                        date_text = " ".join(txt.split())
-                        break
+            is_normal = "normal operations" in status_title.lower()
+            embed_color = 3066993 if is_normal else 15158332
 
-            # Choose embed color scheme (Green for normal operations, Bright Orange/Red for alerts)
-            is_normal = "normal operations" in status_text.lower()
-            embed_color = 3066993 if is_normal else 15158332 # Decimal Color Codes (Green vs Red)
-            status_icon = "✅" if is_normal else "⚠️"
-
-            # Rich Discord Embed Payload Layout Configuration
             payload = {
                 "embeds": [
                     {
-                        "title": f"{status_icon} HCPSS Operating Status Report",
+                        "title": f"🗓️ Status for {date_text}",
                         "url": URL,
                         "color": embed_color,
-                        "fields": [
-                            {
-                                "name": "🏫 Current Operational Status",
-                                "value": f"**{status_text}**",
-                                "inline": False
-                            },
-                            {
-                                "name": "📅 Affected Dates / Website Timestamp",
-                                "value": date_text,
-                                "inline": False
-                            },
-                            {
-                                "name": "⏰ Checked On-Demand At",
-                                "value": datetime.now().strftime('%Y-%m-%d %I:%M %p UTC'),
-                                "inline": True
-                            }
-                        ],
+                        "description": f"## **{status_title}**\n\n{body_text}",
                         "footer": {
-                            "text": "Howard County Public School System Live Monitor"
-                        }
+                            "text": "HCPSS On-Demand Status Check Request"
+                        },
+                        "timestamp": datetime.utcnow().isoformat() + "Z"
                     }
                 ]
             }
             
             if WEBHOOK_URL:
                 requests.post(WEBHOOK_URL, json=payload)
-                print("Successfully dispatched rich embed card to Discord.")
+                print("Successfully dispatched custom status embed card to Discord.")
             else:
-                print("Missing Webhook Endpoint secret.")
+                print("Error: Webhook configuration value target missing.")
                 
         except Exception as e:
             print(f"Pipeline error: {e}")
