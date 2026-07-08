@@ -1,6 +1,7 @@
 import os
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 # Configuration
 URL = "https://hcpss.org"
@@ -18,32 +19,26 @@ def main():
 
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # Target the parent container enclosing the entire dynamic status content area
-    main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
-    
-    if main_block:
-        paragraphs = main_block.find_all(['p', 'h1', 'h2', 'h3', 'div', 'span'])
-        seen_lines = set()
-        extracted_lines = []
-        
-        for element in paragraphs:
-            text = element.get_text().strip()
-            if text and len(text) > 5 and text not in seen_lines:
-                if not any(nav in text.lower() for nav in ["skip to main", "main menu", "languages"]):
-                    clean_line = " ".join(text.split())
-                    if not any(clean_line in existing for existing in extracted_lines):
-                        extracted_lines.append(clean_line)
-                        seen_lines.add(text)
-        
-        if extracted_lines:
-            # Capture up to 5 lines of alerts/dates to compare accurately
-            current_status = "\n\n• ".join(extracted_lines[:5])
-        else:
-            current_status = "Normal Operations"
+    # 1. Isolate main message block text 
+    status_el = soup.find(class_=["status-header", "field-name-field-status-text"])
+    if status_el:
+        status_text = " ".join(status_el.get_text().split())
     else:
-        current_status = "Normal Operations"
+        status_text = "Normal Operations"
 
-    print(f"\n--- LIVE OPERATION STATUS BLOCK ---\n{current_status}\n-----------------------------------\n")
+    # 2. Capture any active custom alert date strings if present
+    date_text = "None posted (System is normal)"
+    main_block = soup.find(id="block-system-main") or soup.find(class_="region-content")
+    if main_block:
+        for el in main_block.find_all(['p', 'div', 'span']):
+            txt = el.get_text().strip()
+            if any(k in txt.lower() for k in ["affected date", "status as of", "2026", "2027"]):
+                date_text = " ".join(txt.split())
+                break
+
+    # Construct complete baseline tracker payload to trace variations over time
+    current_snapshot_block = f"Status: {status_text} | Date: {date_text}"
+    print(f"\n--- LIVE TRACKER STATE: {current_snapshot_block} ---\n")
 
     # Read the previous status state file
     previous_status = ""
@@ -51,34 +46,56 @@ def main():
         with open(STATUS_FILE, "r", encoding="utf-8") as f:
             previous_status = f.read().strip()
 
-    # Process notification logic if anything changes (new text, new date, or multiple alerts)
-    if current_status != previous_status:
-        print("Status update mismatch detected! Registering change tracking.")
+    # Compare running states
+    if current_snapshot_block != previous_status:
+        print("State tracking mismatch registered. Updating tracker files...")
         
-        # Lock in state tracking instantly
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
-            f.write(current_status)
+            f.write(current_snapshot_block)
 
-        # Baseline check to ensure it doesn't alert on the very first script deployment run
         if previous_status == "":
-            print("First run baseline setup complete. Quiet mode active.")
+            print("First run system baseline established. Quiet initialization active.")
             return
 
-        # Core alert logic tracking emergency statuses versus normalized parameters
-        if "normal operations" not in current_status.lower():
-            content_message = f"🚨 **@everyone EMERGENCY OPERATING STATUS CHANGE DETECTED!**\n\n• {current_status}\n\n🔗 Verify online here: {URL}"
-        else:
-            content_message = f"✅ **HCPSS Status Restored**\n\n• {current_status}\n\n🔗 Link: {URL}"
-
-        payload = {"content": content_message}
+        is_normal = "normal operations" in status_text.lower()
+        embed_color = 3066993 if is_normal else 15158332
+        status_icon = "✅" if is_normal else "🚨"
         
+        # Base broadcast structure setup
+        payload = {}
+        if not is_normal:
+            payload["content"] = "@everyone ⚠️ **HCPSS SCHOOL STATUS MODIFICATION DETECTED!**"
+            
+        payload["embeds"] = [
+            {
+                "title": f"{status_icon} Automated Status Update Notice",
+                "url": URL,
+                "color": embed_color,
+                "fields": [
+                    {
+                        "name": "🏫 Operating Status Description",
+                        "value": f"**{status_text}**",
+                        "inline": False
+                    },
+                    {
+                        "name": "📅 Targeted Alert Dates",
+                        "value": date_text,
+                        "inline": False
+                    }
+                ],
+                "footer": {
+                    "text": "Automated Background Status Monitor"
+                }
+            }
+        ]
+
         if WEBHOOK_URL:
             requests.post(WEBHOOK_URL, json=payload)
             print("Successfully fired matching alert payload to Discord channel.")
         else:
-            print("Missing Discord URL secret endpoint context.")
+            print("Missing target Webhook configuration endpoint.")
     else:
-        print("Status block perfectly matches past track snapshot. No update needed.")
+        print("No adjustments found. Current site maps past logs perfectly.")
 
 if __name__ == "__main__":
     main()
