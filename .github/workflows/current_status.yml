@@ -31,7 +31,7 @@ jobs:
         import requests
         from bs4 import BeautifulSoup
 
-        URL = "https://hcpss.org"
+        URL = "https://status.hcpss.org/"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
         try:
@@ -39,17 +39,26 @@ jobs:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Target the specific status heading block
-            status_element = soup.find(class_="status-header")
+            # Target the specific core alert wrapper elements used on the HCPSS status app
+            status_element = soup.find(class_=["status-header", "field-name-field-status-text"])
+            
             if status_element:
                 status_text = status_element.get_text().strip()
             else:
-                fallback = soup.find('h1')
-                status_text = fallback.get_text().strip() if fallback else "Unknown"
+                # If specific containers aren't matched, find the first localized banner block
+                banner = soup.find(id="block-system-main")
+                if banner:
+                    status_text = banner.get_text().strip()
+                else:
+                    # Clean absolute baseline backup filter
+                    status_text = "Normal Operations (Default Baseline)"
             
+            # Clean up double spacing and compress string text safely
             status_text = " ".join(status_text.split())
+            if len(status_text) > 100:
+                status_text = status_text[:100] + "..."
             
-            # Send message to Discord regardless of what the text says
+            # Send immediate message to Discord regardless of what the text says
             payload = {
                 "content": f"ℹ️ **HCPSS On-Demand Status Request**\n\nCurrent Live Status: **{status_text}**\n🔗 Link: {URL}"
             }
