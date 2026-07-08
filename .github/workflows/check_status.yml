@@ -2,7 +2,8 @@ name: Check HCPSS Status
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Runs every 15 minutes, hitting 04:01 AM UTC (12:01 AM EST) perfectly
+    - cron: '1,16,31,46 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,7 +12,7 @@ jobs:
     permissions:
       contents: write
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true' # Tells GitHub to run the actions directly using Node 24
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
     steps:
     - name: Checkout Repository
