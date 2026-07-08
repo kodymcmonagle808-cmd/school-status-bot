@@ -1,0 +1,65 @@
+name: Get Current Status On-Demand
+
+on:
+  workflow_dispatch: # This ensures it ONLY runs manually on command
+
+jobs:
+  check-now:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4.2.2
+
+    - name: Set up Python
+      uses: actions/setup-python@v5.4.0
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Run Immediate Status Check
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: |
+        python - << 'EOF'
+        import os
+        import requests
+        from bs4 import BeautifulSoup
+
+        URL = "https://hcpss.org"
+        WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+        try:
+            response = requests.get(URL, timeout=15)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Target the specific status heading block
+            status_element = soup.find(class_="status-header")
+            if status_element:
+                status_text = status_element.get_text().strip()
+            else:
+                fallback = soup.find('h1')
+                status_text = fallback.get_text().strip() if fallback else "Unknown"
+            
+            status_text = " ".join(status_text.split())
+            
+            # Send message to Discord regardless of what the text says
+            payload = {
+                "content": f"ℹ️ **HCPSS On-Demand Status Request**\n\nCurrent Live Status: **{status_text}**\n🔗 Link: {URL}"
+            }
+            
+            if WEBHOOK_URL:
+                requests.post(WEBHOOK_URL, json=payload)
+                print(f"Successfully posted status to Discord: {status_text}")
+            else:
+                print("Error: Webhook secret not found.")
+                
+        except Exception as e:
+            print(f"Error checking status: {e}")
+        EOF
