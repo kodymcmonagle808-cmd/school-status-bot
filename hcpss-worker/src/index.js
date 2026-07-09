@@ -10,55 +10,6 @@ async function fetchHtml(url) {
   return await r.text();
 }
 
-function jsonResponse(payload, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
-
-function formatCheckedAt(date) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZoneName: 'short'
-  }).format(date);
-}
-
-function footerWithCheckedAt(label, checkedAt) {
-  return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
-}
-
-function getManualTriggerToken(request) {
-  const auth = request.headers.get('authorization') || '';
-  if (auth.toLowerCase().startsWith('bearer ')) {
-    return auth.slice(7).trim();
-  }
-
-  const headerToken = request.headers.get(MANUAL_TRIGGER_HEADER);
-  if (headerToken) return headerToken.trim();
-
-  const url = new URL(request.url);
-  return (url.searchParams.get('token') || '').trim();
-}
-
-function validateManualTrigger(request, env) {
-  if (!env.MANUAL_TRIGGER_TOKEN) {
-    return new Response('Manual trigger disabled: MANUAL_TRIGGER_TOKEN is not configured.', { status: 403 });
-  }
-
-  const providedToken = getManualTriggerToken(request);
-  if (!providedToken || providedToken !== env.MANUAL_TRIGGER_TOKEN) {
-    return new Response('Forbidden', { status: 403 });
-  }
-
-  return null;
-}
-
 function hexToUint8(hex) {
   if (hex.startsWith('0x')) hex = hex.slice(2);
   const len = hex.length/2; const out = new Uint8Array(len);
