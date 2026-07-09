@@ -31,8 +31,9 @@ jobs:
         import requests
         from bs4 import BeautifulSoup
         from datetime import datetime
+        import pytz
 
-        URL = "https://hcpss.org"
+        URL = "https://status.hcpss.org/"
         ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -40,6 +41,7 @@ jobs:
             if not WEBHOOK_URL or not msg_id:
                 return
             try:
+                # FIXED: Extracted index [0] to keep url format string-clean
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 delete_url = f"{base_webhook_url}/messages/{msg_id}"
                 response = requests.delete(delete_url, timeout=10)
@@ -49,6 +51,10 @@ jobs:
                 print(f"Error deleting old on-demand message: {e}")
 
         try:
+            # Force evaluation into Maryland/Eastern local timezone values instantly
+            eastern_tz = pytz.timezone('America/New_York')
+            now_local = datetime.now(eastern_tz)
+
             response = requests.get(URL, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -74,7 +80,6 @@ jobs:
                     if status_title and "normal operations" not in status_title.lower():
                         is_normal = False
 
-                    # Restores the clean layout design style from your screenshot
                     card_markdown = ""
                     if status_title:
                         card_markdown += f"## **{status_title}**\n\n"
@@ -84,8 +89,9 @@ jobs:
                     if card_markdown:
                         extracted_blocks.append((date_text, card_markdown))
             
+            # FIXED: Forces fallback text to reference localized Maryland clock string
             if not extracted_blocks:
-                extracted_blocks.append((datetime.now().strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
+                extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
 
             # Handle the previous message cleanup file if it exists
             if os.path.exists(ONDEMAND_MSG_FILE):
@@ -95,7 +101,7 @@ jobs:
                         delete_old_message(old_msg_id)
 
             # Build and send the card matching your layout preferences
-            primary_date = extracted_blocks[0][0] if extracted_blocks[0][0] else datetime.now().strftime('%B %d, %Y')
+            primary_date = extracted_blocks[0][0] if extracted_blocks[0][0] else now_local.strftime('%B %d, %Y')
             final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
             
             embed_color = 3066993 if is_normal else 15158332
@@ -132,7 +138,6 @@ jobs:
             print(f"Pipeline error: {e}")
         EOF
         
-    # Allows the tracking token file changes to persist in the git timeline
     - name: Commit and Push Trackers
       run: |
         git config --global user.name "GitHub Actions Bot"
