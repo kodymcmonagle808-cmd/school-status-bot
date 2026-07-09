@@ -30,6 +30,24 @@ function formatCheckedAt(date) {
   }).format(date);
 }
 
+function formatStatusDate(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(date);
+}
+
+function normalizeStatusDate(dateText, fallbackDate) {
+  if (!dateText) return formatStatusDate(fallbackDate);
+
+  const parsed = new Date(dateText);
+  if (!Number.isNaN(parsed.getTime())) return formatStatusDate(parsed);
+
+  return dateText.replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim();
+}
+
 function footerWithCheckedAt(label, checkedAt) {
   return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
 }
@@ -166,7 +184,7 @@ async function buildStatusEmbeds(footer = 'HCPSS Status Monitor') {
   const html = await fetchHtml(HCPSS_URL);
   const cards = extractCards(html);
   const desc = assembleDescription(cards);
-  const primaryDate = cards[0] ? (cards[0].date || formatCheckedAt(checkedAt)) : formatCheckedAt(checkedAt);
+  const primaryDate = normalizeStatusDate(cards[0] && cards[0].date, checkedAt);
   const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
   return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
 }

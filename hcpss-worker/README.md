@@ -28,6 +28,8 @@ Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
 
 The workflow creates a KV namespace, patches `wrangler.toml`, uploads Worker secrets, and deploys the Worker.
 
+The deploy script reuses an existing HCPSS KV namespace when one is present so the Worker keeps the previous Discord message ID across redeploys.
+
 ## Discord Setup
 
 Set the Worker URL as your Discord Application Interactions Endpoint URL:
@@ -45,6 +47,8 @@ Application > General Information > Interactions Endpoint URL
 ## Manual Trigger
 
 Unsigned manual `POST` requests are blocked unless `MANUAL_TRIGGER_TOKEN` is configured.
+
+The GitHub `Get Current Status On-Demand` workflow also uses this Worker endpoint, so manual runs and scheduled Worker runs share the same KV message tracker.
 
 PowerShell example:
 

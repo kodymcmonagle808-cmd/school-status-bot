@@ -15,17 +15,33 @@ toml_file="$project_dir/wrangler.toml"
 
 cd "$project_dir"
 
-echo "Creating KV namespace..."
-create_resp=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces" \
+namespace_title="hcpss-status-kv"
+
+echo "Finding KV namespace..."
+list_resp=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces?per_page=100" \
   -H "Authorization: Bearer ${CF_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data "{ \"title\": \"hcpss-status-kv-$(date +%s)\" }")
-kv_id=$(echo "$create_resp" | jq -r '.result.id // empty')
+  -H "Content-Type: application/json")
+
+kv_id=$(echo "$list_resp" | jq -r --arg title "$namespace_title" '.result[]? | select(.title == $title) | .id' | head -n 1)
 if [ -z "$kv_id" ]; then
-  echo "Failed to create KV namespace: $create_resp" >&2
-  exit 1
+  kv_id=$(echo "$list_resp" | jq -r '.result | map(select(.title | test("^hcpss-status-kv-[0-9]+$"))) | sort_by(.title) | last | .id // empty')
 fi
-echo "Created KV id: $kv_id"
+
+if [ -z "$kv_id" ]; then
+  echo "Creating KV namespace..."
+  create_resp=$(curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces" \
+    -H "Authorization: Bearer ${CF_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "{ \"title\": \"${namespace_title}\" }")
+  kv_id=$(echo "$create_resp" | jq -r '.result.id // empty')
+  if [ -z "$kv_id" ]; then
+    echo "Failed to create KV namespace: $create_resp" >&2
+    exit 1
+  fi
+  echo "Created KV id: $kv_id"
+else
+  echo "Reusing KV id: $kv_id"
+fi
 
 echo "Patching wrangler.toml with KV id..."
 sed -i.bak -E "s/id = \"[^\"]*\"/id = \"${kv_id}\"/" "$toml_file"

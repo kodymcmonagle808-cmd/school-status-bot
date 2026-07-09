@@ -1,65 +1,27 @@
 name: Check HCPSS Status
 
 on:
-  schedule:
-    # Runs every 15 minutes automatically
-    - cron: '1,16,31,46 * * * *'
   workflow_dispatch:
 
 concurrency:
-  group: hcpss-status-monitor-discord
+  group: hcpss-status-monitor-worker
   cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4.2.2
-
-    - name: Set up Python
-      uses: actions/setup-python@v5.4.0
-      with:
-        python-version: '3.11'
-
-    - name: Install Dependencies
-      run: |
-        pip install requests beautifulsoup4 pytz
-
-    - name: Run Monitor Script
-      env:
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: python monitor.py
-
-    - name: Commit and Push Status Changes
-      run: |
-        git config --global user.name "GitHub Actions Bot"
-        git config --global user.email "actions@github.com"
-        for f in last_status.txt last_message_state.json last_message_id.txt last_ondemand_message_state.json last_ondemand_message_id.txt; do
-          if [ -f "$f" ]; then
-            git add "$f"
+      - name: Trigger Worker status post
+        env:
+          WORKER_URL: https://hcpss-worker.kodymcmonagle808.workers.dev
+          MANUAL_TRIGGER_TOKEN: ${{ secrets.MANUAL_TRIGGER_TOKEN }}
+        run: |
+          if [ -z "$MANUAL_TRIGGER_TOKEN" ]; then
+            echo "MANUAL_TRIGGER_TOKEN is missing. Add it as a GitHub Actions secret, then rerun this workflow."
+            exit 1
           fi
-        done
 
-        if git diff --cached --quiet; then
-          echo "No tracker changes to commit."
-          exit 0
-        fi
-
-        git commit -m "Update last known status snapshot"
-
-        for attempt in 1 2 3; do
-          if git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}"; then
-            echo "Tracker state pushed successfully."
-            exit 0
-          fi
-          echo "Push attempt ${attempt} failed; retrying..."
-        done
-
-        echo "Failed to push tracker state after 3 attempts."
-        exit 1
+          curl --fail-with-body \
+            --request POST \
+            --header "Authorization: Bearer ${MANUAL_TRIGGER_TOKEN}" \
+            "$WORKER_URL"
