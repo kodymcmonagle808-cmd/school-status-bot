@@ -9,6 +9,60 @@ const CONFIG_COMMAND = 'config';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 
+// 2026-2027 HCPSS calendar highlights for annotating "Normal Operations" days
+// (and any other status date) with the scheduled event.
+const SCHOOL_CALENDAR_EVENTS = {
+  '2026-08-13': 'First day for staff',
+  '2026-08-24': 'First day for K-12 students',
+  '2026-08-27': 'First day for pre-K/RECC students',
+  '2026-09-07': 'Schools and offices closed* – Labor Day',
+  '2026-09-21': 'Schools and offices closed – Yom Kippur',
+  '2026-09-30': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Learning/Workday',
+  '2026-10-16': 'Schools closed for students – Staff Professional Learning Day',
+  '2026-10-28': 'Schools closed for students – Staff Professional Learning/Workday',
+  '2026-11-03': 'Schools and offices closed – Election Day*',
+  '2026-11-23': 'Schools close 3 hours early; No half-day Pre-K/RECC – ES/MS Parent/Teacher Conferences, HS Staff Professional Day',
+  '2026-11-24': 'Schools close 3 hours early; No half-day Pre-K/RECC – ES/MS Parent/Teacher Conferences',
+  '2026-11-25': 'Schools closed for students – Parent/Teacher Conferences',
+  '2026-11-26': 'Schools and offices closed* – Thanksgiving Holiday',
+  '2026-11-27': 'Schools and offices closed* – Thanksgiving Holiday',
+  '2026-12-09': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Learning/Workday',
+  '2026-12-24': 'Schools and offices closed* – Winter Break',
+  '2026-12-25': 'Schools and offices closed* – Winter Break',
+  '2026-12-28': 'Schools closed* – Winter Break',
+  '2026-12-29': 'Schools closed* – Winter Break',
+  '2026-12-30': 'Schools closed* – Winter Break',
+  '2026-12-31': 'Schools closed* – Winter Break',
+  '2027-01-01': 'Schools and offices closed* – Winter Break',
+  '2027-01-18': 'Schools and offices closed* – Martin Luther King Jr. Day',
+  '2027-01-19': 'Schools closed for students –Staff Professional Workday',
+  '2027-02-03': 'Schools closed for students – Staff Professional Learning Day',
+  '2027-02-11': 'Elementary schools close 3 hours early; No half-day Pre-K/RECC – ES Parent/Teacher Conferences',
+  '2027-02-12': 'Elementary schools close 3 hours early; No half-day Pre-K/RECC – ES Parent/Teacher Conferences',
+  '2027-02-15': 'Schools and offices closed* – Presidents Day',
+  '2027-03-09': 'Schools closed for students – Eid al Fitr; Staff Professional Learning/Workday',
+  '2027-03-22': 'Schools closed* – Spring Break',
+  '2027-03-23': 'Schools closed* – Spring Break',
+  '2027-03-24': 'Schools closed* – Spring Break',
+  '2027-03-25': 'Schools closed* – Spring Break',
+  '2027-03-26': 'Schools and offices closed* – Spring Break',
+  '2027-03-29': 'Schools and offices closed* – Spring Break',
+  '2027-04-08': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Learning/Workday',
+  '2027-05-17': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Learning/Workday',
+  '2027-05-31': 'Schools and offices closed* – Memorial Day',
+  '2027-06-02': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Learning/Workday',
+  '2027-06-07': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Workday; If inclement weather days are used, may become a full day',
+  '2027-06-08': 'Schools close 3 hours early; No half-day Pre-K/RECC – Staff Professional Workday – Last Scheduled Day; If inclement weather days are used, may become a full day',
+  '2027-06-09': 'May be used as inclement weather days',
+  '2027-06-10': 'May be used as inclement weather days',
+  '2027-06-11': 'May be used as inclement weather days',
+  '2027-06-14': 'May be used as inclement weather days',
+  '2027-06-15': 'May be used as inclement weather days',
+  '2027-06-16': 'May be used as inclement weather days',
+  '2027-06-18': 'Schools and offices closed – Juneteenth (observed)',
+  '2027-07-05': 'Schools and offices closed – Independence Day (observed)'
+};
+
 async function fetchHtml(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error('Fetch failed ' + r.status);
@@ -43,6 +97,17 @@ function formatStatusDate(date) {
   }).format(date);
 }
 
+function formatYmdNY(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const get = t => (parts.find(p => p.type === t) || {}).value || '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
 function normalizeStatusDate(dateText, fallbackDate) {
   if (!dateText) return formatStatusDate(fallbackDate);
 
@@ -50,6 +115,13 @@ function normalizeStatusDate(dateText, fallbackDate) {
   if (!Number.isNaN(parsed.getTime())) return formatStatusDate(parsed);
 
   return dateText.replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim();
+}
+
+function parseStatusDate(dateText, fallbackDate) {
+  if (!dateText) return fallbackDate;
+  const cleaned = String(dateText).replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim();
+  const parsed = new Date(cleaned);
+  return Number.isNaN(parsed.getTime()) ? fallbackDate : parsed;
 }
 
 function footerWithCheckedAt(label, checkedAt) {
@@ -187,8 +259,18 @@ async function buildStatusEmbeds(footer = 'HCPSS Status Monitor') {
   const checkedAt = new Date();
   const html = await fetchHtml(HCPSS_URL);
   const cards = extractCards(html);
-  const desc = assembleDescription(cards);
+  const statusDate = parseStatusDate(cards[0] && cards[0].date, checkedAt);
   const primaryDate = normalizeStatusDate(cards[0] && cards[0].date, checkedAt);
+  const isNormalFromSite = !cards.length || cards.every(c => !c.title || /normal operations/i.test(c.title));
+  const calendarEvent = SCHOOL_CALENDAR_EVENTS[formatYmdNY(statusDate)];
+
+  let desc = assembleDescription(cards);
+  if (isNormalFromSite && calendarEvent) {
+    // Calendar only overrides "Normal Operations" days. If HCPSS posts an alert
+    // (closures/delays/etc.), that alert is the source of truth for the day.
+    desc = `## **${calendarEvent}**\n\nStaff and students report in accordance with the HCPSS calendar.`;
+  }
+
   const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
   return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
 }
