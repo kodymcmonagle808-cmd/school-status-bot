@@ -29,6 +29,22 @@ class NonDailyDateTime:
 
 
 class MonitorWebhookTests(unittest.TestCase):
+    def test_split_description_into_embeds_breaks_long_alerts(self):
+        long_description = "A" * 8000
+
+        embeds = monitor.split_description_into_embeds(
+            title="Status for January 1, 2026",
+            description=long_description,
+            url="https://hcpss.org",
+            color=15158332,
+            footer_text="Test Footer",
+        )
+
+        self.assertGreater(len(embeds), 1)
+        self.assertTrue(all(len(embed["description"]) <= 4096 for embed in embeds))
+        self.assertEqual(embeds[0]["title"], "Status for January 1, 2026")
+        self.assertTrue(embeds[1]["title"].endswith("(cont. 2)"))
+
     def test_load_webhook_state_reads_json_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = f"{tmpdir}/state.json"

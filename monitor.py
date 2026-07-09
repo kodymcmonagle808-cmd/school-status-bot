@@ -15,6 +15,8 @@ LEGACY_ONDEMAND_STATE_FILE = "last_ondemand_message_state.json"
 LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
+DISCORD_EMBED_DESCRIPTION_LIMIT = 4096
+DISCORD_EMBED_SAFE_CHUNK = 3900
 
 def _webhook_base_and_query():
     if not WEBHOOK_URL:
@@ -114,6 +116,46 @@ def delete_old_message(msg_id):
     except Exception as e:
         print(f"Warning: Error deleting previous message {msg_id}: {e}. Continuing.")
 
+def split_description_into_embeds(title, description, url, color, footer_text):
+    chunks = []
+    remaining = description.strip()
+
+    while remaining:
+        if len(remaining) <= DISCORD_EMBED_DESCRIPTION_LIMIT:
+            chunks.append(remaining)
+            break
+
+        split_at = remaining.rfind("\n", 0, DISCORD_EMBED_SAFE_CHUNK)
+        if split_at <= 0:
+            split_at = DISCORD_EMBED_SAFE_CHUNK
+
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip("\n")
+
+    if not chunks:
+        chunks = [""]
+
+    embeds = []
+    for index, chunk in enumerate(chunks, start=1):
+        embed = {
+            "color": color,
+            "description": chunk,
+            "footer": {
+                "text": footer_text,
+            },
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+        if index == 1:
+            embed["title"] = title
+            embed["url"] = url
+        else:
+            embed["title"] = f"{title} (cont. {index})"
+
+        embeds.append(embed)
+
+    return embeds
+
 def main():
     eastern_tz = pytz.timezone('America/New_York')
     now_local = datetime.now(eastern_tz)
@@ -207,18 +249,13 @@ def main():
         old_msg_id = webhook_state.get("last_message_id")
 
         embed_color = 3066993 if is_normal else 15158332
-        payload["embeds"] = [
-            {
-                "title": f"🗓️ Status for {primary_date}",
-                "url": URL,
-                "color": embed_color,
-                "description": final_description,
-                "footer": {
-                    "text": "Howard County Public School System Daily Monitor"
-                },
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            }
-        ]
+        payload["embeds"] = split_description_into_embeds(
+            title=f"🗓️ Status for {primary_date}",
+            description=final_description,
+            url=URL,
+            color=embed_color,
+            footer_text="Howard County Public School System Daily Monitor",
+        )
 
         post_url = build_webhook_post_url()
         if post_url:

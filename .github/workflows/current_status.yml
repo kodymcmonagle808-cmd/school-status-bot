@@ -47,6 +47,8 @@ jobs:
         LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
         LEGACY_SHARED_MSG_FILE = "last_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+        DISCORD_EMBED_DESCRIPTION_LIMIT = 4096
+        DISCORD_EMBED_SAFE_CHUNK = 3900
 
         def webhook_base_and_query():
             if not WEBHOOK_URL:
@@ -80,6 +82,46 @@ jobs:
             if query:
                 return f"{delete_url}?{query}"
             return delete_url
+
+        def split_description_into_embeds(title, description, url, color, footer_text):
+            chunks = []
+            remaining = description.strip()
+
+            while remaining:
+                if len(remaining) <= DISCORD_EMBED_DESCRIPTION_LIMIT:
+                    chunks.append(remaining)
+                    break
+
+                split_at = remaining.rfind("\n", 0, DISCORD_EMBED_SAFE_CHUNK)
+                if split_at <= 0:
+                    split_at = DISCORD_EMBED_SAFE_CHUNK
+
+                chunks.append(remaining[:split_at].rstrip())
+                remaining = remaining[split_at:].lstrip("\n")
+
+            if not chunks:
+                chunks = [""]
+
+            embeds = []
+            for index, chunk in enumerate(chunks, start=1):
+                embed = {
+                    "color": color,
+                    "description": chunk,
+                    "footer": {
+                        "text": footer_text,
+                    },
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+
+                if index == 1:
+                    embed["title"] = title
+                    embed["url"] = url
+                else:
+                    embed["title"] = f"{title} (cont. {index})"
+
+                embeds.append(embed)
+
+            return embeds
 
         def delete_old_message(msg_id):
             delete_url = build_delete_url(msg_id)
@@ -201,18 +243,13 @@ jobs:
             embed_color = 3066993 if is_normal else 15158332
             
             payload = {
-                "embeds": [
-                    {
-                        "title": f"🗓️ Status for {primary_date}",
-                        "url": URL,
-                        "color": embed_color,
-                        "description": final_description,
-                        "footer": {
-                            "text": "HCPSS On-Demand Status Check Request"
-                        },
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
-                    }
-                ]
+                "embeds": split_description_into_embeds(
+                    title=f"🗓️ Status for {primary_date}",
+                    description=final_description,
+                    url=URL,
+                    color=embed_color,
+                    footer_text="HCPSS On-Demand Status Check Request",
+                )
             }
             
             url_with_wait = build_post_url()
