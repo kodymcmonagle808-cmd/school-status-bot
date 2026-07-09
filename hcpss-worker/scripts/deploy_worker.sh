@@ -57,6 +57,40 @@ else
   echo "MANUAL_TRIGGER_TOKEN not set; manual public POST trigger will remain disabled."
 fi
 
+echo "Registering Discord /post-status command..."
+discord_application_id=$(grep -E '^DISCORD_APPLICATION_ID = ' "$toml_file" | sed -E 's/.*"([^"]+)".*/\1/')
+if [ -z "$discord_application_id" ]; then
+  echo "Could not find DISCORD_APPLICATION_ID in wrangler.toml." >&2
+  exit 1
+fi
+
+command_payload=$(jq -n \
+  --arg name "post-status" \
+  --arg description "Post the latest HCPSS status now." \
+  '{ name: $name, description: $description, type: 1, dm_permission: false }')
+
+commands_resp=$(curl -sS -X GET "https://discord.com/api/v10/applications/${discord_application_id}/commands" \
+  -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+  -H "Content-Type: application/json")
+command_id=$(echo "$commands_resp" | jq -r '.[]? | select(.name == "post-status") | .id' | head -n 1)
+
+if [ -n "$command_id" ]; then
+  command_resp=$(curl -sS -X PATCH "https://discord.com/api/v10/applications/${discord_application_id}/commands/${command_id}" \
+    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "$command_payload")
+else
+  command_resp=$(curl -sS -X POST "https://discord.com/api/v10/applications/${discord_application_id}/commands" \
+    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "$command_payload")
+fi
+
+if [ -z "$(echo "$command_resp" | jq -r '.id // empty')" ]; then
+  echo "Failed to register /post-status command: $command_resp" >&2
+  exit 1
+fi
+
 echo "Publishing Worker..."
 wrangler deploy
 

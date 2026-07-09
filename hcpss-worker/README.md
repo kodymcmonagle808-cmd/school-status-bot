@@ -8,6 +8,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Replaces the previous Discord status message instead of stacking messages.
 - Verifies Discord interaction signatures before handling button clicks.
 - Responds to `Check again` with a private ephemeral embed.
+- Adds `/post-status` for members with role `1521682363942436896` to publish a fresh public status from Discord.
 - Adds `Last checked` timing to public and private embeds.
 - Posts an error embed if the HCPSS status page cannot be fetched.
 - Exposes `GET /health` for a lightweight health check.

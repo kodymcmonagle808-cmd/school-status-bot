@@ -4,6 +4,8 @@ const EMBED_SAFE = 3900;
 const MAX_EMBEDS = 10;
 const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 const EPHEMERAL_FLAG = 64;
+const POST_STATUS_COMMAND = 'post-status';
+const POST_STATUS_ROLE_ID = '1521682363942436896';
 
 async function fetchHtml(url) {
   const r = await fetch(url);
@@ -268,8 +270,46 @@ function interactionResponse(data) {
   return jsonResponse({ type: 4, data });
 }
 
+function deferredInteractionResponse() {
+  return jsonResponse({
+    type: 5,
+    data: { flags: EPHEMERAL_FLAG }
+  });
+}
+
+function memberHasPostStatusRole(member) {
+  return Array.isArray(member && member.roles) && member.roles.includes(POST_STATUS_ROLE_ID);
+}
+
+async function updateInteractionOriginal(env, interactionToken, payload) {
+  const applicationId = env.DISCORD_APPLICATION_ID;
+  if (!applicationId || !interactionToken) return;
+
+  await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).catch(() => {});
+}
+
+async function runPostStatusCommand(body, env) {
+  const result = await doCheckAndPost(env);
+  if (result.ok) {
+    await updateInteractionOriginal(env, body.token, {
+      content: result.isError ? 'Posted the HCPSS error status embed.' : 'Posted the latest HCPSS status.',
+      embeds: []
+    });
+    return;
+  }
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `Could not post status: ${result.error || result.status}`,
+    embeds: []
+  });
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
@@ -296,6 +336,18 @@ export default {
 
       const body = await request.json();
       if (body.type === 1) return jsonResponse({ type: 1 });
+
+      if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {
+        if (!memberHasPostStatusRole(body.member)) {
+          return interactionResponse({
+            content: 'You do not have permission to run this status post command.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        ctx.waitUntil(runPostStatusCommand(body, env));
+        return deferredInteractionResponse();
+      }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
         const builtStatus = await buildStatusPayload({ footer: 'HCPSS Status Monitor - Only you can see this' });
