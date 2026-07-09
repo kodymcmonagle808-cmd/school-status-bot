@@ -6,6 +6,9 @@ if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ACCOUNT_ID:-}" ]; then
   exit 1
 fi
 
+export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-$CF_API_TOKEN}"
+export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-$CF_ACCOUNT_ID}"
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "$script_dir/.." && pwd)"
 toml_file="$project_dir/wrangler.toml"
@@ -34,6 +37,6 @@ printf '%s' "$DISCORD_CHANNEL_ID" | wrangler secret put DISCORD_CHANNEL_ID || tr
 printf '%s' "$DISCORD_PUBLIC_KEY" | wrangler secret put DISCORD_PUBLIC_KEY || true
 
 echo "Publishing Worker..."
-wrangler publish
+wrangler deploy
 
 echo "Done. Worker published."
