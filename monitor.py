@@ -103,7 +103,7 @@ def main():
     status_cards = soup.find_all(class_="views-row")
     
     extracted_blocks = []
-    all_text_combined = ""
+    stable_snapshot_parts = []
     is_normal = True
 
     if status_cards:
@@ -130,15 +130,15 @@ def main():
                 
             if card_markdown:
                 extracted_blocks.append((date_text, card_markdown))
-                all_text_combined += f"{date_text} {status_title} {body_text} "
+                stable_snapshot_parts.append(f"{status_title} {body_text}")
     
     if not extracted_blocks:
         extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
-        all_text_combined = "Normal Operations"
+        stable_snapshot_parts = ["Normal Operations"]
 
     primary_date = extracted_blocks[0][0] if extracted_blocks else now_local.strftime('%B %d, %Y')
     final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
-    current_snapshot_block = " ".join(all_text_combined.split())
+    current_snapshot_block = " ".join(" ".join(stable_snapshot_parts).split())
 
     is_daily_broadcast_time = (now_local.hour == 0 and 0 <= now_local.minute <= 45)
 

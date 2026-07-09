@@ -18,6 +18,16 @@ class FakeDateTime:
         return datetime(2026, 1, 1, 5, 10, tzinfo=timezone.utc)
 
 
+class NonDailyDateTime:
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 1, 1, 10, 0, tzinfo=tz)
+
+    @classmethod
+    def utcnow(cls):
+        return datetime(2026, 1, 1, 15, 0, tzinfo=timezone.utc)
+
+
 class MonitorWebhookTests(unittest.TestCase):
     def test_load_webhook_state_reads_json_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -90,6 +100,43 @@ class MonitorWebhookTests(unittest.TestCase):
             with open(state_path, "r", encoding="utf-8") as f:
                 state = json.load(f)
             self.assertEqual(state.get("last_message_id"), "new456")
+
+    def test_main_does_not_post_when_only_status_date_changes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = f"{tmpdir}/last_status.txt"
+            state_path = f"{tmpdir}/state.json"
+
+            with open(status_path, "w", encoding="utf-8") as f:
+                f.write("Schools Closed Due to weather")
+
+            html = """
+            <html><body>
+              <div class="views-row">
+                <div class="views-field-changed">January 2, 2026 5:00 AM</div>
+                <h2>Schools Closed</h2>
+                <p>Due to weather</p>
+              </div>
+            </body></html>
+            """
+            get_response = SimpleNamespace(
+                text=html,
+                raise_for_status=lambda: None,
+            )
+
+            with (
+                patch.object(monitor, "STATUS_FILE", status_path),
+                patch.object(monitor, "WEBHOOK_STATE_FILE", state_path),
+                patch.object(monitor, "WEBHOOK_URL", "https://discord.com/api/webhooks/1/token"),
+                patch.object(monitor, "datetime", NonDailyDateTime),
+                patch.object(monitor.pytz, "timezone", return_value=timezone.utc),
+                patch.object(monitor.requests, "get", return_value=get_response),
+                patch.object(monitor.requests, "delete") as mock_delete,
+                patch.object(monitor.requests, "post") as mock_post,
+            ):
+                monitor.main()
+
+            self.assertEqual(mock_delete.call_count, 0)
+            self.assertEqual(mock_post.call_count, 0)
 
 
 if __name__ == "__main__":
