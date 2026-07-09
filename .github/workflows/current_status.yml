@@ -41,7 +41,7 @@ jobs:
             if not WEBHOOK_URL or not msg_id:
                 return
             try:
-                # FIXED: Added [0] to extract the text string out of the split list
+                # FIXED: Extracted text indexing pointer
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 delete_url = f"{base_webhook_url}/messages/{msg_id}"
                 response = requests.delete(delete_url, timeout=10)
@@ -91,7 +91,6 @@ jobs:
             if not extracted_blocks:
                 extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
 
-            # Read the previous saved message ID out of repository files
             if os.path.exists(ONDEMAND_MSG_FILE):
                 with open(ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
                     old_msg_id = f.read().strip()
@@ -119,7 +118,7 @@ jobs:
             }
             
             if WEBHOOK_URL:
-                # FIXED: Added [0] here as well to pass string verification
+                # FIXED: Extracted text indexing pointer
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 url_with_wait = f"{base_webhook_url}?wait=true"
                 res = requests.post(url_with_wait, json=payload)
