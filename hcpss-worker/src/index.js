@@ -122,7 +122,7 @@ async function doCheckAndPost(env) {
   const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
   const embeds = splitEmbeds(`🗓️ Status for ${primaryDate}`, desc, HCPSS_URL, color, 'HCPSS Status Monitor');
 
-  const components = [{ type: 1, components: [{ type: 2, style: 2, label: 'Check again', custom_id: 'check_again' }] }];
+  const components = [{ type: 1, components: [{ type: 2, style: 1, label: 'Check again', custom_id: 'check_again' }] }];
   const payload = { content: '', embeds, components };
 
   const res = await postMessageToChannel(env, payload);
