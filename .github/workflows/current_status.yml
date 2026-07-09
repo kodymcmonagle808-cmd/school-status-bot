@@ -39,34 +39,43 @@ jobs:
 
         def clean_webhook_url():
             if not WEBHOOK_URL:
+                print("[DEBUG] WEBHOOK_URL environment variable is EMPTY!")
                 return ""
-            # FIXED: Added [0] index bracket to return a clean URL string block
-            return WEBHOOK_URL.split('?')[0]
+            clean_url = WEBHOOK_URL.split('?')[0]
+            print(f"[DEBUG] Raw Webhook URL: {WEBHOOK_URL[:30]}...")
+            print(f"[DEBUG] Cleaned Base Webhook URL: {clean_url[:30]}...")
+            return clean_url
 
         def delete_old_message(msg_id):
             base_url = clean_webhook_url()
             if not base_url or not msg_id:
+                print(f"[DEBUG] Skinned deletion execution. base_url present: {bool(base_url)}, msg_id: {msg_id}")
                 return
             try:
                 delete_url = f"{base_url}/messages/{msg_id}"
-                print(f"Sending delete call to Discord for ID: {msg_id}")
+                print(f"[DEBUG] Sending HTTP DELETE request to target URL: {delete_url}")
                 response = requests.delete(delete_url, timeout=10)
+                print(f"[DEBUG] Discord Response Status Code: {response.status_code}")
+                print(f"[DEBUG] Discord Response Content: {response.text}")
+                
                 if response.status_code == 204 or response.status_code == 404:
-                    print(f"Successfully deleted old message on Discord side.")
+                    print(f"[SUCCESS] Old on-demand message handled (ID: {msg_id}).")
                 else:
-                    print(f"Discord API rejected deletion: {response.status_code}")
+                    print(f"[WARNING] Discord rejected deletion call. Check webhook channel management permissions.")
             except Exception as e:
-                print(f"Error executing deletion request: {e}")
+                print(f"[ERROR] Exception occurred during deletion execution: {e}")
 
         try:
             eastern_tz = pytz.timezone('America/New_York')
             now_local = datetime.now(eastern_tz)
 
+            print(f"[DEBUG] Local execution timestamp established: {now_local}")
             response = requests.get(URL, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
             status_cards = soup.find_all(class_="views-row")
+            print(f"[DEBUG] Total webpage status views-row cards matched: {len(status_cards)}")
             
             extracted_blocks = []
             is_normal = True
@@ -103,8 +112,11 @@ jobs:
             if os.path.exists(ONDEMAND_MSG_FILE):
                 with open(ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
                     old_msg_id = f.read().strip()
-                    if old_msg_id:
-                        delete_old_message(old_msg_id)
+                print(f"[DEBUG] Found existing tracker message ID file. Extracted ID string: '{old_msg_id}'")
+                if old_msg_id:
+                    delete_old_message(old_msg_id)
+            else:
+                print(f"[DEBUG] No previous tracker file '{ONDEMAND_MSG_FILE}' discovered on workspace storage tree.")
 
             primary_date = extracted_blocks[0][0] if extracted_blocks else now_local.strftime('%B %d, %Y')
             final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
@@ -128,18 +140,23 @@ jobs:
             base_url = clean_webhook_url()
             if base_url:
                 url_with_wait = f"{base_url}?wait=true"
+                print(f"[DEBUG] Posting fresh payload to Discord endpoint with query waiting tags activated...")
                 res = requests.post(url_with_wait, json=payload, timeout=12)
+                print(f"[DEBUG] Discord Post Response Status: {res.status_code}")
                 
                 if res.status_code == 200 or res.status_code == 201:
                     new_msg_id = res.json().get("id")
+                    print(f"[DEBUG] Isolated new delivery message reference hash id: {new_msg_id}")
                     with open(ONDEMAND_MSG_FILE, "w", encoding="utf-8") as f:
                         f.write(str(new_msg_id))
-                    print(f"Tracked message ID: {new_msg_id}")
+                    print(f"[SUCCESS] Saved message ID '{new_msg_id}' locally to tracking cache text file container.")
+                else:
+                    print(f"[ERROR] Post payload verification failed on server: {res.text}")
             else:
-                print("Error: Webhook URL missing.")
+                print("[ERROR] Webhook clean target address parsing returned empty string parameters.")
                 
         except Exception as e:
-            print(f"Pipeline error: {e}")
+            print(f"[CRITICAL FAILURE] Master try loop processing fault isolated: {e}")
         EOF
         
     - name: Commit and Push Trackers
@@ -147,5 +164,5 @@ jobs:
         git config --global user.name "GitHub Actions Bot"
         git config --global user.email "actions@github.com"
         git add last_ondemand_message_id.txt || true
-        git commit -m "Update on-demand tracking cache" || true
+        git commit -m "Update on-demand tracking cache [Diagnostic Run]" || true
         git push || true
