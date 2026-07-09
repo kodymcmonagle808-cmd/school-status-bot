@@ -1,4 +1,4 @@
-pythonimport os
+import os
 import json
 import requests
 from bs4 import BeautifulSoup
@@ -6,7 +6,7 @@ from datetime import datetime
 import pytz
 
 # Configuration
-URL = "https://hcpss.org"
+URL = "https://status.hcpss.org/"
 STATUS_FILE = "last_status.txt"
 MSG_ID_FILE = "last_message_id.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -17,6 +17,7 @@ def delete_old_message(msg_id):
     if not WEBHOOK_URL or not msg_id:
         return
     try:
+        # Explicitly take the first element [0] of the split list
         base_webhook_url = WEBHOOK_URL.split('?')[0]
         delete_url = f"{base_webhook_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
@@ -158,6 +159,7 @@ def main():
         ]
 
         if WEBHOOK_URL:
+            # Explicitly take the first element [0] of the split list
             base_webhook_url = WEBHOOK_URL.split('?')[0]
             url_with_wait = f"{base_webhook_url}?wait=true"
             response = requests.post(url_with_wait, json=payload)
