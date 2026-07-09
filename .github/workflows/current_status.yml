@@ -1,7 +1,7 @@
 name: Get Current Status On-Demand
 
 on:
-  workflow_dispatch: # This ensures it ONLY runs manually on command
+  workflow_dispatch:
 
 jobs:
   check-now:
@@ -32,15 +32,27 @@ jobs:
         from bs4 import BeautifulSoup
         from datetime import datetime
 
-        URL = "https://status.hcpss.org/"
+        URL = "https://hcpss.org"
+        ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+        def delete_old_message(msg_id):
+            if not WEBHOOK_URL or not msg_id:
+                return
+            try:
+                base_webhook_url = WEBHOOK_URL.split('?')[0]
+                delete_url = f"{base_webhook_url}/messages/{msg_id}"
+                response = requests.delete(delete_url, timeout=10)
+                if response.status_code == 204 or response.status_code == 404:
+                    print(f"Deleted old on-demand message (ID: {msg_id}).")
+            except Exception as e:
+                print(f"Error deleting old on-demand message: {e}")
 
         try:
             response = requests.get(URL, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Target all active operational status card blocks visible on the page
             status_cards = soup.find_all(class_="views-row")
             
             extracted_blocks = []
@@ -48,7 +60,6 @@ jobs:
 
             if status_cards:
                 for card in status_cards:
-                    # Scrape individual elements exactly as written on-screen
                     date_el = card.find(class_="views-field-changed") or card.find('h3') or card.find(class_="field-name-post-date")
                     title_el = card.find(class_="status-header") or card.find('h2') or card.find('h1')
                     body_el = card.find(class_="alert-content") or card.find('p')
@@ -63,32 +74,41 @@ jobs:
                     if status_title and "normal operations" not in status_title.lower():
                         is_normal = False
 
+                    # Restores the clean layout design style from your screenshot
                     card_markdown = ""
-                    if date_text:
-                        card_markdown += f"📅 **{date_text}**\n"
                     if status_title:
-                        card_markdown += f"### {status_title}\n"
+                        card_markdown += f"## **{status_title}**\n\n"
                     if body_text:
                         card_markdown += f"{body_text}\n"
-                        
+                    
                     if card_markdown:
-                        extracted_blocks.append(card_markdown)
+                        extracted_blocks.append((date_text, card_markdown))
             
             if not extracted_blocks:
-                extracted_blocks.append("### Normal Operations\nStaff and students report in accordance with the HCPSS calendar.")
+                extracted_blocks.append((datetime.now().strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
 
-            final_description = "\n___\n\n".join(extracted_blocks)
+            # Handle the previous message cleanup file if it exists
+            if os.path.exists(ONDEMAND_MSG_FILE):
+                with open(ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
+                    old_msg_id = f.read().strip()
+                    if old_msg_id:
+                        delete_old_message(old_msg_id)
+
+            # Build and send the card matching your layout preferences
+            primary_date = extracted_blocks[0][0] if extracted_blocks[0][0] else datetime.now().strftime('%B %d, %Y')
+            final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
+            
             embed_color = 3066993 if is_normal else 15158332
             
             payload = {
                 "embeds": [
                     {
-                        "title": "🏫 HCPSS Official Operating Status (On-Demand)",
+                        "title": f"🗓️ Status for {primary_date}",
                         "url": URL,
                         "color": embed_color,
                         "description": final_description,
                         "footer": {
-                            "text": "Howard County Public School System Manual Monitor"
+                            "text": "HCPSS On-Demand Status Check Request"
                         },
                         "timestamp": datetime.utcnow().isoformat() + "Z"
                     }
@@ -97,11 +117,26 @@ jobs:
             
             if WEBHOOK_URL:
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
-                requests.post(base_webhook_url, json=payload)
-                print("Successfully dispatched custom status embed card to Discord.")
+                url_with_wait = f"{base_webhook_url}?wait=true"
+                res = requests.post(url_with_wait, json=payload)
+                
+                if res.status_code == 200 or res.status_code == 201:
+                    new_msg_id = res.json().get("id")
+                    with open(ONDEMAND_MSG_FILE, "w", encoding="utf-8") as f:
+                        f.write(str(new_msg_id))
+                    print(f"Tracked message ID: {new_msg_id}")
             else:
-                print("Error: Webhook configuration value target missing.")
+                print("Error: Webhook missing.")
                 
         except Exception as e:
             print(f"Pipeline error: {e}")
         EOF
+        
+    # Allows the tracking token file changes to persist in the git timeline
+    - name: Commit and Push Trackers
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "actions@github.com"
+        git add last_ondemand_message_id.txt || true
+        git commit -m "Update on-demand tracking cache" || true
+        git push || true
