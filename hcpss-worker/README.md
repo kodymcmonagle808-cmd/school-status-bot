@@ -28,10 +28,33 @@ wrangler secret put DISCORD_CHANNEL_ID
 wrangler publish
 ```
 
-6. (Optional) Set the Worker URL as the Discord Application Interactions Endpoint and implement request verification before enabling interaction handling.
+6. Set the Worker URL as the Discord Application Interactions Endpoint (Application → General Information → Interactions Endpoint URL).
 
 Notes:
-- The code currently posts messages and stores the last message id in KV. It includes a `Check again` button in the message components, but interaction verification/handling is not implemented in this scaffold for security reasons. See the README section "Interactions" for next steps.
+- The code posts messages and stores the last message id in KV `STATUS_KV` at key `last_message_id`.
+- The Worker now implements request signature verification for Discord interactions and will:
+	- Respond to PINGs (type 1) with a PONG.
+	- Respond to the `check_again` button (component interaction) with an ephemeral reply containing the latest status.
 
-Interactions:
-- To safely handle button clicks, you must verify Discord request signatures using your `DISCORD_PUBLIC_KEY`. Use a library like `tweetnacl` and verify the `X-Signature-Ed25519` and `X-Signature-Timestamp` headers on incoming requests before responding.
+Secrets and bindings required (use `wrangler secret put` and `wrangler kv:namespace create`):
+```bash
+wrangler kv:namespace create STATUS_STATE --binding STATUS_KV
+wrangler secret put DISCORD_BOT_TOKEN
+wrangler secret put DISCORD_CHANNEL_ID
+wrangler secret put DISCORD_PUBLIC_KEY
+```
+
+After those are configured, `wrangler publish` will deploy the Worker which will handle both scheduled runs and interactions.
+
+CI / GitHub Actions automatic deploy
+----------------------------------
+If you prefer not to run `wrangler` locally, this repository includes a GitHub Actions workflow that can create the KV namespace, upload the required secrets, and publish the Worker for you.
+
+Required repository secrets:
+- `CF_API_TOKEN` — Cloudflare API token with Workers & KV permissions
+- `CF_ACCOUNT_ID` — your Cloudflare account id
+- `DISCORD_BOT_TOKEN` — your Discord bot token
+- `DISCORD_CHANNEL_ID` — the target Discord channel id for posts
+- `DISCORD_PUBLIC_KEY` — your Discord Application public key
+
+After setting the secrets in the repo, go to the Actions tab and run the "Deploy HCPSS Worker" workflow (or push to `main`). The workflow will create a KV namespace and publish the Worker.

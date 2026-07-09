@@ -8,6 +8,43 @@ async function fetchHtml(url) {
   return await r.text();
 }
 
+function hexToUint8(hex) {
+  if (hex.startsWith('0x')) hex = hex.slice(2);
+  const len = hex.length/2; const out = new Uint8Array(len);
+  for (let i=0;i<len;i++) out[i]=parseInt(hex.substr(i*2,2),16);
+  return out;
+}
+
+async function verifyDiscordRequest(rawBody, signatureHex, timestamp, publicKeyHex) {
+  try {
+    const sig = hexToUint8(signatureHex);
+    const pub = hexToUint8(publicKeyHex);
+    const enc = new TextEncoder();
+    const message = new Uint8Array(enc.encode(timestamp));
+    const bodyBytes = new Uint8Array(await rawBody.arrayBuffer());
+    const data = new Uint8Array(message.length + bodyBytes.length);
+    data.set(message, 0);
+    data.set(bodyBytes, message.length);
+
+    // Use WebCrypto Ed25519 verify
+    const key = await crypto.subtle.importKey('raw', pub, { name: 'NODE-ED25519' }, false, ['verify']).catch(()=>null);
+    if (key) {
+      const ok = await crypto.subtle.verify({ name: 'NODE-ED25519' }, key, sig, data).catch(()=>false);
+      if (ok) return true;
+    }
+
+    // Try Ed25519 standard name as fallback
+    const key2 = await crypto.subtle.importKey('raw', pub, { name: 'Ed25519' }, false, ['verify']).catch(()=>null);
+    if (key2) {
+      const ok2 = await crypto.subtle.verify({ name: 'Ed25519' }, key2, sig, data).catch(()=>false);
+      return !!ok2;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 function extractCards(html) {
   const parts = html.split(/<div[^>]+class=["']views-row["'][^>]*>/i).slice(1);
   const cards = [];
@@ -109,9 +146,46 @@ async function doCheckAndPost(env) {
 
 export default {
   async fetch(request, env) {
-    // simple manual trigger or interaction placeholder
+    // Distinguish between Discord interaction POSTs (signed) and manual triggers
     if (request.method === 'POST') {
-      // NOTE: Interaction verification not implemented here. See README to enable secure interactions.
+      const sig = request.headers.get('x-signature-ed25519');
+      const ts = request.headers.get('x-signature-timestamp');
+      if (sig && ts) {
+        // Verify signature
+        const ok = await verifyDiscordRequest(request.clone(), sig, ts, env.DISCORD_PUBLIC_KEY);
+        if (!ok) return new Response('Invalid request signature', { status: 401 });
+
+        const body = await request.json();
+        // Ping
+        if (body.type === 1) return new Response(JSON.stringify({ type: 1 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+        // Component interaction
+        if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
+          // perform a status check but do not post publicly; reply ephemerally to user
+          try {
+            const html = await fetchHtml(HCPSS_URL);
+            const cards = extractCards(html);
+            const desc = assembleDescription(cards);
+            // Truncate description to avoid exceeding interaction limits
+            const short = desc.length > 1900 ? desc.slice(0,1900) + '\n\n(Truncated)' : desc;
+            const responsePayload = {
+              type: 4,
+              data: {
+                content: short,
+                flags: 64
+              }
+            };
+            return new Response(JSON.stringify(responsePayload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          } catch (e) {
+            return new Response(JSON.stringify({ type: 4, data: { content: 'Error fetching status.', flags: 64 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+        }
+
+        // Unknown interaction: respond with a generic ephemeral message
+        return new Response(JSON.stringify({ type: 4, data: { content: 'Interaction received.', flags: 64 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // If not a signed Discord interaction, treat as manual trigger
       try {
         const result = await doCheckAndPost(env);
         if (result.ok) return new Response('Posted: ' + result.id, { status: 200 });
@@ -122,7 +196,7 @@ export default {
     }
 
     // GET returns a small status page
-    return new Response('HCPSS Worker: POST to trigger a check.', { status: 200 });
+    return new Response('HCPSS Worker: POST to trigger a check or receive interactions at this URL.', { status: 200 });
   }
 };
 
