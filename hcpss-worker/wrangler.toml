@@ -1,0 +1,13 @@
+name = "hcpss-worker"
+main = "src/index.js"
+compatibility_date = "2026-07-09"
+
+[vars]
+DISCORD_APPLICATION_ID = "1524455676225785958"
+DISCORD_PUBLIC_KEY = "a720037cc985ff440f41cf7033bc953ce8f6fe60a3c4947d298cb63464b2e539"
+
+[kv_namespaces]
+bindings = [ { binding = "STATUS_KV", id = "PASTE_YOUR_KV_ID_HERE" } ]
+
+# Cron trigger: runs at :01, :16, :31, :46 each hour (matches previous GitHub schedule)
+triggers = { crons = ["1,16,31,46 * * * *"] }
