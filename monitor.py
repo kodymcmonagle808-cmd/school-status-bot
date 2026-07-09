@@ -17,14 +17,16 @@ def delete_old_message(msg_id):
     if not WEBHOOK_URL or not msg_id:
         return
     try:
-        # Splits off any query parameters and formats the exact delete endpoint
+        # Formats the exact API delete endpoint using the message ID
         base_url = WEBHOOK_URL.split('?')[0]
         delete_url = f"{base_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
+        
+        # 204 means Successfully Deleted, 404 means message was already deleted manually
         if response.status_code in:
-            print(f"Successfully deleted old status message (ID: {msg_id}) from channel.")
+            print(f"Old status message handled successfully (ID: {msg_id}).")
         else:
-            print(f"Could not delete message {msg_id}: {response.status_code}")
+            print(f"Could not delete message {msg_id}: Status Code {response.status_code}")
     except Exception as e:
         print(f"Error executing message deletion: {e}")
 
@@ -71,7 +73,7 @@ def main():
     has_text_changed = (current_snapshot_block != previous_status)
     is_normal = "normal operations" in status_title.lower()
 
-    # Checks for stacked multi-day text listings
+    # Smart scanning rules to catch multi-day text listings
     has_multiple_days = any(k in body_text.lower() for k in ["june", "july", "january", "february", "march", "delayed", "closed"]) or "\n" in body_text
 
     should_send_discord = False
@@ -107,7 +109,8 @@ def main():
                 old_raw = f.read().strip()
                 if "," in old_raw:
                     old_data = old_raw.split(",")
-                    old_msg_id, old_was_multi = old_data[0], old_data[1] == "True"
+                    old_msg_id = old_data[0]
+                    old_was_multi = old_data[1] == "True"
                     
                     if not old_was_multi:
                         delete_old_message(old_msg_id)
@@ -134,6 +137,7 @@ def main():
             url_with_wait = f"{base_webhook}?wait=true"
             response = requests.post(url_with_wait, json=payload)
             
+            # 200 or 201 means successful message delivery
             if response.status_code in:
                 try:
                     new_msg_id = response.json().get("id")
