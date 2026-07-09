@@ -6,6 +6,8 @@ on:
 jobs:
   check-now:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -28,13 +30,15 @@ jobs:
       run: |
         python - << 'EOF'
         import os
+        import json
         import requests
         from bs4 import BeautifulSoup
         from datetime import datetime
         import pytz
 
         URL = "https://hcpss.org"
-        ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
+        ONDEMAND_STATE_FILE = "last_ondemand_message_state.json"
+        LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
         def clean_webhook_url():
@@ -64,6 +68,34 @@ jobs:
                     print(f"[WARNING] Discord rejected deletion call. Check webhook channel management permissions.")
             except Exception as e:
                 print(f"[ERROR] Exception occurred during deletion execution: {e}")
+
+        def load_ondemand_state():
+            if os.path.exists(ONDEMAND_STATE_FILE):
+                try:
+                    with open(ONDEMAND_STATE_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception as e:
+                    print(f"[WARNING] Could not parse on-demand state file: {e}")
+
+            if os.path.exists(LEGACY_ONDEMAND_MSG_FILE):
+                try:
+                    with open(LEGACY_ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
+                        old_msg_id = f.read().strip()
+                        if old_msg_id:
+                            return {"last_message_id": old_msg_id}
+                except Exception as e:
+                    print(f"[WARNING] Could not parse legacy on-demand message file: {e}")
+
+            return {}
+
+        def save_ondemand_state(state):
+            try:
+                with open(ONDEMAND_STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f)
+            except Exception as e:
+                print(f"[WARNING] Could not save on-demand state file: {e}")
 
         try:
             eastern_tz = pytz.timezone('America/New_York')
@@ -108,15 +140,13 @@ jobs:
             if not extracted_blocks:
                 extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
 
-            # Read the previous saved message ID out of repository files
-            if os.path.exists(ONDEMAND_MSG_FILE):
-                with open(ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
-                    old_msg_id = f.read().strip()
-                print(f"[DEBUG] Found existing tracker message ID file. Extracted ID string: '{old_msg_id}'")
-                if old_msg_id:
-                    delete_old_message(old_msg_id)
+            ondemand_state = load_ondemand_state()
+            old_msg_id = ondemand_state.get("last_message_id")
+            if old_msg_id:
+                print(f"[DEBUG] Found existing tracker message ID value: '{old_msg_id}'")
+                delete_old_message(old_msg_id)
             else:
-                print(f"[DEBUG] No previous tracker file '{ONDEMAND_MSG_FILE}' discovered on workspace storage tree.")
+                print("[DEBUG] No previous on-demand message ID discovered in state files.")
 
             primary_date = extracted_blocks[0][0] if extracted_blocks else now_local.strftime('%B %d, %Y')
             final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
@@ -147,9 +177,11 @@ jobs:
                 if res.status_code == 200 or res.status_code == 201:
                     new_msg_id = res.json().get("id")
                     print(f"[DEBUG] Isolated new delivery message reference hash id: {new_msg_id}")
-                    with open(ONDEMAND_MSG_FILE, "w", encoding="utf-8") as f:
-                        f.write(str(new_msg_id))
-                    print(f"[SUCCESS] Saved message ID '{new_msg_id}' locally to tracking cache text file container.")
+                    if new_msg_id:
+                        save_ondemand_state({"last_message_id": new_msg_id})
+                        print(f"[SUCCESS] Saved message ID '{new_msg_id}' in on-demand state file.")
+                    else:
+                        print("[WARNING] Post succeeded but no message ID was returned. Existing state was not changed.")
                 else:
                     print(f"[ERROR] Post payload verification failed on server: {res.text}")
             else:
@@ -163,6 +195,6 @@ jobs:
       run: |
         git config --global user.name "GitHub Actions Bot"
         git config --global user.email "actions@github.com"
-        git add last_ondemand_message_id.txt || true
+        git add last_ondemand_message_state.json last_ondemand_message_id.txt || true
         git commit -m "Update on-demand tracking cache [Diagnostic Run]" || true
         git push || true
