@@ -35,6 +35,11 @@ echo "Patched $toml_file"
 echo "Uploading Discord secrets to Wrangler (non-interactive)..."
 printf '%s' "$DISCORD_BOT_TOKEN" | wrangler secret put DISCORD_BOT_TOKEN
 printf '%s' "$DISCORD_CHANNEL_ID" | wrangler secret put DISCORD_CHANNEL_ID
+if [ -n "${MANUAL_TRIGGER_TOKEN:-}" ]; then
+  printf '%s' "$MANUAL_TRIGGER_TOKEN" | wrangler secret put MANUAL_TRIGGER_TOKEN
+else
+  echo "MANUAL_TRIGGER_TOKEN not set; manual public POST trigger will remain disabled."
+fi
 
 echo "Publishing Worker..."
 wrangler deploy

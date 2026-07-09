@@ -1,60 +1,83 @@
-HCPSs Status Monitor - Cloudflare Worker
+# HCPSS Status Monitor - Cloudflare Worker
 
-This Worker performs the scheduled HCPSS status check and posts to Discord using a Bot token.
+This Worker checks the HCPSS status page, posts the current status to Discord, and handles the Discord `Check again` button privately.
 
-Quick setup:
+## What It Does
 
-1. Install Wrangler and login:
-```bash
-npm install -g wrangler
-wrangler login
+- Posts status updates on the configured cron schedule.
+- Replaces the previous Discord status message instead of stacking messages.
+- Verifies Discord interaction signatures before handling button clicks.
+- Responds to `Check again` with a private ephemeral embed.
+- Adds `Last checked` timing to public and private embeds.
+- Posts an error embed if the HCPSS status page cannot be fetched.
+- Exposes `GET /health` for a lightweight health check.
+- Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
+
+## GitHub Actions Deploy
+
+Add these repository secrets under GitHub repo `Settings` > `Secrets and variables` > `Actions`:
+
+- `CF_API_TOKEN`
+- `CF_ACCOUNT_ID`
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_CHANNEL_ID`
+- `DISCORD_PUBLIC_KEY`
+- `MANUAL_TRIGGER_TOKEN` optional, but required if you want manual public POST triggers
+
+Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
+
+The workflow creates a KV namespace, patches `wrangler.toml`, uploads Worker secrets, and deploys the Worker.
+
+## Discord Setup
+
+Set the Worker URL as your Discord Application Interactions Endpoint URL:
+
+```text
+https://hcpss-worker.kodymcmonagle808.workers.dev
 ```
 
-2. Create a KV namespace and note the ID:
+Discord Developer Portal path:
+
+```text
+Application > General Information > Interactions Endpoint URL
+```
+
+## Manual Trigger
+
+Unsigned manual `POST` requests are blocked unless `MANUAL_TRIGGER_TOKEN` is configured.
+
+PowerShell example:
+
+```powershell
+$headers = @{ Authorization = "Bearer YOUR_MANUAL_TRIGGER_TOKEN" }
+Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
+```
+
+You can also use the explicit header:
+
+```powershell
+$headers = @{ "x-manual-trigger-token" = "YOUR_MANUAL_TRIGGER_TOKEN" }
+Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
+```
+
+## Health Check
+
+```text
+GET https://hcpss-worker.kodymcmonagle808.workers.dev/health
+```
+
+The health check returns JSON with the Worker name, timestamp, and whether the manual trigger token is configured.
+
+## Local Wrangler Notes
+
+If deploying locally instead of GitHub Actions:
+
 ```bash
 wrangler kv:namespace create STATUS_STATE --binding STATUS_KV
-```
-
-3. Edit `wrangler.toml` and replace `PASTE_YOUR_KV_ID_HERE` with the KV id returned above.
-
-4. Set secrets:
-```bash
 wrangler secret put DISCORD_BOT_TOKEN
 wrangler secret put DISCORD_CHANNEL_ID
+wrangler secret put MANUAL_TRIGGER_TOKEN
+wrangler deploy
 ```
 
-5. Publish the worker:
-```bash
-wrangler publish
-```
-
-6. Set the Worker URL as the Discord Application Interactions Endpoint (Application → General Information → Interactions Endpoint URL).
-
-Notes:
-- The code posts messages and stores the last message id in KV `STATUS_KV` at key `last_message_id`.
-- The Worker now implements request signature verification for Discord interactions and will:
-	- Respond to PINGs (type 1) with a PONG.
-	- Respond to the `check_again` button (component interaction) with an ephemeral reply containing the latest status.
-
-Secrets and bindings required (use `wrangler secret put` and `wrangler kv:namespace create`):
-```bash
-wrangler kv:namespace create STATUS_STATE --binding STATUS_KV
-wrangler secret put DISCORD_BOT_TOKEN
-wrangler secret put DISCORD_CHANNEL_ID
-wrangler secret put DISCORD_PUBLIC_KEY
-```
-
-After those are configured, `wrangler publish` will deploy the Worker which will handle both scheduled runs and interactions.
-
-CI / GitHub Actions automatic deploy
-----------------------------------
-If you prefer not to run `wrangler` locally, this repository includes a GitHub Actions workflow that can create the KV namespace, upload the required secrets, and publish the Worker for you.
-
-Required repository secrets:
-- `CF_API_TOKEN` — Cloudflare API token with Workers & KV permissions
-- `CF_ACCOUNT_ID` — your Cloudflare account id
-- `DISCORD_BOT_TOKEN` — your Discord bot token
-- `DISCORD_CHANNEL_ID` — the target Discord channel id for posts
-- `DISCORD_PUBLIC_KEY` — your Discord Application public key
-
-After setting the secrets in the repo, go to the Actions tab and run the "Deploy HCPSS Worker" workflow (or push to `main`). The workflow will create a KV namespace and publish the Worker.
+`DISCORD_PUBLIC_KEY` is stored as a Worker variable in `wrangler.toml`, not as a secret.
