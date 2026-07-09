@@ -9,17 +9,46 @@ import pytz
 URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
 MSG_ID_FILE = "last_message_id.txt"
+WEBHOOK_STATE_FILE = os.getenv("DISCORD_WEBHOOK_STATE_FILE", "last_message_state.json")
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
 
 def clean_webhook_url():
     if not WEBHOOK_URL:
         return ""
-    # FIXED: Added [0] index bracket to return a clean URL string block
     return WEBHOOK_URL.split('?')[0]
 
+def load_webhook_state():
+    if os.path.exists(WEBHOOK_STATE_FILE):
+        try:
+            with open(WEBHOOK_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            print(f"Warning: Could not read webhook state file: {e}")
+
+    if os.path.exists(MSG_ID_FILE):
+        try:
+            with open(MSG_ID_FILE, "r", encoding="utf-8") as f:
+                old_raw = f.read().strip()
+                if "," in old_raw:
+                    old_msg_id = old_raw.split(",")[0]
+                    if old_msg_id:
+                        return {"last_message_id": old_msg_id}
+        except Exception as e:
+            print(f"Warning: Could not read legacy webhook message ID file: {e}")
+
+    return {}
+
+def save_webhook_state(state):
+    try:
+        with open(WEBHOOK_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except Exception as e:
+        print(f"Warning: Could not write webhook state file: {e}")
+
 def delete_old_message(msg_id):
-    """Deletes the old message from Discord using the webhook token."""
     base_url = clean_webhook_url()
     if not base_url or not msg_id:
         return
@@ -27,12 +56,14 @@ def delete_old_message(msg_id):
         delete_url = f"{base_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
         
-        if response.status_code == 204 or response.status_code == 404:
-            print(f"Old status message handled successfully (ID: {msg_id}).")
+        if response.status_code == 204:
+            print(f"Deleted previous status message (ID: {msg_id}).")
+        elif response.status_code in (401, 403, 404):
+            print(f"Warning: Could not delete previous message {msg_id} (status {response.status_code}). Continuing.")
         else:
-            print(f"Could not delete message {msg_id}: Status Code {response.status_code}")
+            print(f"Warning: Unexpected delete response for message {msg_id}: Status Code {response.status_code}. Continuing.")
     except Exception as e:
-        print(f"Error executing message deletion: {e}")
+        print(f"Warning: Error deleting previous message {msg_id}: {e}. Continuing.")
 
 def main():
     eastern_tz = pytz.timezone('America/New_York')
@@ -52,7 +83,6 @@ def main():
     extracted_blocks = []
     all_text_combined = ""
     is_normal = True
-    has_multiple_statuses = len(status_cards) > 1
 
     if status_cards:
         for card in status_cards:
@@ -124,16 +154,10 @@ def main():
             print("First run repository setup initialization. Notification bypassed.")
             return
 
-        if os.path.exists(MSG_ID_FILE):
-            with open(MSG_ID_FILE, "r", encoding="utf-8") as f:
-                old_raw = f.read().strip()
-                if "," in old_raw:
-                    old_data = old_raw.split(",")
-                    old_msg_id = old_data[0]
-                    old_was_multi = old_data[1] == "True"
-                    
-                    if not old_was_multi:
-                        delete_old_message(old_msg_id)
+        webhook_state = load_webhook_state()
+        old_msg_id = webhook_state.get("last_message_id")
+        if old_msg_id:
+            delete_old_message(old_msg_id)
 
         embed_color = 3066993 if is_normal else 15158332
         payload["embeds"] = [
@@ -152,16 +176,18 @@ def main():
         base_url = clean_webhook_url()
         if base_url:
             url_with_wait = f"{base_url}?wait=true"
-            response = requests.post(url_with_wait, json=payload)
+            response = requests.post(url_with_wait, json=payload, timeout=10)
             
             if response.status_code == 200 or response.status_code == 201:
                 try:
                     new_msg_id = response.json().get("id")
-                    with open(MSG_ID_FILE, "w", encoding="utf-8") as f:
-                        f.write(f"{new_msg_id},{has_multiple_statuses}")
-                    print(f"Successfully tracked new message ID: {new_msg_id}")
+                    if new_msg_id:
+                        save_webhook_state({"last_message_id": new_msg_id})
+                        print(f"Successfully tracked new message ID: {new_msg_id}")
+                    else:
+                        print("Warning: Webhook post succeeded but no message ID was returned. Previous state unchanged.")
                 except Exception as ex:
-                    print(f"Failed to isolate message response JSON tokens: {ex}")
+                    print(f"Warning: Failed to parse webhook response JSON: {ex}. Previous state unchanged.")
             else:
                 print(f"Webhook connection anomaly: {response.status_code}")
         else:
