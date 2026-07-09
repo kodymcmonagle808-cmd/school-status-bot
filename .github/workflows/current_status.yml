@@ -1,7 +1,7 @@
 name: Get Current Status On-Demand
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # This ensures it ONLY runs manually on command
 
 jobs:
   check-now:
@@ -20,7 +20,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        pip install requests beautifulsoup4
+        pip install requests beautifulsoup4 pytz
 
     - name: Run Immediate Status Check
       env:
@@ -32,7 +32,7 @@ jobs:
         from bs4 import BeautifulSoup
         from datetime import datetime
 
-        URL = "https://hcpss.org"
+        URL = "https://status.hcpss.org/"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
         try:
@@ -40,36 +40,55 @@ jobs:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            status_card = soup.find(class_="views-row")
+            # Target all active operational status card blocks visible on the page
+            status_cards = soup.find_all(class_="views-row")
             
-            if status_card:
-                date_el = status_card.find(class_="views-field-changed") or status_card.find('h3') or status_card.find(class_="field-name-post-date")
-                title_el = status_card.find(class_="status-header") or status_card.find('h2') or status_card.find('h1')
-                body_el = status_card.find(class_="alert-content") or status_card.find('p')
-                
-                date_text = " ".join(date_el.get_text().split()) if date_el else datetime.now().strftime('%B %d, %Y')
-                status_title = " ".join(title_el.get_text().split()) if title_el else "Normal Operations"
-                body_text = " ".join(body_el.get_text().split()) if body_el else ""
-                
-                if "view hcpss calendar" in body_text.lower():
-                    body_text = body_text.lower().replace("view hcpss calendar", "").strip()
-            else:
-                date_text = datetime.now().strftime('%B %d, %Y')
-                status_title = "Normal Operations"
-                body_text = "Staff and students report in accordance with the HCPSS calendar."
+            extracted_blocks = []
+            is_normal = True
 
-            is_normal = "normal operations" in status_title.lower()
+            if status_cards:
+                for card in status_cards:
+                    # Scrape individual elements exactly as written on-screen
+                    date_el = card.find(class_="views-field-changed") or card.find('h3') or card.find(class_="field-name-post-date")
+                    title_el = card.find(class_="status-header") or card.find('h2') or card.find('h1')
+                    body_el = card.find(class_="alert-content") or card.find('p')
+                    
+                    date_text = " ".join(date_el.get_text().split()) if date_el else ""
+                    status_title = " ".join(title_el.get_text().split()) if title_el else ""
+                    body_text = " ".join(body_el.get_text().split()) if body_el else ""
+                    
+                    if "view hcpss calendar" in body_text.lower():
+                        body_text = body_text.lower().replace("view hcpss calendar", "").strip()
+
+                    if status_title and "normal operations" not in status_title.lower():
+                        is_normal = False
+
+                    card_markdown = ""
+                    if date_text:
+                        card_markdown += f"📅 **{date_text}**\n"
+                    if status_title:
+                        card_markdown += f"### {status_title}\n"
+                    if body_text:
+                        card_markdown += f"{body_text}\n"
+                        
+                    if card_markdown:
+                        extracted_blocks.append(card_markdown)
+            
+            if not extracted_blocks:
+                extracted_blocks.append("### Normal Operations\nStaff and students report in accordance with the HCPSS calendar.")
+
+            final_description = "\n___\n\n".join(extracted_blocks)
             embed_color = 3066993 if is_normal else 15158332
-
+            
             payload = {
                 "embeds": [
                     {
-                        "title": f"🗓️ Status for {date_text}",
+                        "title": "🏫 HCPSS Official Operating Status (On-Demand)",
                         "url": URL,
                         "color": embed_color,
-                        "description": f"## **{status_title}**\n\n{body_text}",
+                        "description": final_description,
                         "footer": {
-                            "text": "HCPSS On-Demand Status Check Request"
+                            "text": "Howard County Public School System Manual Monitor"
                         },
                         "timestamp": datetime.utcnow().isoformat() + "Z"
                     }
@@ -77,7 +96,8 @@ jobs:
             }
             
             if WEBHOOK_URL:
-                requests.post(WEBHOOK_URL, json=payload)
+                base_webhook_url = WEBHOOK_URL.split('?')[0]
+                requests.post(base_webhook_url, json=payload)
                 print("Successfully dispatched custom status embed card to Discord.")
             else:
                 print("Error: Webhook configuration value target missing.")
