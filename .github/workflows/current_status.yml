@@ -37,8 +37,10 @@ jobs:
         import pytz
 
         URL = "https://hcpss.org"
-        ONDEMAND_STATE_FILE = "last_ondemand_message_state.json"
+        ONDEMAND_STATE_FILE = "last_message_state.json"
+        LEGACY_ONDEMAND_STATE_FILE = "last_ondemand_message_state.json"
         LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
+        LEGACY_SHARED_MSG_FILE = "last_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
         def clean_webhook_url():
@@ -79,6 +81,15 @@ jobs:
                 except Exception as e:
                     print(f"[WARNING] Could not parse on-demand state file: {e}")
 
+            if os.path.exists(LEGACY_ONDEMAND_STATE_FILE):
+                try:
+                    with open(LEGACY_ONDEMAND_STATE_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, dict):
+                            return data
+                except Exception as e:
+                    print(f"[WARNING] Could not parse legacy on-demand state file: {e}")
+
             if os.path.exists(LEGACY_ONDEMAND_MSG_FILE):
                 try:
                     with open(LEGACY_ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
@@ -87,6 +98,16 @@ jobs:
                             return {"last_message_id": old_msg_id}
                 except Exception as e:
                     print(f"[WARNING] Could not parse legacy on-demand message file: {e}")
+
+            if os.path.exists(LEGACY_SHARED_MSG_FILE):
+                try:
+                    with open(LEGACY_SHARED_MSG_FILE, "r", encoding="utf-8") as f:
+                        old_raw = f.read().strip()
+                        old_msg_id = old_raw.split(",")[0] if "," in old_raw else old_raw
+                        if old_msg_id:
+                            return {"last_message_id": old_msg_id}
+                except Exception as e:
+                    print(f"[WARNING] Could not parse legacy shared message file: {e}")
 
             return {}
 
@@ -195,6 +216,6 @@ jobs:
       run: |
         git config --global user.name "GitHub Actions Bot"
         git config --global user.email "actions@github.com"
-        git add last_ondemand_message_state.json last_ondemand_message_id.txt || true
+        git add last_message_state.json last_ondemand_message_state.json last_ondemand_message_id.txt last_message_id.txt || true
         git commit -m "Update on-demand tracking cache [Diagnostic Run]" || true
         git push || true

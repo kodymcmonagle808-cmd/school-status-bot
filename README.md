@@ -12,6 +12,8 @@ If no previous ID exists, it simply posts a new message.
 If deletion fails (for example not found or permission-related responses), the monitor logs a warning and continues.  
 If posting fails, the stored previous message ID is left unchanged.
 
+Both the scheduled workflow and the on-demand workflow use the same persisted webhook state (`last_message_state.json`) so each new alert replaces the last posted status message instead of stacking.
+
 ## Environment variables
 
 - `DISCORD_WEBHOOK_URL` (required for posting to Discord)
