@@ -17,8 +17,7 @@ def delete_old_message(msg_id):
     if not WEBHOOK_URL or not msg_id:
         return
     try:
-        # Construct the specialized deletion endpoint URL using the saved message ID
-        # Requires appending ?wait=true to the baseline webhook address
+        # Splits off any query parameters and formats the exact delete endpoint
         base_url = WEBHOOK_URL.split('?')[0]
         delete_url = f"{base_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
@@ -72,8 +71,7 @@ def main():
     has_text_changed = (current_snapshot_block != previous_status)
     is_normal = "normal operations" in status_title.lower()
 
-    # Smart scanning rules to catch stacked multi-day text listings
-    # If the text body contains dates or multiple lines of text, it counts as a multi-status layout
+    # Checks for stacked multi-day text listings
     has_multiple_days = any(k in body_text.lower() for k in ["june", "july", "january", "february", "march", "delayed", "closed"]) or "\n" in body_text
 
     should_send_discord = False
@@ -103,17 +101,14 @@ def main():
             print("First run repository setup initialization. Notification bypassed.")
             return
 
-        # ----------------------------------------------------
-        # HOOK DELETION LOGIC BLOCK
-        # Only triggers deletion if the old status is NOT a multi-day announcement card
-        # ----------------------------------------------------
+        # Handle message cleanup logs
         if os.path.exists(MSG_ID_FILE):
             with open(MSG_ID_FILE, "r", encoding="utf-8") as f:
-                old_data = f.read().strip().split(",")
-                if len(old_data) == 2:
+                old_raw = f.read().strip()
+                if "," in old_raw:
+                    old_data = old_raw.split(",")
                     old_msg_id, old_was_multi = old_data[0], old_data[1] == "True"
                     
-                    # If the previous message was NOT a stacked complex message, delete it now
                     if not old_was_multi:
                         delete_old_message(old_msg_id)
                     else:
@@ -134,14 +129,14 @@ def main():
         ]
 
         if WEBHOOK_URL:
-            # Appending ?wait=true forces Discord to reply with the sent message ID JSON metadata
-            url_with_wait = WEBHOOK_URL.split('?')[0] + "?wait=true"
+            # Format url parameters safely for response waiting data
+            base_webhook = WEBHOOK_URL.split('?')[0]
+            url_with_wait = f"{base_webhook}?wait=true"
             response = requests.post(url_with_wait, json=payload)
             
             if response.status_code in:
                 try:
                     new_msg_id = response.json().get("id")
-                    # Save the new message ID along with whether this current alert is multi-day
                     with open(MSG_ID_FILE, "w", encoding="utf-8") as f:
                         f.write(f"{new_msg_id},{has_multiple_days}")
                     print(f"Successfully tracked new message ID: {new_msg_id}")
