@@ -10,6 +10,8 @@ URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
 MSG_ID_FILE = "last_message_id.txt"
 WEBHOOK_STATE_FILE = os.getenv("DISCORD_WEBHOOK_STATE_FILE", "last_message_state.json")
+LEGACY_ONDEMAND_STATE_FILE = "last_ondemand_message_state.json"
+LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
 
@@ -38,6 +40,26 @@ def load_webhook_state():
                         return {"last_message_id": old_msg_id}
         except Exception as e:
             print(f"Warning: Could not read legacy webhook message ID file: {e}")
+
+    if os.path.exists(LEGACY_ONDEMAND_STATE_FILE):
+        try:
+            with open(LEGACY_ONDEMAND_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    last_message_id = data.get("last_message_id")
+                    if last_message_id:
+                        return {"last_message_id": last_message_id}
+        except Exception as e:
+            print(f"Warning: Could not read legacy on-demand webhook state file: {e}")
+
+    if os.path.exists(LEGACY_ONDEMAND_MSG_FILE):
+        try:
+            with open(LEGACY_ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
+                old_msg_id = f.read().strip()
+                if old_msg_id:
+                    return {"last_message_id": old_msg_id}
+        except Exception as e:
+            print(f"Warning: Could not read legacy on-demand webhook message ID file: {e}")
 
     return {}
 
