@@ -12,14 +12,19 @@ MSG_ID_FILE = "last_message_id.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
 
+def clean_webhook_url():
+    if not WEBHOOK_URL:
+        return ""
+    # FIXED: Added [0] index bracket to return a clean URL string block
+    return WEBHOOK_URL.split('?')[0]
+
 def delete_old_message(msg_id):
     """Deletes the old message from Discord using the webhook token."""
-    if not WEBHOOK_URL or not msg_id:
+    base_url = clean_webhook_url()
+    if not base_url or not msg_id:
         return
     try:
-        # LOCKED INDEX FIX: Explicitly takes the first element text string out of the split list array
-        base_webhook_url = WEBHOOK_URL.split('?')[0]
-        delete_url = f"{base_webhook_url}/messages/{msg_id}"
+        delete_url = f"{base_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
         
         if response.status_code == 204 or response.status_code == 404:
@@ -79,7 +84,7 @@ def main():
         extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
         all_text_combined = "Normal Operations"
 
-    primary_date = extracted_blocks[0][0] if extracted_blocks and extracted_blocks[0][0] else now_local.strftime('%B %d, %Y')
+    primary_date = extracted_blocks[0][0] if extracted_blocks else now_local.strftime('%B %d, %Y')
     final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
     current_snapshot_block = " ".join(all_text_combined.split())
 
@@ -144,10 +149,9 @@ def main():
             }
         ]
 
-        if WEBHOOK_URL:
-            # LOCKED INDEX FIX: Explicitly takes the first element text string out of the split list array
-            base_webhook_url = WEBHOOK_URL.split('?')[0]
-            url_with_wait = f"{base_webhook_url}?wait=true"
+        base_url = clean_webhook_url()
+        if base_url:
+            url_with_wait = f"{base_url}?wait=true"
             response = requests.post(url_with_wait, json=payload)
             
             if response.status_code == 200 or response.status_code == 201:
