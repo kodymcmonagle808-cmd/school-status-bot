@@ -41,7 +41,7 @@ jobs:
             if not WEBHOOK_URL or not msg_id:
                 return
             try:
-                # FIXED: Extracted text indexing pointer
+                # LOCKED INDEX FIX: Explicitly takes the first element text string out of the split list array
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 delete_url = f"{base_webhook_url}/messages/{msg_id}"
                 response = requests.delete(delete_url, timeout=10)
@@ -118,7 +118,7 @@ jobs:
             }
             
             if WEBHOOK_URL:
-                # FIXED: Extracted text indexing pointer
+                # LOCKED INDEX FIX: Explicitly takes the first element text string out of the split list array
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 url_with_wait = f"{base_webhook_url}?wait=true"
                 res = requests.post(url_with_wait, json=payload)
