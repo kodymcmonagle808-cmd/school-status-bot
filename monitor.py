@@ -1,14 +1,33 @@
 import os
+import json
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-import pytz # Handles Eastern Standard/Daylight Time adjustments automatically
+import pytz
 
 # Configuration
-URL = "https://status.hcpss.org/"
+URL = "https://hcpss.org"
 STATUS_FILE = "last_status.txt"
+MSG_ID_FILE = "last_message_id.txt"  # Tracks old Discord message IDs to delete them
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
+
+def delete_old_message(msg_id):
+    """Deletes the old message from Discord using the webhook token."""
+    if not WEBHOOK_URL or not msg_id:
+        return
+    try:
+        # Construct the specialized deletion endpoint URL using the saved message ID
+        # Requires appending ?wait=true to the baseline webhook address
+        base_url = WEBHOOK_URL.split('?')[0]
+        delete_url = f"{base_url}/messages/{msg_id}"
+        response = requests.delete(delete_url, timeout=10)
+        if response.status_code in:
+            print(f"Successfully deleted old status message (ID: {msg_id}) from channel.")
+        else:
+            print(f"Could not delete message {msg_id}: {response.status_code}")
+    except Exception as e:
+        print(f"Error executing message deletion: {e}")
 
 def main():
     print("Fetching HCPSS Status website...")
@@ -40,11 +59,9 @@ def main():
 
     current_snapshot_block = f"Date: {date_text} | Status: {status_title} | Body: {body_text}"
     
-    # Force evaluation into Maryland/Eastern local timezone values
+    # Check for Maryland local time
     eastern_tz = pytz.timezone('America/New_York')
     now_local = datetime.now(eastern_tz)
-    
-    # True if the execution window lands inside the 12:00 AM to 12:45 AM local bracket
     is_daily_broadcast_time = (now_local.hour == 0 and 0 <= now_local.minute <= 45)
 
     previous_status = ""
@@ -52,45 +69,55 @@ def main():
         with open(STATUS_FILE, "r", encoding="utf-8") as f:
             previous_status = f.read().strip()
 
-    # Base state tracks
     has_text_changed = (current_snapshot_block != previous_status)
     is_normal = "normal operations" in status_title.lower()
 
-    # CRITICAL EVALUATION RULES:
-    # 1. Trigger if it is the local midnight window.
-    # 2. Trigger if the status changed AND it is an actual emergency alert.
-    # 3. If the website just changes internal timestamps but stays "Normal Operations", stay silent.
+    # Smart scanning rules to catch stacked multi-day text listings
+    # If the text body contains dates or multiple lines of text, it counts as a multi-status layout
+    has_multiple_days = any(k in body_text.lower() for k in ["june", "july", "january", "february", "march", "delayed", "closed"]) or "\n" in body_text
+
     should_send_discord = False
     payload = {}
 
     if is_daily_broadcast_time:
         should_send_discord = True
-        # If it happens to find an active closure right at midnight, attach the student role ping
         if not is_normal:
             payload["content"] = f"{STUDENT_ROLE_PING} ⚠️ **HCPSS EMERGENCY STATUS ACTIVE AT MIDNIGHT!**"
         else:
             payload["content"] = "☀️ **Good Morning! Here is your Daily HCPSS Status Report:**"
             
     elif has_text_changed and not is_normal:
-        # Instant emergency break alert trigger outside midnight hours
         should_send_discord = True
         payload["content"] = f"{STUDENT_ROLE_PING} ⚠️ **HCPSS SYSTEM OPERATING STATUS UPDATE DETECTED!**"
         
     elif has_text_changed and is_normal and previous_status != "":
-        # Schools were closed/delayed, but now they just changed BACK to normal operations
         should_send_discord = True
         payload["content"] = "✅ **HCPSS Status Restored to Normal Parameters:**"
 
-    # Always save the newest track data locally so the file matches the site layout state
     if has_text_changed:
         with open(STATUS_FILE, "w", encoding="utf-8") as f:
             f.write(current_snapshot_block)
 
-    # Dispatch to Discord if conditions pass validation checks
     if should_send_discord:
         if previous_status == "" and not is_daily_broadcast_time:
             print("First run repository setup initialization. Notification bypassed.")
             return
+
+        # ----------------------------------------------------
+        # HOOK DELETION LOGIC BLOCK
+        # Only triggers deletion if the old status is NOT a multi-day announcement card
+        # ----------------------------------------------------
+        if os.path.exists(MSG_ID_FILE):
+            with open(MSG_ID_FILE, "r", encoding="utf-8") as f:
+                old_data = f.read().strip().split(",")
+                if len(old_data) == 2:
+                    old_msg_id, old_was_multi = old_data[0], old_data[1] == "True"
+                    
+                    # If the previous message was NOT a stacked complex message, delete it now
+                    if not old_was_multi:
+                        delete_old_message(old_msg_id)
+                    else:
+                        print("Preserving previous post because it contained a complex multi-day status stack.")
 
         embed_color = 3066993 if is_normal else 15158332
         payload["embeds"] = [
@@ -107,8 +134,21 @@ def main():
         ]
 
         if WEBHOOK_URL:
-            requests.post(WEBHOOK_URL, json=payload)
-            print("Successfully sent verified alert to Discord.")
+            # Appending ?wait=true forces Discord to reply with the sent message ID JSON metadata
+            url_with_wait = WEBHOOK_URL.split('?')[0] + "?wait=true"
+            response = requests.post(url_with_wait, json=payload)
+            
+            if response.status_code in:
+                try:
+                    new_msg_id = response.json().get("id")
+                    # Save the new message ID along with whether this current alert is multi-day
+                    with open(MSG_ID_FILE, "w", encoding="utf-8") as f:
+                        f.write(f"{new_msg_id},{has_multiple_days}")
+                    print(f"Successfully tracked new message ID: {new_msg_id}")
+                except Exception as ex:
+                    print(f"Failed to isolate message response JSON tokens: {ex}")
+            else:
+                print(f"Webhook connection anomaly: {response.status_code}")
         else:
             print("Missing webhook secret string identifier.")
     else:
