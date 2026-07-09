@@ -17,13 +17,13 @@ def delete_old_message(msg_id):
     if not WEBHOOK_URL or not msg_id:
         return
     try:
-        # Formats the exact API delete endpoint using the message ID
-        base_url = WEBHOOK_URL.split('?')[0]
-        delete_url = f"{base_url}/messages/{msg_id}"
+        # Correctly isolates the base URL string by indexing the split array
+        base_webhook_url = WEBHOOK_URL.split('?')[0]
+        delete_url = f"{base_webhook_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
         
-        # 204 means Successfully Deleted, 404 means message was already deleted manually
-        if response.status_code in:
+        # 204 means Successfully Deleted, 404 means message was already gone
+        if response.status_code == 204 or response.status_code == 404:
             print(f"Old status message handled successfully (ID: {msg_id}).")
         else:
             print(f"Could not delete message {msg_id}: Status Code {response.status_code}")
@@ -132,13 +132,13 @@ def main():
         ]
 
         if WEBHOOK_URL:
-            # Format url parameters safely for response waiting data
-            base_webhook = WEBHOOK_URL.split('?')[0]
-            url_with_wait = f"{base_webhook}?wait=true"
+            # Safely formats URL array parameters for wait status returns
+            base_webhook_url = WEBHOOK_URL.split('?')[0]
+            url_with_wait = f"{base_webhook_url}?wait=true"
             response = requests.post(url_with_wait, json=payload)
             
             # 200 or 201 means successful message delivery
-            if response.status_code in:
+            if response.status_code == 200 or response.status_code == 201:
                 try:
                     new_msg_id = response.json().get("id")
                     with open(MSG_ID_FILE, "w", encoding="utf-8") as f:
