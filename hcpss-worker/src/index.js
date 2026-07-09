@@ -5,8 +5,9 @@ const MAX_EMBEDS = 10;
 const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 const EPHEMERAL_FLAG = 64;
 const POST_STATUS_COMMAND = 'post-status';
-const POST_STATUS_ROLE_ID = '1521682363942436896';
 const CONFIG_COMMAND = 'config';
+const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
+const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 
 async function fetchHtml(url) {
   const r = await fetch(url);
@@ -241,9 +242,29 @@ async function postMessageToChannel(env, payload) {
   });
 }
 
-async function doCheckAndPost(env) {
-  const config = await getConfig(env);
+async function postLog(env, logChannelId, message) {
+  if (!logChannelId) return;
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token) return;
+
+  await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      content: message,
+      allowed_mentions: { parse: [] }
+    })
+  }).catch(() => {});
+}
+
+async function doCheckAndPost(env, options = {}) {
+  const stored = await getConfig(env);
+  const config = getEffectiveConfig(stored);
   const channelId = config.alert_channel_id || env.DISCORD_CHANNEL_ID;
+  const logChannelId = config.log_channel_id;
   const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
 
   const builtStatus = await buildStatusPayload({ includeComponents: true });
@@ -261,6 +282,7 @@ async function doCheckAndPost(env) {
 
   if (!postResult.ok) {
     const postError = await postResult.text();
+    await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`);
     return { ok: false, error: postError, status: postResult.status };
   }
 
@@ -278,6 +300,12 @@ async function doCheckAndPost(env) {
       headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
     }).catch(() => {});
   }
+
+  await postLog(
+    env,
+    logChannelId,
+    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: ${options.invokerId}` : ''}) to channel ${channelId}, message ${postedMessageId}.`
+  );
 
   return {
     ok: true,
@@ -298,10 +326,6 @@ function deferredInteractionResponse() {
   });
 }
 
-function memberHasPostStatusRole(member) {
-  return Array.isArray(member && member.roles) && member.roles.includes(POST_STATUS_ROLE_ID);
-}
-
 function memberIsAdmin(member) {
   const perms = member && member.permissions;
   if (!perms) return false;
@@ -313,8 +337,27 @@ function memberIsAdmin(member) {
   }
 }
 
-function canConfigure(member) {
-  return memberIsAdmin(member) || memberHasPostStatusRole(member);
+function getEffectiveConfig(stored) {
+  const next = { ...(stored || {}) };
+  if (!next.staff_role_id) next.staff_role_id = DEFAULT_STAFF_ROLE_ID;
+  if (!next.log_channel_id) next.log_channel_id = DEFAULT_LOG_CHANNEL_ID;
+  if (!Array.isArray(next.ping_role_ids)) next.ping_role_ids = [];
+  return next;
+}
+
+function memberHasRole(member, roleId) {
+  return !!roleId && Array.isArray(member && member.roles) && member.roles.includes(roleId);
+}
+
+async function canUseCommands(member, env) {
+  if (memberIsAdmin(member)) return true;
+  const stored = await getConfig(env);
+  const cfg = getEffectiveConfig(stored);
+  return memberHasRole(member, cfg.staff_role_id);
+}
+
+async function canConfigure(member, env) {
+  return await canUseCommands(member, env);
 }
 
 async function updateInteractionOriginal(env, interactionToken, payload) {
@@ -329,7 +372,8 @@ async function updateInteractionOriginal(env, interactionToken, payload) {
 }
 
 async function runPostStatusCommand(body, env) {
-  const result = await doCheckAndPost(env);
+  const invokerId = body && body.member && body.member.user && body.member.user.id;
+  const result = await doCheckAndPost(env, { source: 'command', invokerId });
   if (result.ok) {
     await updateInteractionOriginal(env, body.token, {
       content: result.isError ? 'Posted the HCPSS error status embed.' : 'Posted the latest HCPSS status.',
@@ -365,11 +409,14 @@ async function setConfig(env, next) {
 }
 
 function renderConfigMessage(config) {
-  const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
-  const roles = Array.isArray(config.ping_role_ids) && config.ping_role_ids.length
-    ? config.ping_role_ids.map(id => `<@&${id}>`).join(' ')
+  const effective = getEffectiveConfig(config);
+  const channel = effective.alert_channel_id ? `<#${effective.alert_channel_id}>` : '(not set)';
+  const logChannel = effective.log_channel_id ? `<#${effective.log_channel_id}>` : '(not set)';
+  const staffRole = effective.staff_role_id ? `<@&${effective.staff_role_id}>` : '(not set)';
+  const roles = Array.isArray(effective.ping_role_ids) && effective.ping_role_ids.length
+    ? effective.ping_role_ids.map(id => `<@&${id}>`).join(' ')
     : '(none)';
-  return `Alert channel: ${channel}\nPing roles (emergencies): ${roles}`;
+  return `Alert channel: ${channel}\nLog channel: ${logChannel}\nStaff role: ${staffRole}\nPing roles (emergencies): ${roles}`;
 }
 
 function buildConfigComponents() {
@@ -383,6 +430,27 @@ function buildConfigComponents() {
         min_values: 1,
         max_values: 1,
         channel_types: [0, 5]
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 8,
+        custom_id: 'cfg_log_channel',
+        placeholder: 'Select log channel',
+        min_values: 1,
+        max_values: 1,
+        channel_types: [0, 5]
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 6,
+        custom_id: 'cfg_staff_role',
+        placeholder: 'Select staff role (required for commands)',
+        min_values: 1,
+        max_values: 1
       }]
     },
     {
@@ -415,6 +483,10 @@ async function applyConfigUpdate(body, env) {
   const next = { ...current };
   if (customId === 'cfg_channel' && Array.isArray(values) && values[0]) {
     next.alert_channel_id = values[0];
+  } else if (customId === 'cfg_log_channel' && Array.isArray(values) && values[0]) {
+    next.log_channel_id = values[0];
+  } else if (customId === 'cfg_staff_role' && Array.isArray(values) && values[0]) {
+    next.staff_role_id = values[0];
   } else if (customId === 'cfg_roles' && Array.isArray(values)) {
     next.ping_role_ids = values.slice(0, 5);
   } else if (customId === 'cfg_clear_roles') {
@@ -454,26 +526,19 @@ export default {
       const body = await request.json();
       if (body.type === 1) return jsonResponse({ type: 1 });
 
-      if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {
-        if (!memberHasPostStatusRole(body.member)) {
-          return interactionResponse({
-            content: 'You do not have permission to run this status post command.',
-            flags: EPHEMERAL_FLAG
-          });
-        }
+      if (body.type === 2 && !(await canUseCommands(body.member, env))) {
+        return interactionResponse({
+          content: 'You do not have permission to use this bot command.',
+          flags: EPHEMERAL_FLAG
+        });
+      }
 
+      if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {
         ctx.waitUntil(runPostStatusCommand(body, env));
         return deferredInteractionResponse();
       }
 
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
-        if (!canConfigure(body.member)) {
-          return interactionResponse({
-            content: 'You do not have permission to configure this bot.',
-            flags: EPHEMERAL_FLAG
-          });
-        }
-
         const config = await getConfig(env);
         return interactionResponse({
           content: renderConfigMessage(config),
@@ -492,8 +557,14 @@ export default {
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
-        if (!canConfigure(body.member)) {
-          return jsonResponse({ type: 7, data: { content: 'You do not have permission to configure this bot.' } });
+        if (!(await canConfigure(body.member, env))) {
+          return jsonResponse({
+            type: 7,
+            data: {
+              content: 'You do not have permission to configure this bot.',
+              components: []
+            }
+          });
         }
 
         const next = await applyConfigUpdate(body, env);
@@ -516,7 +587,7 @@ export default {
     if (manualTriggerError) return manualTriggerError;
 
     try {
-      const result = await doCheckAndPost(env);
+      const result = await doCheckAndPost(env, { source: 'manual' });
       if (result.ok) {
         const prefix = result.isError ? 'Posted error embed' : 'Posted';
         return new Response(`${prefix}: ${result.id}`, { status: 200 });
@@ -531,7 +602,7 @@ export default {
 export async function scheduled(event, env) {
   event.waitUntil((async () => {
     try {
-      await doCheckAndPost(env);
+      await doCheckAndPost(env, { source: 'scheduled' });
     } catch (e) {
       console.error('Scheduled run failed', e);
     }

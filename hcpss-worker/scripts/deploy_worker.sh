@@ -60,7 +60,7 @@ else
   echo "MANUAL_TRIGGER_TOKEN not set; manual public POST trigger will remain disabled."
 fi
 
-echo "Registering Discord /post-status command..."
+echo "Registering Discord slash commands..."
 discord_application_id=$(grep -E '^DISCORD_APPLICATION_ID = ' "$toml_file" | sed -E 's/.*"([^"]+)".*/\1/')
 if [ -z "$discord_application_id" ]; then
   echo "Could not find DISCORD_APPLICATION_ID in wrangler.toml." >&2
@@ -125,7 +125,7 @@ fi
 }
 
 ensure_command "post-status" "Post the latest HCPSS status now."
-ensure_command "config" "Configure alert channel and ping roles."
+ensure_command "config" "Configure alert channel, log channel, staff role, and ping roles."
 
 echo "Publishing Worker..."
 wrangler deploy

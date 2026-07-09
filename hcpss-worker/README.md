@@ -8,7 +8,9 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Replaces the previous Discord status message instead of stacking messages.
 - Verifies Discord interaction signatures before handling button clicks.
 - Responds to `Check again` with a private ephemeral embed.
-- Adds `/post-status` for members with role `1521682363942436896` to publish a fresh public status from Discord.
+- Adds staff-only `/post-status` to publish a fresh public status from Discord.
+- Adds staff-only `/config` to set the alert channel, log channel, staff role, and emergency ping roles.
+- Logs scheduled checks, manual triggers, and `/post-status` runs to the configured log channel.
 - Adds `Last checked` timing to public and private embeds.
 - Posts an error embed if the HCPSS status page cannot be fetched.
 - Exposes `GET /health` for a lightweight health check.
@@ -23,7 +25,7 @@ Add these repository secrets under GitHub repo `Settings` > `Secrets and variabl
 - `DISCORD_BOT_TOKEN`
 - `DISCORD_CHANNEL_ID`
 - `DISCORD_PUBLIC_KEY`
-- `DISCORD_GUILD_ID` optional, recommended so `/post-status` appears immediately
+- `DISCORD_GUILD_ID` optional, recommended so `/post-status` and `/config` appear immediately
 - `MANUAL_TRIGGER_TOKEN` optional, but required if you want manual public POST triggers
 
 Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
@@ -87,3 +89,5 @@ wrangler deploy
 ```
 
 `DISCORD_PUBLIC_KEY` is stored as a Worker variable in `wrangler.toml`, not as a secret.
+
+By default, commands require staff role `1521682363942436896` and check logs go to channel `1524911607942221965`. Both can be changed with `/config`.
