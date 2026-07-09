@@ -286,33 +286,18 @@ export default {
             const html = await fetchHtml(HCPSS_URL);
             const cards = extractCards(html);
             const desc = assembleDescription(cards);
-            const primaryDate = cards[0] ? (cards[0].date || new Date().toLocaleDateString()) : new Date().toLocaleDateString();
-            const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
-            const embeds = splitEmbeds(`Status for ${primaryDate}`, desc, HCPSS_URL, color, 'HCPSS Status Monitor - Only you can see this').slice(0, 10);
+            // Truncate description to avoid exceeding interaction limits
+            const short = desc.length > 1900 ? desc.slice(0,1900) + '\n\n(Truncated)' : desc;
             const responsePayload = {
               type: 4,
               data: {
-                content: '',
-                embeds,
+                content: short,
                 flags: 64
               }
             };
             return new Response(JSON.stringify(responsePayload), { status: 200, headers: { 'Content-Type': 'application/json' } });
           } catch (e) {
-            return new Response(JSON.stringify({
-              type: 4,
-              data: {
-                content: '',
-                embeds: [{
-                  title: 'Status check failed',
-                  description: 'Error fetching status.',
-                  color: 15158332,
-                  footer: { text: 'HCPSS Status Monitor - Only you can see this' },
-                  timestamp: new Date().toISOString()
-                }],
-                flags: 64
-              }
-            }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            return new Response(JSON.stringify({ type: 4, data: { content: 'Error fetching status.', flags: 64 } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
           }
         }
 
