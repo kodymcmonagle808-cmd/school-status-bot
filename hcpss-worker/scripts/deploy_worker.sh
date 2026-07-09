@@ -69,9 +69,10 @@ command_payload=$(jq -n \
   --arg description "Post the latest HCPSS status now." \
   '{ name: $name, description: $description, type: 1, dm_permission: false }')
 
-commands_base="https://discord.com/api/v10/applications/${discord_application_id}"
+global_base="https://discord.com/api/v10/applications/${discord_application_id}"
+commands_base="$global_base"
 if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-  commands_base="${commands_base}/guilds/${DISCORD_GUILD_ID}"
+  commands_base="${global_base}/guilds/${DISCORD_GUILD_ID}"
 fi
 
 commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
@@ -94,6 +95,24 @@ fi
 if [ -z "$(echo "$command_resp" | jq -r '.id // empty')" ]; then
   echo "Failed to register /post-status command: $command_resp" >&2
   exit 1
+fi
+
+# If we're registering a guild command (fast propagation), delete any global command with
+# the same name to avoid Discord showing duplicates.
+if [ -n "${DISCORD_GUILD_ID:-}" ]; then
+  global_resp=$(curl -sS -X GET "${global_base}/commands" \
+    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+    -H "Content-Type: application/json")
+  global_ids=$(echo "$global_resp" | jq -r '.[]? | select(.name == "post-status") | .id')
+  if [ -n "$global_ids" ]; then
+    echo "Removing global /post-status command(s) to prevent duplicates..."
+    while IFS= read -r id; do
+      [ -z "$id" ] && continue
+      curl -sS -X DELETE "${global_base}/commands/${id}" \
+        -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+        -H "Content-Type: application/json" >/dev/null || true
+    done <<< "$global_ids"
+  fi
 fi
 
 echo "Publishing Worker..."
