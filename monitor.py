@@ -205,8 +205,6 @@ def main():
 
         webhook_state = load_webhook_state()
         old_msg_id = webhook_state.get("last_message_id")
-        if old_msg_id:
-            delete_old_message(old_msg_id)
 
         embed_color = 3066993 if is_normal else 15158332
         payload["embeds"] = [
@@ -232,6 +230,8 @@ def main():
                     if new_msg_id:
                         save_webhook_state({"last_message_id": new_msg_id})
                         print(f"Successfully tracked new message ID: {new_msg_id}")
+                        if old_msg_id and old_msg_id != new_msg_id:
+                            delete_old_message(old_msg_id)
                     else:
                         print("Warning: Webhook post succeeded but no message ID was returned. Previous state unchanged.")
                 except Exception as ex:

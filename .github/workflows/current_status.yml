@@ -193,7 +193,6 @@ jobs:
             old_msg_id = ondemand_state.get("last_message_id")
             if old_msg_id:
                 print(f"[DEBUG] Found existing tracker message ID value: '{old_msg_id}'")
-                delete_old_message(old_msg_id)
             else:
                 print("[DEBUG] No previous on-demand message ID discovered in state files.")
 
@@ -228,6 +227,8 @@ jobs:
                     if new_msg_id:
                         save_ondemand_state({"last_message_id": new_msg_id})
                         print(f"[SUCCESS] Saved message ID '{new_msg_id}' in on-demand state file.")
+                        if old_msg_id and old_msg_id != new_msg_id:
+                            delete_old_message(old_msg_id)
                     else:
                         print("[WARNING] Post succeeded but no message ID was returned. Existing state was not changed.")
                 else:
