@@ -46,6 +46,9 @@ fi
 echo "Patching wrangler.toml with KV id..."
 sed -i.bak -E "s/id = \"[^\"]*\"/id = \"${kv_id}\"/" "$toml_file"
 sed -i.bak -E "s/DISCORD_PUBLIC_KEY = \"[^\"]*\"/DISCORD_PUBLIC_KEY = \"${DISCORD_PUBLIC_KEY}\"/" "$toml_file"
+if [ -n "${DISCORD_GUILD_ID:-}" ]; then
+  sed -i.bak -E "s/DISCORD_GUILD_ID = \"[^\"]*\"/DISCORD_GUILD_ID = \"${DISCORD_GUILD_ID}\"/" "$toml_file"
+fi
 echo "Patched $toml_file"
 
 echo "Uploading Discord secrets to Wrangler (non-interactive)..."
@@ -64,10 +67,15 @@ if [ -z "$discord_application_id" ]; then
   exit 1
 fi
 
-command_payload=$(jq -n \
-  --arg name "post-status" \
-  --arg description "Post the latest HCPSS status now." \
-  '{ name: $name, description: $description, type: 1, dm_permission: false }')
+ensure_command() {
+  local name="$1"
+  local description="$2"
+
+  local command_payload
+  command_payload=$(jq -n \
+    --arg name "$name" \
+    --arg description "$description" \
+    '{ name: $name, description: $description, type: 1, dm_permission: false }')
 
 global_base="https://discord.com/api/v10/applications/${discord_application_id}"
 commands_base="$global_base"
@@ -78,7 +86,7 @@ fi
 commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
   -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
   -H "Content-Type: application/json")
-command_id=$(echo "$commands_resp" | jq -r '.[]? | select(.name == "post-status") | .id' | head -n 1)
+command_id=$(echo "$commands_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id' | head -n 1)
 
 if [ -n "$command_id" ]; then
   command_resp=$(curl -sS -X PATCH "${commands_base}/commands/${command_id}" \
@@ -93,7 +101,7 @@ else
 fi
 
 if [ -z "$(echo "$command_resp" | jq -r '.id // empty')" ]; then
-  echo "Failed to register /post-status command: $command_resp" >&2
+  echo "Failed to register /${name} command: $command_resp" >&2
   exit 1
 fi
 
@@ -103,9 +111,9 @@ if [ -n "${DISCORD_GUILD_ID:-}" ]; then
   global_resp=$(curl -sS -X GET "${global_base}/commands" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
     -H "Content-Type: application/json")
-  global_ids=$(echo "$global_resp" | jq -r '.[]? | select(.name == "post-status") | .id')
+  global_ids=$(echo "$global_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
   if [ -n "$global_ids" ]; then
-    echo "Removing global /post-status command(s) to prevent duplicates..."
+    echo "Removing global /${name} command(s) to prevent duplicates..."
     while IFS= read -r id; do
       [ -z "$id" ] && continue
       curl -sS -X DELETE "${global_base}/commands/${id}" \
@@ -114,6 +122,10 @@ if [ -n "${DISCORD_GUILD_ID:-}" ]; then
     done <<< "$global_ids"
   fi
 fi
+}
+
+ensure_command "post-status" "Post the latest HCPSS status now."
+ensure_command "config" "Configure alert channel and ping roles."
 
 echo "Publishing Worker..."
 wrangler deploy

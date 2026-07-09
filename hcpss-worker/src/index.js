@@ -6,6 +6,7 @@ const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 const EPHEMERAL_FLAG = 64;
 const POST_STATUS_COMMAND = 'post-status';
 const POST_STATUS_ROLE_ID = '1521682363942436896';
+const CONFIG_COMMAND = 'config';
 
 async function fetchHtml(url) {
   const r = await fetch(url);
@@ -224,8 +225,11 @@ async function buildStatusPayload({ includeComponents = false, footer = 'HCPSS S
 
 async function postMessageToChannel(env, payload) {
   const token = env.DISCORD_BOT_TOKEN;
-  const channelId = env.DISCORD_CHANNEL_ID;
+  const channelId = payload && payload.__channelId ? payload.__channelId : env.DISCORD_CHANNEL_ID;
   if (!token || !channelId) throw new Error('Missing token or channel id');
+
+  const cleaned = { ...payload };
+  delete cleaned.__channelId;
 
   return await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: 'POST',
@@ -233,13 +237,27 @@ async function postMessageToChannel(env, payload) {
       Authorization: `Bot ${token}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(cleaned)
   });
 }
 
 async function doCheckAndPost(env) {
+  const config = await getConfig(env);
+  const channelId = config.alert_channel_id || env.DISCORD_CHANNEL_ID;
+  const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+
   const builtStatus = await buildStatusPayload({ includeComponents: true });
-  const postResult = await postMessageToChannel(env, builtStatus.payload);
+  const isNormal = builtStatus.payload.embeds && builtStatus.payload.embeds[0] && builtStatus.payload.embeds[0].color === 3066993;
+
+  const content = (!isNormal && pingRoleIds.length) ? pingRoleIds.map(id => `<@&${id}>`).join(' ') : '';
+  const payload = {
+    ...builtStatus.payload,
+    content,
+    allowed_mentions: pingRoleIds.length ? { roles: pingRoleIds } : { parse: [] },
+    __channelId: channelId
+  };
+
+  const postResult = await postMessageToChannel(env, payload);
 
   if (!postResult.ok) {
     const postError = await postResult.text();
@@ -249,10 +267,13 @@ async function doCheckAndPost(env) {
   const postedMessage = await postResult.json();
   const postedMessageId = postedMessage.id;
   const previousMessageId = await env.STATUS_KV.get('last_message_id');
+  const previousChannelId = await env.STATUS_KV.get('last_channel_id');
   await env.STATUS_KV.put('last_message_id', postedMessageId);
+  await env.STATUS_KV.put('last_channel_id', channelId);
 
   if (previousMessageId && previousMessageId !== postedMessageId) {
-    await fetch(`https://discord.com/api/v10/channels/${env.DISCORD_CHANNEL_ID}/messages/${previousMessageId}`, {
+    const deleteChannelId = previousChannelId || channelId;
+    await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
     }).catch(() => {});
@@ -281,6 +302,21 @@ function memberHasPostStatusRole(member) {
   return Array.isArray(member && member.roles) && member.roles.includes(POST_STATUS_ROLE_ID);
 }
 
+function memberIsAdmin(member) {
+  const perms = member && member.permissions;
+  if (!perms) return false;
+  try {
+    // ADMINISTRATOR = 0x8
+    return (BigInt(perms) & 8n) === 8n;
+  } catch {
+    return false;
+  }
+}
+
+function canConfigure(member) {
+  return memberIsAdmin(member) || memberHasPostStatusRole(member);
+}
+
 async function updateInteractionOriginal(env, interactionToken, payload) {
   const applicationId = env.DISCORD_APPLICATION_ID;
   if (!applicationId || !interactionToken) return;
@@ -306,6 +342,87 @@ async function runPostStatusCommand(body, env) {
     content: `Could not post status: ${result.error || result.status}`,
     embeds: []
   });
+}
+
+function configKey(env) {
+  const guildId = env.DISCORD_GUILD_ID;
+  return guildId ? `config:${guildId}` : 'config:default';
+}
+
+async function getConfig(env) {
+  const raw = await env.STATUS_KV.get(configKey(env));
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function setConfig(env, next) {
+  await env.STATUS_KV.put(configKey(env), JSON.stringify(next));
+}
+
+function renderConfigMessage(config) {
+  const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
+  const roles = Array.isArray(config.ping_role_ids) && config.ping_role_ids.length
+    ? config.ping_role_ids.map(id => `<@&${id}>`).join(' ')
+    : '(none)';
+  return `Alert channel: ${channel}\nPing roles (emergencies): ${roles}`;
+}
+
+function buildConfigComponents() {
+  return [
+    {
+      type: 1,
+      components: [{
+        type: 8,
+        custom_id: 'cfg_channel',
+        placeholder: 'Select alert channel',
+        min_values: 1,
+        max_values: 1,
+        channel_types: [0, 5]
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 6,
+        custom_id: 'cfg_roles',
+        placeholder: 'Select role(s) to ping on emergencies',
+        min_values: 0,
+        max_values: 5
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 2,
+        style: 2,
+        label: 'Clear ping roles',
+        custom_id: 'cfg_clear_roles'
+      }]
+    }
+  ];
+}
+
+async function applyConfigUpdate(body, env) {
+  const current = await getConfig(env);
+  const customId = body.data && body.data.custom_id;
+  const values = body.data && body.data.values;
+
+  const next = { ...current };
+  if (customId === 'cfg_channel' && Array.isArray(values) && values[0]) {
+    next.alert_channel_id = values[0];
+  } else if (customId === 'cfg_roles' && Array.isArray(values)) {
+    next.ping_role_ids = values.slice(0, 5);
+  } else if (customId === 'cfg_clear_roles') {
+    next.ping_role_ids = [];
+  }
+
+  await setConfig(env, next);
+  return next;
 }
 
 export default {
@@ -349,12 +466,43 @@ export default {
         return deferredInteractionResponse();
       }
 
+      if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
+        if (!canConfigure(body.member)) {
+          return interactionResponse({
+            content: 'You do not have permission to configure this bot.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const config = await getConfig(env);
+        return interactionResponse({
+          content: renderConfigMessage(config),
+          components: buildConfigComponents(),
+          flags: EPHEMERAL_FLAG
+        });
+      }
+
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
         const builtStatus = await buildStatusPayload({ footer: 'HCPSS Status Monitor - Only you can see this' });
         return interactionResponse({
           content: '',
           embeds: builtStatus.payload.embeds,
           flags: EPHEMERAL_FLAG
+        });
+      }
+
+      if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
+        if (!canConfigure(body.member)) {
+          return jsonResponse({ type: 7, data: { content: 'You do not have permission to configure this bot.' } });
+        }
+
+        const next = await applyConfigUpdate(body, env);
+        return jsonResponse({
+          type: 7,
+          data: {
+            content: renderConfigMessage(next),
+            components: buildConfigComponents()
+          }
         });
       }
 
