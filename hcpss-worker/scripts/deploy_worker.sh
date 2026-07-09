@@ -69,18 +69,23 @@ command_payload=$(jq -n \
   --arg description "Post the latest HCPSS status now." \
   '{ name: $name, description: $description, type: 1, dm_permission: false }')
 
-commands_resp=$(curl -sS -X GET "https://discord.com/api/v10/applications/${discord_application_id}/commands" \
+commands_base="https://discord.com/api/v10/applications/${discord_application_id}"
+if [ -n "${DISCORD_GUILD_ID:-}" ]; then
+  commands_base="${commands_base}/guilds/${DISCORD_GUILD_ID}"
+fi
+
+commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
   -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
   -H "Content-Type: application/json")
 command_id=$(echo "$commands_resp" | jq -r '.[]? | select(.name == "post-status") | .id' | head -n 1)
 
 if [ -n "$command_id" ]; then
-  command_resp=$(curl -sS -X PATCH "https://discord.com/api/v10/applications/${discord_application_id}/commands/${command_id}" \
+  command_resp=$(curl -sS -X PATCH "${commands_base}/commands/${command_id}" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
     -H "Content-Type: application/json" \
     --data "$command_payload")
 else
-  command_resp=$(curl -sS -X POST "https://discord.com/api/v10/applications/${discord_application_id}/commands" \
+  command_resp=$(curl -sS -X POST "${commands_base}/commands" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
     -H "Content-Type: application/json" \
     --data "$command_payload")

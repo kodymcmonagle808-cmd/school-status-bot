@@ -23,6 +23,7 @@ Add these repository secrets under GitHub repo `Settings` > `Secrets and variabl
 - `DISCORD_BOT_TOKEN`
 - `DISCORD_CHANNEL_ID`
 - `DISCORD_PUBLIC_KEY`
+- `DISCORD_GUILD_ID` optional, recommended so `/post-status` appears immediately
 - `MANUAL_TRIGGER_TOKEN` optional, but required if you want manual public POST triggers
 
 Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
