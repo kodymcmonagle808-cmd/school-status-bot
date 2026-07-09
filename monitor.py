@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import pytz
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 # Configuration
 URL = "https://hcpss.org"
@@ -15,10 +16,37 @@ LEGACY_ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 STUDENT_ROLE_PING = "<@&1521688178057154683>"
 
-def clean_webhook_url():
+def _webhook_base_and_query():
     if not WEBHOOK_URL:
+        return "", ""
+
+    parsed = urlsplit(WEBHOOK_URL)
+    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    # Preserve webhook routing params (for example thread_id) but control wait separately.
+    passthrough = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() != "wait"]
+    query = urlencode(passthrough)
+    return base_url, query
+
+def build_webhook_post_url():
+    base_url, query = _webhook_base_and_query()
+    if not base_url:
         return ""
-    return WEBHOOK_URL.split('?')[0]
+
+    params = parse_qsl(query, keep_blank_values=True) if query else []
+    params = [(k, v) for k, v in params if k.lower() != "wait"]
+    params.append(("wait", "true"))
+    return f"{base_url}?{urlencode(params)}"
+
+def build_webhook_delete_url(msg_id):
+    base_url, query = _webhook_base_and_query()
+    if not base_url or not msg_id:
+        return ""
+
+    delete_url = f"{base_url}/messages/{msg_id}"
+    if query:
+        return f"{delete_url}?{query}"
+    return delete_url
 
 def load_webhook_state():
     if os.path.exists(WEBHOOK_STATE_FILE):
@@ -71,11 +99,10 @@ def save_webhook_state(state):
         print(f"Warning: Could not write webhook state file: {e}")
 
 def delete_old_message(msg_id):
-    base_url = clean_webhook_url()
-    if not base_url or not msg_id:
+    delete_url = build_webhook_delete_url(msg_id)
+    if not delete_url:
         return
     try:
-        delete_url = f"{base_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
         
         if response.status_code == 204:
@@ -195,10 +222,9 @@ def main():
             }
         ]
 
-        base_url = clean_webhook_url()
-        if base_url:
-            url_with_wait = f"{base_url}?wait=true"
-            response = requests.post(url_with_wait, json=payload, timeout=10)
+        post_url = build_webhook_post_url()
+        if post_url:
+            response = requests.post(post_url, json=payload, timeout=10)
             
             if response.status_code == 200 or response.status_code == 201:
                 try:

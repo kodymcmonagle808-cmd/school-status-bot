@@ -39,6 +39,7 @@ jobs:
         from bs4 import BeautifulSoup
         from datetime import datetime
         import pytz
+        from urllib.parse import parse_qsl, urlencode, urlsplit
 
         URL = "https://hcpss.org"
         ONDEMAND_STATE_FILE = "last_message_state.json"
@@ -47,22 +48,45 @@ jobs:
         LEGACY_SHARED_MSG_FILE = "last_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
-        def clean_webhook_url():
+        def webhook_base_and_query():
             if not WEBHOOK_URL:
                 print("[DEBUG] WEBHOOK_URL environment variable is EMPTY!")
-                return ""
-            clean_url = WEBHOOK_URL.split('?')[0]
+                return "", ""
+
+            parsed = urlsplit(WEBHOOK_URL)
+            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            passthrough = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() != "wait"]
+            query = urlencode(passthrough)
             print(f"[DEBUG] Raw Webhook URL: {WEBHOOK_URL[:30]}...")
             print(f"[DEBUG] Cleaned Base Webhook URL: {clean_url[:30]}...")
-            return clean_url
+            return clean_url, query
+
+        def build_post_url():
+            base_url, query = webhook_base_and_query()
+            if not base_url:
+                return ""
+
+            params = parse_qsl(query, keep_blank_values=True) if query else []
+            params = [(k, v) for k, v in params if k.lower() != "wait"]
+            params.append(("wait", "true"))
+            return f"{base_url}?{urlencode(params)}"
+
+        def build_delete_url(msg_id):
+            base_url, query = webhook_base_and_query()
+            if not base_url or not msg_id:
+                return ""
+
+            delete_url = f"{base_url}/messages/{msg_id}"
+            if query:
+                return f"{delete_url}?{query}"
+            return delete_url
 
         def delete_old_message(msg_id):
-            base_url = clean_webhook_url()
-            if not base_url or not msg_id:
-                print(f"[DEBUG] Skinned deletion execution. base_url present: {bool(base_url)}, msg_id: {msg_id}")
+            delete_url = build_delete_url(msg_id)
+            if not delete_url:
+                print(f"[DEBUG] Skinned deletion execution. delete_url present: {bool(delete_url)}, msg_id: {msg_id}")
                 return
             try:
-                delete_url = f"{base_url}/messages/{msg_id}"
                 print(f"[DEBUG] Sending HTTP DELETE request to target URL: {delete_url}")
                 response = requests.delete(delete_url, timeout=10)
                 print(f"[DEBUG] Discord Response Status Code: {response.status_code}")
@@ -192,9 +216,8 @@ jobs:
                 ]
             }
             
-            base_url = clean_webhook_url()
-            if base_url:
-                url_with_wait = f"{base_url}?wait=true"
+            url_with_wait = build_post_url()
+            if url_with_wait:
                 print(f"[DEBUG] Posting fresh payload to Discord endpoint with query waiting tags activated...")
                 res = requests.post(url_with_wait, json=payload, timeout=12)
                 print(f"[DEBUG] Discord Post Response Status: {res.status_code}")
