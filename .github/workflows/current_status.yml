@@ -33,7 +33,7 @@ jobs:
         from datetime import datetime
         import pytz
 
-        URL = "https://status.hcpss.org/"
+        URL = "https://hcpss.org"
         ONDEMAND_MSG_FILE = "last_ondemand_message_id.txt"
         WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
@@ -41,7 +41,7 @@ jobs:
             if not WEBHOOK_URL or not msg_id:
                 return
             try:
-                # FIXED: Extracted index [0] to keep url format string-clean
+                # FIXED: Added [0] to extract the text string out of the split list
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 delete_url = f"{base_webhook_url}/messages/{msg_id}"
                 response = requests.delete(delete_url, timeout=10)
@@ -51,7 +51,6 @@ jobs:
                 print(f"Error deleting old on-demand message: {e}")
 
         try:
-            # Force evaluation into Maryland/Eastern local timezone values instantly
             eastern_tz = pytz.timezone('America/New_York')
             now_local = datetime.now(eastern_tz)
 
@@ -89,19 +88,17 @@ jobs:
                     if card_markdown:
                         extracted_blocks.append((date_text, card_markdown))
             
-            # FIXED: Forces fallback text to reference localized Maryland clock string
             if not extracted_blocks:
                 extracted_blocks.append((now_local.strftime('%B %d, %Y'), "## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar."))
 
-            # Handle the previous message cleanup file if it exists
+            # Read the previous saved message ID out of repository files
             if os.path.exists(ONDEMAND_MSG_FILE):
                 with open(ONDEMAND_MSG_FILE, "r", encoding="utf-8") as f:
                     old_msg_id = f.read().strip()
                     if old_msg_id:
                         delete_old_message(old_msg_id)
 
-            # Build and send the card matching your layout preferences
-            primary_date = extracted_blocks[0][0] if extracted_blocks[0][0] else now_local.strftime('%B %d, %Y')
+            primary_date = extracted_blocks[0][0] if extracted_blocks and extracted_blocks[0][0] else now_local.strftime('%B %d, %Y')
             final_description = "\n___\n\n".join([block[1] for block in extracted_blocks])
             
             embed_color = 3066993 if is_normal else 15158332
@@ -122,6 +119,7 @@ jobs:
             }
             
             if WEBHOOK_URL:
+                # FIXED: Added [0] here as well to pass string verification
                 base_webhook_url = WEBHOOK_URL.split('?')[0]
                 url_with_wait = f"{base_webhook_url}?wait=true"
                 res = requests.post(url_with_wait, json=payload)
