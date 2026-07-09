@@ -1,4 +1,4 @@
-import os
+pythonimport os
 import json
 import requests
 from bs4 import BeautifulSoup
@@ -20,7 +20,7 @@ def delete_old_message(msg_id):
         base_webhook_url = WEBHOOK_URL.split('?')[0]
         delete_url = f"{base_webhook_url}/messages/{msg_id}"
         response = requests.delete(delete_url, timeout=10)
-        if response.status_code in:
+        if response.status_code == 204 or response.status_code == 404:
             print(f"Old status message handled successfully (ID: {msg_id}).")
         else:
             print(f"Could not delete message {msg_id}: Status {response.status_code}")
@@ -134,7 +134,7 @@ def main():
             with open(MSG_ID_FILE, "r", encoding="utf-8") as f:
                 old_raw = f.read().strip()
                 if "," in old_raw:
-                    old_msg_id, old_was_multi = old_raw.split(",")
+                    old_msg_id, old_was_multi = old_raw.split(",", 1)
                     # ONLY delete if the past alert card wasn't an emergency multi-day stack
                     if old_was_multi != "True":
                         delete_old_message(old_msg_id)
@@ -162,7 +162,7 @@ def main():
             url_with_wait = f"{base_webhook_url}?wait=true"
             response = requests.post(url_with_wait, json=payload)
             
-            if response.status_code in:
+            if response.status_code == 200 or response.status_code == 201:
                 try:
                     new_msg_id = response.json().get("id")
                     with open(MSG_ID_FILE, "w", encoding="utf-8") as f:
