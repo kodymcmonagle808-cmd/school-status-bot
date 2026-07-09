@@ -1,11 +1,62 @@
 const HCPSS_URL = 'https://hcpss.org';
 const EMBED_LIMIT = 4096;
 const EMBED_SAFE = 3900;
+const MAX_EMBEDS = 10;
+const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 
 async function fetchHtml(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error('Fetch failed ' + r.status);
   return await r.text();
+}
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+function formatCheckedAt(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(date);
+}
+
+function footerWithCheckedAt(label, checkedAt) {
+  return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
+}
+
+function getManualTriggerToken(request) {
+  const auth = request.headers.get('authorization') || '';
+  if (auth.toLowerCase().startsWith('bearer ')) {
+    return auth.slice(7).trim();
+  }
+
+  const headerToken = request.headers.get(MANUAL_TRIGGER_HEADER);
+  if (headerToken) return headerToken.trim();
+
+  const url = new URL(request.url);
+  return (url.searchParams.get('token') || '').trim();
+}
+
+function validateManualTrigger(request, env) {
+  if (!env.MANUAL_TRIGGER_TOKEN) {
+    return new Response('Manual trigger disabled: MANUAL_TRIGGER_TOKEN is not configured.', { status: 403 });
+  }
+
+  const providedToken = getManualTriggerToken(request);
+  if (!providedToken || providedToken !== env.MANUAL_TRIGGER_TOKEN) {
+    return new Response('Forbidden', { status: 403 });
+  }
+
+  return null;
 }
 
 function hexToUint8(hex) {
@@ -75,7 +126,7 @@ function assembleDescription(cards) {
   }).join("\n___\n\n");
 }
 
-function splitEmbeds(title, description, url, color, footer) {
+function splitEmbeds(title, description, url, color, footer, checkedAt = new Date()) {
   const chunks = [];
   let rem = (description || '').trim();
   while (rem.length) {
@@ -90,8 +141,8 @@ function splitEmbeds(title, description, url, color, footer) {
     const embed = {
       color,
       description: c,
-      footer: { text: footer || '' },
-      timestamp: new Date().toISOString()
+      footer: { text: footerWithCheckedAt(footer || 'HCPSS Status Monitor', checkedAt) },
+      timestamp: checkedAt.toISOString()
     };
     if (idx === 0) { embed.title = title; embed.url = url; }
     else { embed.title = `${title} (cont. ${idx+1})`; }
@@ -114,7 +165,76 @@ async function postMessageToChannel(env, payload) {
   return res;
 }
 
+function buildCheckAgainComponents() {
+  return [{ type: 1, components: [{ type: 2, style: 1, label: 'Check again', custom_id: 'check_again' }] }];
+}
+
+async function buildStatusEmbeds(footer = 'HCPSS Status Monitor') {
+  const checkedAt = new Date();
+  const html = await fetchHtml(HCPSS_URL);
+  const cards = extractCards(html);
+  const desc = assembleDescription(cards);
+  const primaryDate = cards[0] ? (cards[0].date || formatCheckedAt(checkedAt)) : formatCheckedAt(checkedAt);
+  const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
+  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
+}
+
+function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor') {
+  const checkedAt = new Date();
+  const detail = error && error.message ? `\n\nTechnical detail: ${error.message}` : '';
+  return [{
+    title: 'HCPSS status check failed',
+    url: HCPSS_URL,
+    description: `The monitor could not fetch the HCPSS status page right now. Try again in a minute or check https://hcpss.org directly.${detail}`,
+    color: 15158332,
+    footer: { text: footerWithCheckedAt(footer, checkedAt) },
+    timestamp: checkedAt.toISOString()
+  }];
+}
+
+async function buildStatusPayload({ includeComponents = false, footer = 'HCPSS Status Monitor' } = {}) {
+  try {
+    const payload = {
+      content: '',
+      embeds: await buildStatusEmbeds(footer)
+    };
+    if (includeComponents) payload.components = buildCheckAgainComponents();
+    return { payload, isError: false };
+  } catch (error) {
+    const payload = {
+      content: '',
+      embeds: buildStatusErrorEmbeds(error, footer)
+    };
+    if (includeComponents) payload.components = buildCheckAgainComponents();
+    return { payload, isError: true, error };
+  }
+}
+
 async function doCheckAndPost(env) {
+  const builtStatus = await buildStatusPayload({ includeComponents: true });
+  const postResult = await postMessageToChannel(env, builtStatus.payload);
+  if (postResult.ok) {
+    const postedMessage = await postResult.json();
+    const postedMessageId = postedMessage.id;
+    const previousMessageId = await env.STATUS_KV.get('last_message_id');
+    await env.STATUS_KV.put('last_message_id', postedMessageId);
+    if (previousMessageId && previousMessageId !== postedMessageId) {
+      await fetch(`https://discord.com/api/v10/channels/${env.DISCORD_CHANNEL_ID}/messages/${previousMessageId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+      }).catch(()=>{});
+    }
+    return {
+      ok: true,
+      id: postedMessageId,
+      isError: builtStatus.isError,
+      error: builtStatus.error && builtStatus.error.message
+    };
+  }
+
+  const postError = await postResult.text();
+  return { ok: false, error: postError, status: postResult.status };
+
   const html = await fetchHtml(HCPSS_URL);
   const cards = extractCards(html);
   const desc = assembleDescription(cards);
