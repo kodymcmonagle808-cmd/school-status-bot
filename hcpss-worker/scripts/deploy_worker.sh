@@ -28,13 +28,13 @@ fi
 echo "Created KV id: $kv_id"
 
 echo "Patching wrangler.toml with KV id..."
-sed -i.bak -E "s/(binding = \"STATUS_KV\", id = \")[^\"]*(\")/\1${kv_id}\2/" "$toml_file"
+sed -i.bak -E "s/id = \"[^\"]*\"/id = \"${kv_id}\"/" "$toml_file"
 echo "Patched $toml_file"
 
 echo "Uploading Discord secrets to Wrangler (non-interactive)..."
-printf '%s' "$DISCORD_BOT_TOKEN" | wrangler secret put DISCORD_BOT_TOKEN || true
-printf '%s' "$DISCORD_CHANNEL_ID" | wrangler secret put DISCORD_CHANNEL_ID || true
-printf '%s' "$DISCORD_PUBLIC_KEY" | wrangler secret put DISCORD_PUBLIC_KEY || true
+printf '%s' "$DISCORD_BOT_TOKEN" | wrangler secret put DISCORD_BOT_TOKEN
+printf '%s' "$DISCORD_CHANNEL_ID" | wrangler secret put DISCORD_CHANNEL_ID
+printf '%s' "$DISCORD_PUBLIC_KEY" | wrangler secret put DISCORD_PUBLIC_KEY
 
 echo "Publishing Worker..."
 wrangler deploy
