@@ -414,7 +414,7 @@ async function doCheckAndPost(env, options = {}) {
   await postLog(
     env,
     logChannelId,
-    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: ${options.invokerId}` : ''}) to channel ${channelId}, message ${postedMessageId}.`
+    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`
   );
 
   return {
@@ -561,7 +561,7 @@ async function runOverrideCommand(body, env) {
   });
 
   const cfg = getEffectiveConfig(await getConfig(env));
-  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: ${invokerId}` : ''}).`);
+  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`);
 
   await updateInteractionOriginal(env, body.token, {
     content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,
@@ -825,15 +825,15 @@ export default {
     } catch (err) {
       return new Response('Error: ' + err.message, { status: 500 });
     }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        await doCheckAndPost(env, { source: 'scheduled' });
+      } catch (e) {
+        console.error('Scheduled run failed', e);
+      }
+    })());
   }
 };
-
-export async function scheduled(event, env) {
-  event.waitUntil((async () => {
-    try {
-      await doCheckAndPost(env, { source: 'scheduled' });
-    } catch (e) {
-      console.error('Scheduled run failed', e);
-    }
-  })());
-}
