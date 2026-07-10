@@ -120,10 +120,8 @@ ensure_command() {
   fi
 
 global_base="https://discord.com/api/v10/applications/${discord_application_id}"
+# Register commands globally so they are available across all servers
 commands_base="$global_base"
-if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-  commands_base="${global_base}/guilds/${DISCORD_GUILD_ID}"
-fi
 
 commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
   -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
@@ -147,21 +145,20 @@ if [ -z "$(echo "$command_resp" | jq -r '.id // empty')" ]; then
   exit 1
 fi
 
-# If we're registering a guild command (fast propagation), delete any global command with
-# the same name to avoid Discord showing duplicates.
+# If we are registering a global command, delete any guild command to avoid duplicate commands.
 if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-  global_resp=$(curl -sS -X GET "${global_base}/commands" \
+  guild_resp=$(curl -sS -X GET "${global_base}/guilds/${DISCORD_GUILD_ID}/commands" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
     -H "Content-Type: application/json")
-  global_ids=$(echo "$global_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
-  if [ -n "$global_ids" ]; then
-    echo "Removing global /${name} command(s) to prevent duplicates..."
+  guild_ids=$(echo "$guild_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
+  if [ -n "$guild_ids" ]; then
+    echo "Removing guild /${name} command(s) to prevent duplicates..."
     while IFS= read -r id; do
       [ -z "$id" ] && continue
-      curl -sS -X DELETE "${global_base}/commands/${id}" \
+      curl -sS -X DELETE "${global_base}/guilds/${DISCORD_GUILD_ID}/commands/${id}" \
         -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
         -H "Content-Type: application/json" >/dev/null || true
-    done <<< "$global_ids"
+    done <<< "$guild_ids"
   fi
 fi
 }
@@ -170,11 +167,8 @@ delete_command() {
   local name="$1"
   local global_base="https://discord.com/api/v10/applications/${discord_application_id}"
   local commands_base="$global_base"
-  if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-    commands_base="${global_base}/guilds/${DISCORD_GUILD_ID}"
-  fi
 
-  # Delete from active commands base
+  # Delete from global commands base
   local commands_resp
   commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
@@ -184,29 +178,29 @@ delete_command() {
   if [ -n "$command_ids" ]; then
     while IFS= read -r id; do
       [ -z "$id" ] && continue
-      echo "Deleting command /${name} (ID: ${id}) from ${commands_base}..."
+      echo "Deleting global command /${name} (ID: ${id})..."
       curl -sS -X DELETE "${commands_base}/commands/${id}" \
         -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
         -H "Content-Type: application/json" >/dev/null || true
     done <<< "$command_ids"
   fi
 
-  # If using guild commands, also delete from global scope to prevent duplicates
+  # Also delete from guild scope if guild id is set to prevent duplicates
   if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-    local global_resp
-    global_resp=$(curl -sS -X GET "${global_base}/commands" \
+    local guild_resp
+    guild_resp=$(curl -sS -X GET "${global_base}/guilds/${DISCORD_GUILD_ID}/commands" \
       -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
       -H "Content-Type: application/json")
-    local global_ids
-    global_ids=$(echo "$global_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
-    if [ -n "$global_ids" ]; then
+    local guild_ids
+    guild_ids=$(echo "$guild_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
+    if [ -n "$guild_ids" ]; then
       while IFS= read -r id; do
         [ -z "$id" ] && continue
-        echo "Deleting global command /${name} (ID: ${id}) to prevent duplicates..."
-        curl -sS -X DELETE "${global_base}/commands/${id}" \
+        echo "Deleting guild command /${name} (ID: ${id}) to prevent duplicates..."
+        curl -sS -X DELETE "${global_base}/guilds/${DISCORD_GUILD_ID}/commands/${id}" \
           -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
           -H "Content-Type: application/json" >/dev/null || true
-      done <<< "$global_ids"
+      done <<< "$guild_ids"
     fi
   fi
 }

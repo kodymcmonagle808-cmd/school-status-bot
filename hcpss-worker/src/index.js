@@ -350,8 +350,8 @@ function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor') {
   return splitEmbeds(title, body, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
 }
 
-async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor' } = {}) {
-  const activeOverride = env ? await getActiveOverride(env) : null;
+async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null } = {}) {
+  const activeOverride = env ? await getActiveOverride(env, guildId) : null;
   if (activeOverride) {
     const payload = {
       content: '',
@@ -361,23 +361,31 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
   }
 
-  try {
-    const html = await fetchHtml(HCPSS_URL);
-    const cards = extractCards(html);
-    const statusKey = determineStatusKey(cards);
-    const payload = {
-      content: '',
-      embeds: await buildStatusEmbeds(footer, cards)
-    };
-    if (includeComponents) payload.components = buildCheckAgainComponents();
-    return { payload, isError: false, statusKey };
-  } catch (error) {
+  if (error) {
     const payload = {
       content: '',
       embeds: buildStatusErrorEmbeds(error, footer)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: true, error, statusKey: 'unknown_alert' };
+  }
+
+  try {
+    const finalCards = cards || extractCards(await fetchHtml(HCPSS_URL));
+    const statusKey = determineStatusKey(finalCards);
+    const payload = {
+      content: '',
+      embeds: await buildStatusEmbeds(footer, finalCards)
+    };
+    if (includeComponents) payload.components = buildCheckAgainComponents();
+    return { payload, isError: false, statusKey };
+  } catch (err) {
+    const payload = {
+      content: '',
+      embeds: buildStatusErrorEmbeds(err, footer)
+    };
+    if (includeComponents) payload.components = buildCheckAgainComponents();
+    return { payload, isError: true, error: err, statusKey: 'unknown_alert' };
   }
 }
 
@@ -429,14 +437,19 @@ async function handlePanelCheck(body, env) {
   });
 }
 
-async function postLog(env, logChannelId, message, stats = {}) {
+async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   if (!logChannelId) return;
   const token = env.DISCORD_BOT_TOKEN;
   if (!token) return;
 
+  const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
+  const panelMsgIdKey = guildId ? `log_panel_message_id:${guildId}` : 'log_panel_message_id';
+  const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
+  const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
+
   // Prepend the new log message to the log history array stored in KV
   let logs = [];
-  const rawLogs = await env.STATUS_KV.get('panel_logs');
+  const rawLogs = await env.STATUS_KV.get(logKey);
   if (rawLogs) {
     try {
       logs = JSON.parse(rawLogs);
@@ -456,17 +469,17 @@ async function postLog(env, logChannelId, message, stats = {}) {
 
     logs.unshift(`[${timeStr}] ${message}`);
     logs = logs.slice(0, 25); // keep last 25 logs
-    await env.STATUS_KV.put('panel_logs', JSON.stringify(logs));
+    await env.STATUS_KV.put(logKey, JSON.stringify(logs));
   }
 
   // Record latest latency if provided
   if (typeof stats.latency === 'number') {
-    await env.STATUS_KV.put('last_check_latency', String(stats.latency));
+    await env.STATUS_KV.put(latencyKey, String(stats.latency));
   }
   
-  const latency = await env.STATUS_KV.get('last_check_latency') || 'N/A';
+  const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
   const lastCheckTime = Date.now();
-  await env.STATUS_KV.put('last_check_time', String(lastCheckTime));
+  await env.STATUS_KV.put(checkTimeKey, String(lastCheckTime));
 
   // Build the embed
   const recentLogs = logs.slice(0, 3);
@@ -501,7 +514,7 @@ async function postLog(env, logChannelId, message, stats = {}) {
     components
   };
 
-  const panelMsgId = await env.STATUS_KV.get('log_panel_message_id');
+  const panelMsgId = await env.STATUS_KV.get(panelMsgIdKey);
   let success = false;
 
   if (panelMsgId) {
@@ -536,7 +549,7 @@ async function postLog(env, logChannelId, message, stats = {}) {
       });
       if (resp.ok) {
         const data = await resp.json();
-        await env.STATUS_KV.put('log_panel_message_id', data.id);
+        await env.STATUS_KV.put(panelMsgIdKey, data.id);
       }
     } catch (err) {
       console.error('Failed to post control panel:', err);
@@ -639,9 +652,10 @@ async function runHistoryCommand(env) {
   };
 }
 
-async function runLogsCommand(env) {
+async function runLogsCommand(env, guildId = '') {
   const checkedAt = new Date();
-  const rawLogs = await env.STATUS_KV.get('panel_logs');
+  const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
+  const rawLogs = await env.STATUS_KV.get(logKey);
   let logs = [];
   if (rawLogs) {
     try {
@@ -718,107 +732,192 @@ async function handleScraperSuccess(env) {
 }
 
 async function doCheckAndPost(env, options = {}) {
-  const stored = await getConfig(env);
-  const config = getEffectiveConfig(stored);
-  const channelId = config.alert_channel_id || env.DISCORD_CHANNEL_ID;
-  const logChannelId = config.log_channel_id;
-  const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
-
   const start = Date.now();
-  const builtStatus = await buildStatusPayload(env, { includeComponents: true });
+
+  // 1. Fetch HTML and extract cards once
+  let cards = null;
+  let error = null;
+  try {
+    const html = await fetchHtml(HCPSS_URL);
+    cards = extractCards(html);
+  } catch (err) {
+    error = err;
+  }
   const latency = Date.now() - start;
 
-  const statusKey = builtStatus.statusKey || 'normal_operations';
-  
-  let roleId = undefined;
-  if (config.status_ping_roles) {
-    roleId = config.status_ping_roles[statusKey];
-  }
-
-  let rolesToPing = [];
-  if (roleId) {
-    rolesToPing = [roleId];
-  } else if (roleId === undefined && statusKey !== 'normal_operations') {
-    // Fallback to legacy ping_role_ids for non-normal statuses
-    rolesToPing = pingRoleIds;
-  }
-
-  const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
-  const payload = {
-    ...builtStatus.payload,
-    content,
-    allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
-    __channelId: channelId
-  };
-
-  const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
-  const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
-  const lastKnownStatus = await env.STATUS_KV.get('last_known_status');
-  const statusChanged = lastKnownStatus !== liveStatusText;
-  
-  const isScheduled = options.source === 'scheduled';
-  const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
-
-  let postedMessageId = null;
-  if (shouldPostAlert) {
-    const postResult = await postMessageToChannel(env, payload);
-
-    if (!postResult.ok) {
-      const postError = await postResult.text();
-      await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`, { latency });
-      return { ok: false, error: postError, status: postResult.status };
-    }
-
-    const postedMessage = await postResult.json();
-    postedMessageId = postedMessage.id;
-    const previousMessageId = await env.STATUS_KV.get('last_message_id');
-    const previousChannelId = await env.STATUS_KV.get('last_channel_id');
-    await env.STATUS_KV.put('last_message_id', postedMessageId);
-    await env.STATUS_KV.put('last_channel_id', channelId);
-
-    if (previousMessageId && previousMessageId !== postedMessageId) {
-      const deleteChannelId = previousChannelId || channelId;
-      await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-      }).catch(() => {});
-    }
-
-    await postLog(
-      env,
-      logChannelId,
-      `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
-      { latency }
-    );
+  // Determine target guilds to post/check for.
+  let targetGuildIds = [];
+  if (options.guildId) {
+    targetGuildIds = [options.guildId];
   } else {
-    // Scheduled check with no status change: just update stats & timestamp, no new log message
-    await postLog(
-      env,
-      logChannelId,
-      null,
-      { latency }
-    );
+    // Collect all guilds from KV keys starting with 'config:'
+    try {
+      const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
+      targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
+    } catch (e) {
+      console.error('Failed to list configs in KV:', e);
+    }
+    
+    // Ensure default guild from environment is included if configured
+    if (env.DISCORD_GUILD_ID && !targetGuildIds.includes(env.DISCORD_GUILD_ID)) {
+      targetGuildIds.push(env.DISCORD_GUILD_ID);
+    }
   }
 
-  // Handle scraper failure counter and alert ping
-  if (builtStatus.isError) {
-    await handleScraperFailure(env, logChannelId, config, builtStatus.error);
+  if (targetGuildIds.length === 0) {
+    return { ok: true, message: "No guilds configured." };
+  }
+
+  // Fetch status once using a default/live payload to determine global history/failures tracking.
+  const liveStatusResult = await buildStatusPayload(env, {
+    includeComponents: true,
+    cards,
+    error
+  });
+
+  const firstEmbedGlobal = liveStatusResult.payload.embeds && liveStatusResult.payload.embeds[0];
+  const liveStatusTextGlobal = firstEmbedGlobal ? (firstEmbedGlobal.description || '') : '';
+
+  // Track global status history on change
+  if (!liveStatusResult.isOverride && !liveStatusResult.isError) {
+    const lastKnownStatus = await env.STATUS_KV.get('last_known_status');
+    if (lastKnownStatus !== liveStatusTextGlobal) {
+      if (firstEmbedGlobal) {
+        const statusTitle = firstEmbedGlobal.title || '';
+        await trackStatusHistory(env, liveStatusTextGlobal, statusTitle);
+      }
+      await env.STATUS_KV.put('last_known_status', liveStatusTextGlobal);
+    }
+  }
+
+  const results = [];
+  const isScheduled = options.source === 'scheduled';
+
+  for (const guildId of targetGuildIds) {
+    const stored = await getConfig(env, guildId);
+    const config = getEffectiveConfig(stored);
+    const channelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+    if (!channelId) {
+      // Guild hasn't configured an alert channel yet
+      continue;
+    }
+    const logChannelId = config.log_channel_id;
+    const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+
+    // Get the status payload for THIS guild (incorporates any active override for this guild)
+    const builtStatus = await buildStatusPayload(env, {
+      includeComponents: true,
+      guildId,
+      cards,
+      error
+    });
+
+    const statusKey = builtStatus.statusKey || 'normal_operations';
+
+    let roleId = undefined;
+    if (config.status_ping_roles) {
+      roleId = config.status_ping_roles[statusKey];
+    }
+
+    let rolesToPing = [];
+    if (roleId) {
+      rolesToPing = [roleId];
+    } else if (roleId === undefined && statusKey !== 'normal_operations') {
+      rolesToPing = pingRoleIds;
+    }
+
+    const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+    const payload = {
+      ...builtStatus.payload,
+      content,
+      allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
+      __channelId: channelId
+    };
+
+    const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+    const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+    
+    const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
+    const statusChanged = lastPostedText !== liveStatusText;
+
+    const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
+
+    let postedMessageId = null;
+    if (shouldPostAlert) {
+      const postResult = await postMessageToChannel(env, payload);
+      if (!postResult.ok) {
+        const postError = await postResult.text();
+        await postLog(
+          env,
+          logChannelId,
+          `HCPSS check failed for guild ${guildId} (source: ${options.source || 'unknown'}): ${postError}`,
+          { latency },
+          guildId
+        );
+        results.push({ guildId, ok: false, error: postError, status: postResult.status });
+        continue;
+      }
+
+      const postedMessage = await postResult.json();
+      postedMessageId = postedMessage.id;
+
+      const previousMessageId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
+      const previousChannelId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
+      
+      await env.STATUS_KV.put(`last_message_id:${guildId}`, postedMessageId);
+      await env.STATUS_KV.put(`last_channel_id:${guildId}`, channelId);
+      await env.STATUS_KV.put(`last_posted_text:${guildId}`, liveStatusText);
+
+      if (previousMessageId && previousMessageId !== postedMessageId) {
+        const deleteChannelId = previousChannelId || channelId;
+        await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+        }).catch(() => {});
+      }
+
+      await postLog(
+        env,
+        logChannelId,
+        `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
+        { latency },
+        guildId
+      );
+      results.push({ guildId, ok: true, id: postedMessageId });
+    } else {
+      // Scheduled check with no status change: just update stats & timestamp, no new log message
+      await postLog(
+        env,
+        logChannelId,
+        null,
+        { latency },
+        guildId
+      );
+      results.push({ guildId, ok: true, skipped: true });
+    }
+  }
+
+  // Handle global scraper success/failure tracking
+  if (liveStatusResult.isError) {
+    const defaultGuildConfig = getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID));
+    const firstLogChannelId = targetGuildIds.length > 0 ? (getEffectiveConfig(await getConfig(env, targetGuildIds[0])).log_channel_id) : defaultGuildConfig.log_channel_id;
+    await handleScraperFailure(env, firstLogChannelId, defaultGuildConfig, liveStatusResult.error);
   } else {
     await handleScraperSuccess(env);
   }
 
-  if (!builtStatus.isOverride && !builtStatus.isError) {
-    if (firstEmbed) {
-      const statusTitle = firstEmbed.title || '';
-      await trackStatusHistory(env, liveStatusText, statusTitle);
-    }
-  }
+  const successCount = results.filter(r => r.ok).length;
+  const failureCount = results.filter(r => !r.ok).length;
+  const isErr = liveStatusResult.isError || failureCount > 0;
+
+  const firstSuccessId = results.find(r => r.ok && r.id)?.id || null;
 
   return {
-    ok: true,
-    id: postedMessageId,
-    isError: builtStatus.isError,
-    error: builtStatus.error && builtStatus.error.message
+    ok: failureCount === 0,
+    id: firstSuccessId,
+    isError: isErr,
+    error: liveStatusResult.error && liveStatusResult.error.message,
+    message: `Processed ${targetGuildIds.length} guilds. Success: ${successCount}, Failures: ${failureCount}`
   };
 }
 
@@ -858,15 +957,15 @@ function memberHasRole(member, roleId) {
   return !!roleId && Array.isArray(member && member.roles) && member.roles.includes(roleId);
 }
 
-async function canUseCommands(member, env) {
+async function canUseCommands(member, env, guildId = '') {
   if (memberIsAdmin(member)) return true;
-  const stored = await getConfig(env);
+  const stored = await getConfig(env, guildId);
   const cfg = getEffectiveConfig(stored);
   return memberHasRole(member, cfg.staff_role_id);
 }
 
-async function canConfigure(member, env) {
-  return await canUseCommands(member, env);
+async function canConfigure(member, env, guildId = '') {
+  return await canUseCommands(member, env, guildId);
 }
 
 async function updateInteractionOriginal(env, interactionToken, payload) {
@@ -882,7 +981,8 @@ async function updateInteractionOriginal(env, interactionToken, payload) {
 
 async function runPostStatusCommand(body, env) {
   const invokerId = body && body.member && body.member.user && body.member.user.id;
-  const result = await doCheckAndPost(env, { source: 'command', invokerId });
+  const guildId = body.guild_id || '';
+  const result = await doCheckAndPost(env, { source: 'command', invokerId, guildId });
   if (result.ok) {
     await updateInteractionOriginal(env, body.token, {
       content: result.isError ? 'Posted the HCPSS error status embed.' : 'Posted the latest HCPSS status.',
@@ -900,15 +1000,15 @@ async function runPostStatusCommand(body, env) {
 async function runOverrideCommand(body, env) {
   const options = body && body.data && body.data.options;
   const invokerId = body && body.member && body.member.user && body.member.user.id;
+  const guildId = body.guild_id || '';
 
   const sub = Array.isArray(options) && options[0] && options[0].type === 1 ? options[0] : null;
   const subName = sub && sub.name ? String(sub.name) : '';
   const subOptions = sub && Array.isArray(sub.options) ? sub.options : [];
 
   if (subName === 'clear') {
-    await clearOverride(env);
-    const invokerId = body && body.member && body.member.user && body.member.user.id;
-    const result = await doCheckAndPost(env, { source: 'override-clear', invokerId });
+    await clearOverride(env, guildId);
+    const result = await doCheckAndPost(env, { source: 'override-clear', invokerId, guildId });
     const message = result && result.ok
       ? 'Override cleared. Posted the current live HCPSS status.'
       : `Override cleared, but could not post live status: ${result.error || result.status || 'unknown error'}`;
@@ -949,7 +1049,7 @@ async function runOverrideCommand(body, env) {
 
   const now = Date.now();
   const until = now + days * 24 * 60 * 60 * 1000;
-  await setOverride(env, {
+  await setOverride(env, guildId, {
     status_key: statusKey,
     status_label: statusLabel,
     title: title || null,
@@ -959,8 +1059,8 @@ async function runOverrideCommand(body, env) {
     until
   });
 
-  const cfg = getEffectiveConfig(await getConfig(env));
-  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`);
+  const cfg = getEffectiveConfig(await getConfig(env, guildId));
+  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`, {}, guildId);
 
   await updateInteractionOriginal(env, body.token, {
     content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,
@@ -968,13 +1068,13 @@ async function runOverrideCommand(body, env) {
   });
 }
 
-function overrideKey(env) {
-  const guildId = env.DISCORD_GUILD_ID;
+function overrideKey(guildId) {
   return guildId ? `override:${guildId}` : 'override:default';
 }
 
-async function getActiveOverride(env) {
-  const raw = await env.STATUS_KV.get(overrideKey(env));
+async function getActiveOverride(env, guildId = '') {
+  const key = overrideKey(guildId || env.DISCORD_GUILD_ID);
+  const raw = await env.STATUS_KV.get(key);
   if (!raw) return null;
 
   let parsed = null;
@@ -990,19 +1090,21 @@ async function getActiveOverride(env) {
 
   const now = Date.now();
   if (now > until) {
-    await env.STATUS_KV.delete(overrideKey(env)).catch(() => {});
+    await env.STATUS_KV.delete(key).catch(() => {});
     return null;
   }
 
   return parsed;
 }
 
-async function setOverride(env, override) {
-  await env.STATUS_KV.put(overrideKey(env), JSON.stringify(override));
+async function setOverride(env, guildId, override) {
+  const key = overrideKey(guildId || env.DISCORD_GUILD_ID);
+  await env.STATUS_KV.put(key, JSON.stringify(override));
 }
 
-async function clearOverride(env) {
-  await env.STATUS_KV.delete(overrideKey(env));
+async function clearOverride(env, guildId) {
+  const key = overrideKey(guildId || env.DISCORD_GUILD_ID);
+  await env.STATUS_KV.delete(key);
 }
 
 function getCommandOption(options, name) {
@@ -1011,13 +1113,13 @@ function getCommandOption(options, name) {
   return found ? found.value : undefined;
 }
 
-function configKey(env) {
-  const guildId = env.DISCORD_GUILD_ID;
+function configKey(guildId) {
   return guildId ? `config:${guildId}` : 'config:default';
 }
 
-async function getConfig(env) {
-  const raw = await env.STATUS_KV.get(configKey(env));
+async function getConfig(env, guildId = '') {
+  const key = configKey(guildId || env.DISCORD_GUILD_ID);
+  const raw = await env.STATUS_KV.get(key);
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
@@ -1027,8 +1129,9 @@ async function getConfig(env) {
   }
 }
 
-async function setConfig(env, next) {
-  await env.STATUS_KV.put(configKey(env), JSON.stringify(next));
+async function setConfig(env, guildId, next) {
+  const key = configKey(guildId || env.DISCORD_GUILD_ID);
+  await env.STATUS_KV.put(key, JSON.stringify(next));
 }
 
 function renderConfigMessage(config) {
@@ -1137,7 +1240,8 @@ function buildConfigComponents(editingStatusKey = 'normal_operations') {
 }
 
 async function applyConfigUpdate(body, env) {
-  const current = await getConfig(env);
+  const guildId = body.guild_id || '';
+  const current = await getConfig(env, guildId);
   const customId = body.data && body.data.custom_id;
   const values = body.data && body.data.values;
 
@@ -1162,7 +1266,7 @@ async function applyConfigUpdate(body, env) {
     }
   }
 
-  await setConfig(env, next);
+  await setConfig(env, guildId, next);
   return next;
 }
 
@@ -1195,7 +1299,9 @@ export default {
       const body = await request.json();
       if (body.type === 1) return jsonResponse({ type: 1 });
 
-      if (body.type === 2 && !(await canUseCommands(body.member, env))) {
+      const guildId = body.guild_id || '';
+
+      if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
         return interactionResponse({
           content: 'You do not have permission to use this bot command.',
           flags: EPHEMERAL_FLAG
@@ -1223,7 +1329,7 @@ export default {
       }
 
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
-        const config = await getConfig(env);
+        const config = await getConfig(env, guildId);
         const effective = getEffectiveConfig(config);
         return interactionResponse({
           content: renderConfigMessage(config),
@@ -1233,7 +1339,7 @@ export default {
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_')) {
-        if (!(await canUseCommands(body.member, env))) {
+        if (!(await canUseCommands(body.member, env, guildId))) {
           return interactionResponse({
             content: 'You do not have permission to use the control panel.',
             flags: EPHEMERAL_FLAG
@@ -1252,7 +1358,7 @@ export default {
         }
 
         if (customId === 'panel_config') {
-          const config = await getConfig(env);
+          const config = await getConfig(env, guildId);
           const effective = getEffectiveConfig(config);
           return interactionResponse({
             content: renderConfigMessage(config),
@@ -1267,13 +1373,13 @@ export default {
         }
 
         if (customId === 'panel_logs') {
-          const payload = await runLogsCommand(env);
+          const payload = await runLogsCommand(env, guildId);
           return interactionResponse(payload);
         }
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
-        const builtStatus = await buildStatusPayload(env, { footer: 'HCPSS Status Monitor - Only you can see this' });
+        const builtStatus = await buildStatusPayload(env, { footer: 'HCPSS Status Monitor - Only you can see this', guildId });
         return interactionResponse({
           content: '',
           embeds: builtStatus.payload.embeds,
@@ -1282,7 +1388,7 @@ export default {
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
-        if (!(await canConfigure(body.member, env))) {
+        if (!(await canConfigure(body.member, env, guildId))) {
           return jsonResponse({
             type: 7,
             data: {
