@@ -1708,9 +1708,31 @@ export default {
         const setupDoneKey = `setup_done:${guildId}`;
         const setupDone = await env.STATUS_KV.get(setupDoneKey);
         if (setupDone === 'true') {
-          return interactionResponse({
-            content: '❌ The `/setup` command has already been run in this server. It can only be executed once.',
-            flags: EPHEMERAL_FLAG
+          return jsonResponse({
+            type: 4,
+            data: {
+              content: '⚠️ **HCPSS Status Monitor Setup Alert**\n\nThis command has already been run in this server. Running setup again will create duplicate notification roles and may disrupt your current configuration.\n\nAre you sure you want to proceed?',
+              components: [
+                {
+                  type: 1,
+                  components: [
+                    {
+                      type: 2,
+                      style: 4,
+                      label: 'Proceed Anyway',
+                      custom_id: 'setup_proceed_anyway'
+                    },
+                    {
+                      type: 2,
+                      style: 2,
+                      label: 'Cancel Setup',
+                      custom_id: 'setup_cancel'
+                    }
+                  ]
+                }
+              ],
+              flags: EPHEMERAL_FLAG
+            }
           });
         }
         return jsonResponse({
@@ -1912,7 +1934,53 @@ export default {
         });
       }
 
-      if (body.type === 3 && body.data && body.data.custom_id === 'setup_select_log_channel') {
+      if (body.type === 3 && body.data && body.data.custom_id === 'setup_cancel') {
+        if (!memberIsAdmin(body.member)) {
+          return interactionResponse({
+            content: '❌ Only users with Administrator permissions can interact with setup.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+        return jsonResponse({
+          type: 7,
+          data: {
+            content: '❌ Setup cancelled.',
+            components: []
+          }
+        });
+      }
+
+      if (body.type === 3 && body.data && body.data.custom_id === 'setup_proceed_anyway') {
+        if (!memberIsAdmin(body.member)) {
+          return interactionResponse({
+            content: '❌ Only users with Administrator permissions can interact with setup.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+        return jsonResponse({
+          type: 7,
+          data: {
+            content: '⚙️ **HCPSS Status Monitor Setup (Force Rerun)**\n\nWhich channel should the bot post system logs and the control panel to?',
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 8,
+                    custom_id: 'setup_select_log_channel_force',
+                    placeholder: 'Select logging channel',
+                    min_values: 1,
+                    max_values: 1,
+                    channel_types: [0, 5]
+                  }
+                ]
+              }
+            ]
+          }
+        });
+      }
+
+      if (body.type === 3 && body.data && (body.data.custom_id === 'setup_select_log_channel' || body.data.custom_id === 'setup_select_log_channel_force')) {
         if (!memberIsAdmin(body.member)) {
           return interactionResponse({
             content: '❌ Only users with Administrator permissions can complete the setup.',
@@ -1920,13 +1988,16 @@ export default {
           });
         }
 
-        const setupDoneKey = `setup_done:${guildId}`;
-        const setupDone = await env.STATUS_KV.get(setupDoneKey);
-        if (setupDone === 'true') {
-          return interactionResponse({
-            content: '❌ The `/setup` command has already been run in this server.',
-            flags: EPHEMERAL_FLAG
-          });
+        const isForce = body.data.custom_id === 'setup_select_log_channel_force';
+        if (!isForce) {
+          const setupDoneKey = `setup_done:${guildId}`;
+          const setupDone = await env.STATUS_KV.get(setupDoneKey);
+          if (setupDone === 'true') {
+            return interactionResponse({
+              content: '❌ The `/setup` command has already been run in this server.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
         }
 
         const selectedChannelId = body.data.values && body.data.values[0];
