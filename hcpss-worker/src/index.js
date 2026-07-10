@@ -370,6 +370,101 @@ async function postLog(env, logChannelId, message) {
   }).catch(() => {});
 }
 
+async function trackStatusHistory(env, currentStatus, primaryDate) {
+  const lastKnown = await env.STATUS_KV.get('last_known_status');
+  if (lastKnown === currentStatus) {
+    return; // No change
+  }
+
+  await env.STATUS_KV.put('last_known_status', currentStatus);
+
+  let history = [];
+  const rawHistory = await env.STATUS_KV.get('status_history');
+  if (rawHistory) {
+    try {
+      history = JSON.parse(rawHistory);
+    } catch (e) {
+      history = [];
+    }
+  }
+
+  history.unshift({
+    timestamp: Date.now(),
+    status: currentStatus,
+    date: primaryDate
+  });
+
+  history = history.slice(0, 5);
+
+  await env.STATUS_KV.put('status_history', JSON.stringify(history));
+}
+
+function runCalendarCommand() {
+  const checkedAt = new Date();
+  const events = [];
+  
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(checkedAt.getTime() + i * 24 * 60 * 60 * 1000);
+    const ymd = formatYmdNY(d);
+    const event = SCHOOL_CALENDAR_EVENTS[ymd];
+    if (event) {
+      events.push({ ymd, dateStr: formatStatusDate(d), event });
+    }
+  }
+
+  const embed = {
+    title: '🗓️ HCPSS Upcoming Calendar Events (Next 7 Days)',
+    color: 3066993,
+    timestamp: checkedAt.toISOString(),
+    footer: { text: 'HCPSS Status Monitor' }
+  };
+
+  if (events.length === 0) {
+    embed.description = 'No scheduled closures or events in the next 7 days.';
+  } else {
+    embed.description = events.map(e => `**${e.dateStr}**\n${e.event}`).join('\n\n');
+  }
+
+  return {
+    embeds: [embed],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+async function runHistoryCommand(env) {
+  const checkedAt = new Date();
+  const rawHistory = await env.STATUS_KV.get('status_history');
+  let history = [];
+  if (rawHistory) {
+    try {
+      history = JSON.parse(rawHistory);
+    } catch (e) {
+      history = [];
+    }
+  }
+
+  const embed = {
+    title: '📜 HCPSS Recent Status History',
+    color: 3066993,
+    timestamp: checkedAt.toISOString(),
+    footer: { text: 'HCPSS Status Monitor' }
+  };
+
+  if (history.length === 0) {
+    embed.description = 'No status history recorded yet. History starts recording on changes.';
+  } else {
+    embed.description = history.map((h, index) => {
+      const timeStr = formatCheckedAt(new Date(h.timestamp));
+      return `**#${index + 1} - ${h.date || 'Unknown Date'}**\n*Detected at: ${timeStr}*\n${h.status}`;
+    }).join('\n\n___\n\n');
+  }
+
+  return {
+    embeds: [embed],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
 async function doCheckAndPost(env, options = {}) {
   const stored = await getConfig(env);
   const config = getEffectiveConfig(stored);
@@ -416,6 +511,15 @@ async function doCheckAndPost(env, options = {}) {
     logChannelId,
     `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`
   );
+
+  if (!builtStatus.isOverride && !builtStatus.isError) {
+    const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+    if (firstEmbed) {
+      const liveStatusText = firstEmbed.description || '';
+      const statusTitle = firstEmbed.title || '';
+      await trackStatusHistory(env, liveStatusText, statusTitle);
+    }
+  }
 
   return {
     ok: true,
@@ -765,6 +869,16 @@ export default {
       if (body.type === 2 && body.data && body.data.name === OVERRIDE_COMMAND) {
         ctx.waitUntil(runOverrideCommand(body, env));
         return deferredInteractionResponse();
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'calendar') {
+        const payload = runCalendarCommand();
+        return interactionResponse(payload);
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'history') {
+        const payload = await runHistoryCommand(env);
+        return interactionResponse(payload);
       }
 
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {

@@ -214,6 +214,8 @@ delete_command() {
 ensure_command "post-status" "Post the latest HCPSS status now."
 ensure_command "config" "Configure alert channel, log channel, staff role, and ping roles."
 ensure_command "override" "Override the posted status for a set number of days."
+ensure_command "calendar" "Show scheduled closures or events in the next 7 days."
+ensure_command "history" "Show the last 5 operating status changes."
 
 delete_command "overide"
 
