@@ -994,6 +994,27 @@ async function canConfigure(member, env, guildId = '') {
   return await canUseCommands(member, env, guildId);
 }
 
+async function createGuildRole(guildId, roleName, token) {
+  const url = `https://discord.com/api/v10/guilds/${guildId}/roles`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: roleName,
+      mentionable: true
+    })
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Discord API error creating role '${roleName}': ${response.status} ${errText}`);
+  }
+  const data = await response.json();
+  return data.id;
+}
+
 async function updateInteractionOriginal(env, interactionToken, payload) {
   const applicationId = env.DISCORD_APPLICATION_ID;
   if (!applicationId || !interactionToken) return;
@@ -1677,6 +1698,45 @@ export default {
         });
       }
 
+      if (body.type === 2 && body.data && body.data.name === 'setup') {
+        if (!memberIsAdmin(body.member)) {
+          return interactionResponse({
+            content: '❌ This command is only allowed for users with Administrator permissions.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+        const setupDoneKey = `setup_done:${guildId}`;
+        const setupDone = await env.STATUS_KV.get(setupDoneKey);
+        if (setupDone === 'true') {
+          return interactionResponse({
+            content: '❌ The `/setup` command has already been run in this server. It can only be executed once.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+        return jsonResponse({
+          type: 4,
+          data: {
+            content: '⚙️ **HCPSS Status Monitor Setup**\n\nWhich channel should the bot post system logs and the control panel to?',
+            components: [
+              {
+                type: 1,
+                components: [
+                  {
+                    type: 8,
+                    custom_id: 'setup_select_log_channel',
+                    placeholder: 'Select logging channel',
+                    min_values: 1,
+                    max_values: 1,
+                    channel_types: [0, 5]
+                  }
+                ]
+              }
+            ],
+            flags: EPHEMERAL_FLAG
+          }
+        });
+      }
+
       if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
         return interactionResponse({
           content: 'You do not have permission to use this bot command.',
@@ -1850,6 +1910,89 @@ export default {
           embeds: builtStatus.payload.embeds,
           flags: EPHEMERAL_FLAG
         });
+      }
+
+      if (body.type === 3 && body.data && body.data.custom_id === 'setup_select_log_channel') {
+        if (!memberIsAdmin(body.member)) {
+          return interactionResponse({
+            content: '❌ Only users with Administrator permissions can complete the setup.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const setupDoneKey = `setup_done:${guildId}`;
+        const setupDone = await env.STATUS_KV.get(setupDoneKey);
+        if (setupDone === 'true') {
+          return interactionResponse({
+            content: '❌ The `/setup` command has already been run in this server.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const selectedChannelId = body.data.values && body.data.values[0];
+        if (!selectedChannelId) {
+          return interactionResponse({
+            content: '❌ No channel was selected.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        ctx.waitUntil((async () => {
+          try {
+            await updateInteractionOriginal(env, body.token, {
+              content: '⚙️ **HCPSS Status Monitor Setup**\n\n⏳ Creating status notification roles and configuring the bot...',
+              components: []
+            });
+
+            const token = env.DISCORD_BOT_TOKEN;
+            const rolesToCreate = [
+              { key: 'normal_operations', name: 'HCPSS Normal Operations' },
+              { key: 'schools_closed', name: 'HCPSS Schools Closed' },
+              { key: 'schools_and_offices_closed', name: 'HCPSS Schools and Offices Closed' },
+              { key: 'schools_open_2_hours_late', name: 'HCPSS Schools Open 2 Hours Late' },
+              { key: 'schools_close_3_hours_early', name: 'HCPSS Schools Close 3 Hours Early' },
+              { key: 'unknown_alert', name: 'HCPSS Other/Unknown Alert' }
+            ];
+
+            const createdRoles = await Promise.all(
+              rolesToCreate.map(async (role) => {
+                const roleId = await createGuildRole(guildId, role.name, token);
+                return { key: role.key, name: role.name, id: roleId };
+              })
+            );
+
+            const stored = await getConfig(env, guildId);
+            const config = { ...stored };
+            config.log_channel_id = selectedChannelId;
+            if (!config.status_ping_roles) config.status_ping_roles = {};
+
+            for (const r of createdRoles) {
+              config.status_ping_roles[r.key] = r.id;
+            }
+
+            await setConfig(env, guildId, config);
+            await env.STATUS_KV.put(setupDoneKey, 'true');
+
+            await postLog(env, selectedChannelId, 'Bot setup completed successfully. Notification roles created and registered.', {}, guildId);
+
+            const roleList = createdRoles.map(r => `• **${r.name}**: <@&${r.id}>`).join('\n');
+            await updateInteractionOriginal(env, body.token, {
+              content: `✅ **Setup Complete!**\n\n` +
+                       `• Log channel set to <#${selectedChannelId}>\n` +
+                       `• Created and configured notification roles:\n${roleList}\n\n` +
+                       `The Control Panel has been published to <#${selectedChannelId}>.`,
+              components: []
+            });
+          } catch (err) {
+            console.error('Setup failed:', err);
+            await updateInteractionOriginal(env, body.token, {
+              content: `❌ **Setup Failed:** ${err.message}`,
+              components: []
+            });
+          }
+        })());
+
+        return deferredInteractionResponse();
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
