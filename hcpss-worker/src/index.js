@@ -6,6 +6,7 @@ const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 const EPHEMERAL_FLAG = 64;
 const POST_STATUS_COMMAND = 'post-status';
 const CONFIG_COMMAND = 'config';
+const OVERRIDE_COMMAND = 'overide';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 
@@ -288,7 +289,28 @@ function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor') {
   }];
 }
 
-async function buildStatusPayload({ includeComponents = false, footer = 'HCPSS Status Monitor' } = {}) {
+function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor') {
+  const checkedAt = new Date();
+  const mode = override && override.mode === 'normal' ? 'normal' : 'alert';
+  const color = mode === 'normal' ? 3066993 : 15158332;
+
+  const title = (override && override.title) ? String(override.title).slice(0, 256) : 'HCPSS Status (Override)';
+  const body = (override && override.body) ? String(override.body) : 'Override is active.';
+
+  return splitEmbeds(title, body, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
+}
+
+async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor' } = {}) {
+  const activeOverride = env ? await getActiveOverride(env) : null;
+  if (activeOverride) {
+    const payload = {
+      content: '',
+      embeds: buildOverrideEmbeds(activeOverride, footer)
+    };
+    if (includeComponents) payload.components = buildCheckAgainComponents();
+    return { payload, isError: false, isOverride: true };
+  }
+
   try {
     const payload = {
       content: '',
@@ -349,7 +371,7 @@ async function doCheckAndPost(env, options = {}) {
   const logChannelId = config.log_channel_id;
   const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
 
-  const builtStatus = await buildStatusPayload({ includeComponents: true });
+  const builtStatus = await buildStatusPayload(env, { includeComponents: true });
   const isNormal = builtStatus.payload.embeds && builtStatus.payload.embeds[0] && builtStatus.payload.embeds[0].color === 3066993;
 
   const content = (!isNormal && pingRoleIds.length) ? pingRoleIds.map(id => `<@&${id}>`).join(' ') : '';
@@ -468,6 +490,99 @@ async function runPostStatusCommand(body, env) {
     content: `Could not post status: ${result.error || result.status}`,
     embeds: []
   });
+}
+
+async function runOverrideCommand(body, env) {
+  const options = body && body.data && body.data.options;
+  const invokerId = body && body.member && body.member.user && body.member.user.id;
+
+  const shouldClear = !!getCommandOption(options, 'clear');
+  if (shouldClear) {
+    await clearOverride(env);
+    await updateInteractionOriginal(env, body.token, { content: 'Override cleared.', embeds: [] });
+    return;
+  }
+
+  const daysRaw = getCommandOption(options, 'days');
+  const modeRaw = getCommandOption(options, 'mode');
+  const titleRaw = getCommandOption(options, 'title');
+  const bodyRaw = getCommandOption(options, 'body');
+
+  const daysParsed = Number.isFinite(Number(daysRaw)) ? Math.trunc(Number(daysRaw)) : 1;
+  const days = Math.max(1, Math.min(30, daysParsed));
+  const mode = modeRaw === 'normal' ? 'normal' : 'alert';
+  const title = (titleRaw ? String(titleRaw) : 'HCPSS Status (Override)').trim();
+  const message = (bodyRaw ? String(bodyRaw) : '').trim();
+
+  if (!message) {
+    await updateInteractionOriginal(env, body.token, {
+      content: 'Missing required option: `body`.',
+      embeds: []
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const until = now + days * 24 * 60 * 60 * 1000;
+  await setOverride(env, {
+    mode,
+    title,
+    body: message,
+    created_at: now,
+    created_by: invokerId || null,
+    until
+  });
+
+  const cfg = getEffectiveConfig(await getConfig(env));
+  await postLog(env, cfg.log_channel_id, `Override set (mode: ${mode}, days: ${days}${invokerId ? `, by: ${invokerId}` : ''}).`);
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,
+    embeds: []
+  });
+}
+
+function overrideKey(env) {
+  const guildId = env.DISCORD_GUILD_ID;
+  return guildId ? `override:${guildId}` : 'override:default';
+}
+
+async function getActiveOverride(env) {
+  const raw = await env.STATUS_KV.get(overrideKey(env));
+  if (!raw) return null;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object') return null;
+  const until = typeof parsed.until === 'number' ? parsed.until : 0;
+  if (!until) return null;
+
+  const now = Date.now();
+  if (now > until) {
+    await env.STATUS_KV.delete(overrideKey(env)).catch(() => {});
+    return null;
+  }
+
+  return parsed;
+}
+
+async function setOverride(env, override) {
+  await env.STATUS_KV.put(overrideKey(env), JSON.stringify(override));
+}
+
+async function clearOverride(env) {
+  await env.STATUS_KV.delete(overrideKey(env));
+}
+
+function getCommandOption(options, name) {
+  if (!Array.isArray(options)) return undefined;
+  const found = options.find(o => o && o.name === name);
+  return found ? found.value : undefined;
 }
 
 function configKey(env) {
@@ -620,6 +735,11 @@ export default {
         return deferredInteractionResponse();
       }
 
+      if (body.type === 2 && body.data && body.data.name === OVERRIDE_COMMAND) {
+        ctx.waitUntil(runOverrideCommand(body, env));
+        return deferredInteractionResponse();
+      }
+
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
         const config = await getConfig(env);
         return interactionResponse({
@@ -630,7 +750,7 @@ export default {
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
-        const builtStatus = await buildStatusPayload({ footer: 'HCPSS Status Monitor - Only you can see this' });
+        const builtStatus = await buildStatusPayload(env, { footer: 'HCPSS Status Monitor - Only you can see this' });
         return interactionResponse({
           content: '',
           embeds: builtStatus.payload.embeds,

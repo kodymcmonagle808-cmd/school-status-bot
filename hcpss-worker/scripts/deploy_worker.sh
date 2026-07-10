@@ -72,10 +72,29 @@ ensure_command() {
   local description="$2"
 
   local command_payload
-  command_payload=$(jq -n \
-    --arg name "$name" \
-    --arg description "$description" \
-    '{ name: $name, description: $description, type: 1, dm_permission: false }')
+  if [ "$name" = "overide" ]; then
+    command_payload=$(jq -n \
+      --arg name "$name" \
+      --arg description "$description" \
+      '{
+        name: $name,
+        description: $description,
+        type: 1,
+        dm_permission: false,
+        options: [
+          { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
+          { name: "mode", description: "Normal (no pings) or Alert (pings).", type: 3, required: true, choices: [ { name: "Normal", value: "normal" }, { name: "Alert", value: "alert" } ] },
+          { name: "title", description: "Embed title.", type: 3, required: false, max_length: 256 },
+          { name: "body", description: "Status message text.", type: 3, required: true, max_length: 4000 },
+          { name: "clear", description: "Clear any active override.", type: 5, required: false }
+        ]
+      }')
+  else
+    command_payload=$(jq -n \
+      --arg name "$name" \
+      --arg description "$description" \
+      '{ name: $name, description: $description, type: 1, dm_permission: false }')
+  fi
 
 global_base="https://discord.com/api/v10/applications/${discord_application_id}"
 commands_base="$global_base"
@@ -126,6 +145,7 @@ fi
 
 ensure_command "post-status" "Post the latest HCPSS status now."
 ensure_command "config" "Configure alert channel, log channel, staff role, and ping roles."
+ensure_command "overide" "Override the posted status for a set number of days."
 
 echo "Publishing Worker..."
 wrangler deploy
