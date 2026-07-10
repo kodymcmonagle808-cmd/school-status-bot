@@ -500,55 +500,21 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
     await env.STATUS_KV.put(latencyKey, String(stats.latency));
   }
   
-  const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
   const lastCheckTime = Date.now();
   await env.STATUS_KV.put(checkTimeKey, String(lastCheckTime));
 
-  // Build the embed
-  const recentLogs = logs.slice(0, 3);
-  const logsContent = recentLogs.length ? recentLogs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
-  const embed = {
-    title: '🛠️ HCPSS Status Monitor - Control Panel',
-    color: 10181046, // Purple
-    description: `**System Status**: 🟢 Online\n` +
-                 `**Last Check**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
-                 `**Scraper Latency**: \`${latency}ms\`\n` +
-                 `**KV Namespace**: \`STATUS_KV\` (Connected)\n\n` +
-                 `**Recent System Logs:**\n${logsContent}\n\n` +
-                 `*Use the buttons below to run diagnostic actions.*`,
-    timestamp: new Date().toISOString()
-  };
+  const currentPage = await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
+  if (currentPage !== 'dashboard' && message) {
+    // Skip updating the Discord message in background while user is configuring
+    return;
+  }
 
-  const components = [
-    {
-      type: 1,
-      components: [
-        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
-        { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
-      ]
-    },
-    {
-      type: 1,
-      components: [
-        { type: 2, style: 2, label: 'View Config', custom_id: 'panel_config', emoji: { name: '⚙️' } },
-        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
-        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
-      ]
-    }
-  ];
-
-  const payload = {
-    embeds: [embed],
-    components
-  };
+  const payload = await buildControlPanelPayload(env, guildId);
 
   const panelMsgId = await env.STATUS_KV.get(panelMsgIdKey);
   let success = false;
 
   if (panelMsgId) {
-    // Try updating existing panel
     try {
       const resp = await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages/${panelMsgId}`, {
         method: 'PATCH',
@@ -567,7 +533,6 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   }
 
   if (!success) {
-    // Post a new panel message
     try {
       const resp = await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
         method: 'POST',
@@ -1195,118 +1160,206 @@ async function setConfig(env, guildId, next) {
   await env.STATUS_KV.put(key, JSON.stringify(next));
 }
 
-function renderConfigMessage(config) {
-  const effective = getEffectiveConfig(config);
-  const channel = effective.alert_channel_id ? `<#${effective.alert_channel_id}>` : '(not set)';
-  const logChannel = effective.log_channel_id ? `<#${effective.log_channel_id}>` : '(not set)';
-  const staffRole = effective.staff_role_id ? `<@&${effective.staff_role_id}>` : '(not set)';
-  const embedFooter = effective.alert_embed_footer || '(default)';
-  
-  const STATUS_LABELS = {
-    normal_operations: 'Normal Operations',
-    schools_closed: 'Schools Closed',
-    schools_and_offices_closed: 'Schools and Offices Closed',
-    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
-    schools_close_3_hours_early: 'Schools Close 3 Hours Early',
-    unknown_alert: 'Other/Unknown Alert'
-  };
-
-  const statusPings = Object.entries(STATUS_LABELS).map(([key, label]) => {
-    const roleId = effective.status_ping_roles && effective.status_ping_roles[key];
-    const pingDisplay = roleId ? `<@&${roleId}>` : '(none)';
-    
-    let colorDisplay = '';
-    if (effective.status_embed_colors && typeof effective.status_embed_colors[key] === 'number') {
-      colorDisplay = ` [Color: #${effective.status_embed_colors[key].toString(16).toUpperCase().padStart(6, '0')}`;
+function getModalInputValue(body, customId) {
+  if (!body || !body.data || !Array.isArray(body.data.components)) return '';
+  for (const row of body.data.components) {
+    if (row && Array.isArray(row.components)) {
+      const found = row.components.find(c => c && c.custom_id === customId);
+      if (found) return found.value;
     }
-    
-    return `• **${label}**: ${pingDisplay}${colorDisplay}`;
-  }).join('\n');
-
-  const editingKey = effective.editing_status_key || 'normal_operations';
-  const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
-
-  return `**HCPSS Status Monitor Configuration**\n` +
-         `• Alert channel: ${channel}\n` +
-         `• Log channel: ${logChannel}\n` +
-         `• Staff role: ${staffRole}\n` +
-         `• Custom Footer: \`${embedFooter}\`\n\n` +
-         `**Ping Roles & Custom Colors per Status:**\n${statusPings}\n\n` +
-         `*Currently configuring status: **${editingLabel}***\n` +
-         `*(Tip: Use \`/config color:<HEX>\` or \`/config footer:<text>\` to change theme)*`;
+  }
+  return '';
 }
 
-function buildConfigComponents(editingStatusKey = 'normal_operations') {
-  const STATUS_LABELS = {
-    normal_operations: 'Normal Operations',
-    schools_closed: 'Schools Closed',
-    schools_and_offices_closed: 'Schools and Offices Closed',
-    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
-    schools_close_3_hours_early: 'Schools Close 3 Hours Early',
-    unknown_alert: 'Other/Unknown Alert'
+async function buildControlPanelPayload(env, guildId) {
+  const stored = await getConfig(env, guildId);
+  const config = getEffectiveConfig(stored);
+  const page = await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
+
+  if (page === 'config_general') {
+    const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
+    const logChannel = config.log_channel_id ? `<#${config.log_channel_id}>` : '(not set)';
+    const staffRole = config.staff_role_id ? `<@&${config.staff_role_id}>` : '(not set)';
+    const embedFooter = config.alert_embed_footer || '(default)';
+
+    const embed = {
+      title: '⚙️ HCPSS Status Monitor - General Config',
+      color: 0x3498DB,
+      description: `Configure the general settings for this server.\n\n` +
+                   `• **Alert Channel**: ${channel}\n` +
+                   `• **Log Channel**: ${logChannel}\n` +
+                   `• **Staff Role**: ${staffRole}\n` +
+                   `• **Custom Footer**: \`${embedFooter}\``,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_channel',
+          placeholder: 'Select alert channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_log_channel',
+          placeholder: 'Select log channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_staff_role',
+          placeholder: 'Select staff role',
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'Configure Colors/Pings', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
+          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_status') {
+    const STATUS_LABELS = {
+      normal_operations: 'Normal Operations',
+      schools_closed: 'Schools Closed',
+      schools_and_offices_closed: 'Schools and Offices Closed',
+      schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+      schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+      unknown_alert: 'Other/Unknown Alert'
+    };
+
+    const editingKey = config.editing_status_key || 'normal_operations';
+    const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
+
+    const statusPings = Object.entries(STATUS_LABELS).map(([key, label]) => {
+      const roleId = config.status_ping_roles && config.status_ping_roles[key];
+      const pingDisplay = roleId ? `<@&${roleId}>` : '(none)';
+      let colorDisplay = '';
+      if (config.status_embed_colors && typeof config.status_embed_colors[key] === 'number') {
+        colorDisplay = ` [Color: #${config.status_embed_colors[key].toString(16).toUpperCase().padStart(6, '0')}]`;
+      }
+      const marker = key === editingKey ? '👉 ' : '• ';
+      return `${marker}**${label}**: ${pingDisplay}${colorDisplay}`;
+    }).join('\n');
+
+    const embed = {
+      title: '🎨 HCPSS Status Monitor - Status & Theme Config',
+      color: 0xE74C3C,
+      description: `Select a status below to set its ping role and embed color.\n\n` +
+                   `**Current Settings:**\n${statusPings}\n\n` +
+                   `*Currently editing: **${editingLabel}***`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_status_select',
+          placeholder: `Editing status: ${editingLabel}`,
+          options: Object.entries(STATUS_LABELS).map(([key, label]) => ({
+            label,
+            value: key,
+            default: key === editingKey
+          })),
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_status_role',
+          placeholder: `Select ping role for ${editingLabel}`,
+          min_values: 0,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } },
+          { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  // Otherwise, default to Dashboard Page
+  const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
+  const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
+  const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
+
+  let logs = [];
+  const rawLogs = await env.STATUS_KV.get(logKey);
+  if (rawLogs) {
+    try { logs = JSON.parse(rawLogs); } catch {}
+  }
+  const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
+  const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
+
+  const recentLogs = logs.slice(0, 3);
+  const logsContent = recentLogs.length ? recentLogs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
+
+  const embed = {
+    title: '🛠️ HCPSS Status Monitor - Control Panel',
+    color: 0x9B59B6,
+    description: `**System Status**: 🟢 Online\n` +
+                 `**Last Check**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
+                 `**Scraper Latency**: \`${latency}ms\`\n` +
+                 `**KV Namespace**: \`STATUS_KV\` (Connected)\n\n` +
+                 `**Recent System Logs:**\n${logsContent}\n\n` +
+                 `*Use the buttons below to run diagnostics or configure settings.*`,
+    timestamp: new Date().toISOString()
   };
-  
-  return [
+
+  const components = [
     {
       type: 1,
-      components: [{
-        type: 8,
-        custom_id: 'cfg_channel',
-        placeholder: 'Select alert channel',
-        min_values: 1,
-        max_values: 1,
-        channel_types: [0, 5]
-      }]
-    },
-    {
-      type: 1,
-      components: [{
-        type: 8,
-        custom_id: 'cfg_log_channel',
-        placeholder: 'Select log channel',
-        min_values: 1,
-        max_values: 1,
-        channel_types: [0, 5]
-      }]
-    },
-    {
-      type: 1,
-      components: [{
-        type: 6,
-        custom_id: 'cfg_staff_role',
-        placeholder: 'Select staff role (required for commands)',
-        min_values: 1,
-        max_values: 1
-      }]
-    },
-    {
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'cfg_status_select',
-        placeholder: `Status to ping: ${STATUS_LABELS[editingStatusKey] || 'Select status'}`,
-        options: Object.entries(STATUS_LABELS).map(([key, label]) => ({
-          label,
-          value: key,
-          default: key === editingStatusKey
-        })),
-        min_values: 1,
-        max_values: 1
-      }]
+      components: [
+        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
+        { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
+        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
+      ]
     },
     {
       type: 1,
       components: [
-        {
-          type: 6,
-          custom_id: 'cfg_status_role',
-          placeholder: `Select ping role for ${STATUS_LABELS[editingStatusKey] || 'selected status'}`,
-          min_values: 0,
-          max_values: 1
-        }
+        { type: 2, style: 2, label: 'Configure Bot', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
+        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
+        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
       ]
     }
   ];
+
+  return { embeds: [embed], components };
 }
 
 async function applyConfigUpdate(body, env) {
@@ -1566,6 +1619,64 @@ export default {
 
       const guildId = body.guild_id || '';
 
+      if (body.type === 5) {
+        if (!(await canConfigure(body.member, env, guildId))) {
+          return interactionResponse({
+            content: 'You do not have permission to configure this bot.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const modalId = body.data.custom_id;
+        let config = await getConfig(env, guildId);
+        let updated = false;
+
+        if (modalId === 'modal_set_color') {
+          const val = getModalInputValue(body, 'input_color').trim();
+          const editingKey = config.editing_status_key || 'normal_operations';
+
+          if (val.toLowerCase() === 'default' || val.toLowerCase() === 'none' || val.toLowerCase() === 'clear') {
+            if (!config.status_embed_colors) config.status_embed_colors = {};
+            delete config.status_embed_colors[editingKey];
+            updated = true;
+          } else {
+            const hexMatch = val.match(/^#?([0-9A-Fa-f]{6})$/);
+            if (hexMatch) {
+              const colorInt = parseInt(hexMatch[1], 16);
+              if (!config.status_embed_colors) config.status_embed_colors = {};
+              config.status_embed_colors[editingKey] = colorInt;
+              updated = true;
+            } else {
+              return interactionResponse({
+                content: `❌ Invalid HEX color \`${val}\`. Use a 6-digit hex code (e.g. \`2ECC71\`).`,
+                flags: EPHEMERAL_FLAG
+              });
+            }
+          }
+        }
+
+        if (modalId === 'modal_set_footer') {
+          const val = getModalInputValue(body, 'input_footer').trim();
+          if (val.toLowerCase() === 'default' || val.toLowerCase() === 'none' || val.toLowerCase() === 'clear') {
+            delete config.alert_embed_footer;
+            updated = true;
+          } else {
+            config.alert_embed_footer = val.slice(0, 2048);
+            updated = true;
+          }
+        }
+
+        if (updated) {
+          await setConfig(env, guildId, config);
+        }
+
+        const payload = await buildControlPanelPayload(env, guildId);
+        return jsonResponse({
+          type: 7,
+          data: payload
+        });
+      }
+
       if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
         return interactionResponse({
           content: 'You do not have permission to use this bot command.',
@@ -1591,67 +1702,6 @@ export default {
       if (body.type === 2 && body.data && body.data.name === 'history') {
         const payload = await runHistoryCommand(env);
         return interactionResponse(payload);
-      }
-
-      if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
-        const options = body.data.options;
-        let config = await getConfig(env, guildId);
-        let message = '';
-        
-        if (Array.isArray(options) && options.length > 0) {
-          const colorRaw = getCommandOption(options, 'color');
-          const footerRaw = getCommandOption(options, 'footer');
-          const statusRaw = getCommandOption(options, 'status');
-
-          let changed = false;
-          
-          if (colorRaw !== undefined) {
-            const colorStr = String(colorRaw).trim();
-            if (colorStr.toLowerCase() === 'default' || colorStr.toLowerCase() === 'none' || colorStr.toLowerCase() === 'clear') {
-              const statusKey = statusRaw || config.editing_status_key || 'normal_operations';
-              if (!config.status_embed_colors) config.status_embed_colors = {};
-              delete config.status_embed_colors[statusKey];
-              changed = true;
-              message += `• Reset color to default for status \`${statusKey}\`.\n`;
-            } else {
-              const hexMatch = colorStr.match(/^#?([0-9A-Fa-f]{6})$/);
-              if (hexMatch) {
-                const colorInt = parseInt(hexMatch[1], 16);
-                const statusKey = statusRaw || config.editing_status_key || 'normal_operations';
-                if (!config.status_embed_colors) config.status_embed_colors = {};
-                config.status_embed_colors[statusKey] = colorInt;
-                changed = true;
-                message += `• Set color for status \`${statusKey}\` to \`#${hexMatch[1].toUpperCase()}\`.\n`;
-              } else {
-                message += `• ❌ Invalid HEX color \`${colorStr}\`. Use a 6-digit hex code (e.g. \`2ECC71\`).\n`;
-              }
-            }
-          }
-
-          if (footerRaw !== undefined) {
-            const footerStr = String(footerRaw).trim();
-            if (footerStr.toLowerCase() === 'default' || footerStr.toLowerCase() === 'none' || footerStr.toLowerCase() === 'clear') {
-              delete config.alert_embed_footer;
-              changed = true;
-              message += `• Reset footer to default.\n`;
-            } else {
-              config.alert_embed_footer = footerStr.slice(0, 2048);
-              changed = true;
-              message += `• Set footer to: "${config.alert_embed_footer}"\n`;
-            }
-          }
-
-          if (changed) {
-            await setConfig(env, guildId, config);
-          }
-        }
-
-        const effective = getEffectiveConfig(config);
-        return interactionResponse({
-          content: (message ? `**Updates applied:**\n${message}\n` : '') + renderConfigMessage(config),
-          components: buildConfigComponents(effective.editing_status_key),
-          flags: EPHEMERAL_FLAG
-        });
       }
 
       if (body.type === 2 && body.data && body.data.name === 'events') {
@@ -1683,16 +1733,6 @@ export default {
           return deferredInteractionResponse();
         }
 
-        if (customId === 'panel_config') {
-          const config = await getConfig(env, guildId);
-          const effective = getEffectiveConfig(config);
-          return interactionResponse({
-            content: renderConfigMessage(config),
-            components: buildConfigComponents(effective.editing_status_key),
-            flags: EPHEMERAL_FLAG
-          });
-        }
-
         if (customId === 'panel_history') {
           const payload = await runHistoryCommand(env);
           return interactionResponse(payload);
@@ -1712,6 +1752,95 @@ export default {
           ctx.waitUntil(handlePanelClearLogs(body, env));
           return deferredInteractionResponse();
         }
+
+        if (customId === 'panel_to_config_general') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_general');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({
+            type: 7,
+            data: payload
+          });
+        }
+
+        if (customId === 'panel_to_config_status') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_status');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({
+            type: 7,
+            data: payload
+          });
+        }
+
+        if (customId === 'panel_to_dashboard') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({
+            type: 7,
+            data: payload
+          });
+        }
+
+        if (customId === 'panel_btn_set_color') {
+          const config = await getConfig(env, guildId);
+          const editingKey = config.editing_status_key || 'normal_operations';
+          const STATUS_LABELS = {
+            normal_operations: 'Normal Operations',
+            schools_closed: 'Schools Closed',
+            schools_and_offices_closed: 'Schools and Offices Closed',
+            schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+            schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+            unknown_alert: 'Other/Unknown Alert'
+          };
+          const statusLabel = STATUS_LABELS[editingKey] || editingKey;
+
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: `Set Color: ${statusLabel.split(' ')[0]}`,
+              custom_id: 'modal_set_color',
+              components: [{
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_color',
+                  style: 1,
+                  label: `HEX Color for ${statusLabel.split(' ')[0]} (or default)`,
+                  placeholder: "2ECC71",
+                  min_length: 1,
+                  max_length: 10,
+                  required: true
+                }]
+              }]
+            }
+          });
+        }
+
+        if (customId === 'panel_btn_set_footer') {
+          const config = await getConfig(env, guildId);
+          const currentFooter = config.alert_embed_footer || '';
+
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: 'Set Embed Footer Text',
+              custom_id: 'modal_set_footer',
+              components: [{
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_footer',
+                  style: 2,
+                  label: "Custom Footer (or default)",
+                  placeholder: "Howard County Public School System Daily Monitor",
+                  value: currentFooter,
+                  min_length: 1,
+                  max_length: 1000,
+                  required: true
+                }]
+              }]
+            }
+          });
+        }
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
@@ -1725,22 +1854,17 @@ export default {
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
         if (!(await canConfigure(body.member, env, guildId))) {
-          return jsonResponse({
-            type: 7,
-            data: {
-              content: 'You do not have permission to configure this bot.',
-              components: []
-            }
+          return interactionResponse({
+            content: 'You do not have permission to configure this bot.',
+            flags: EPHEMERAL_FLAG
           });
         }
 
-        const next = await applyConfigUpdate(body, env);
+        await applyConfigUpdate(body, env);
+        const payload = await buildControlPanelPayload(env, guildId);
         return jsonResponse({
           type: 7,
-          data: {
-            content: renderConfigMessage(next),
-            components: buildConfigComponents(next.editing_status_key)
-          }
+          data: payload
         });
       }
 
