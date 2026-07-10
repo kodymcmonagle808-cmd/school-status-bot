@@ -67,221 +67,130 @@ if [ -z "$discord_application_id" ]; then
   exit 1
 fi
 
-ensure_command() {
-  local name="$1"
-  local description="$2"
-
-  local command_payload
-  if [ "$name" = "override" ]; then
-    command_payload=$(jq -n \
-      --arg name "$name" \
-      --arg description "$description" \
-      '{
-        name: $name,
-        description: $description,
+payload=$(jq -n '[
+  {
+    name: "post-status",
+    description: "Post the latest HCPSS status now.",
+    type: 1,
+    dm_permission: false
+  },
+  {
+    name: "override",
+    description: "Override the posted status for a set number of days.",
+    type: 1,
+    dm_permission: false,
+    options: [
+      {
+        name: "set",
+        description: "Enable an override for a number of days.",
         type: 1,
-        dm_permission: false,
         options: [
-          {
-            name: "set",
-            description: "Enable an override for a number of days.",
-            type: 1,
-            options: [
-              { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
-              {
-                name: "status",
-                description: "Which status to display.",
-                type: 3,
-                required: true,
-                choices: [
-                  { name: "Normal Operations", value: "normal_operations" },
-                  { name: "Schools Closed", value: "schools_closed" },
-                  { name: "Schools and Offices Closed", value: "schools_and_offices_closed" },
-                  { name: "Schools Open 2 Hours Late", value: "schools_open_2_hours_late" },
-                  { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" }
-                ]
-              },
-              { name: "details", description: "Optional extra details.", type: 3, required: false, max_length: 4000 },
-              { name: "title", description: "Optional embed title override.", type: 3, required: false, max_length: 256 }
-            ]
-          },
-          {
-            name: "clear",
-            description: "Disable the active override immediately.",
-            type: 1
-          }
-        ]
-      }')
-  elif [ "$name" = "config" ]; then
-    command_payload=$(jq -n \
-      --arg name "$name" \
-      --arg description "$description" \
-      '{
-        name: $name,
-        description: $description,
-        type: 1,
-        dm_permission: false,
-        options: [
-          { name: "color", description: "Custom HEX color code for status embeds (e.g. 2ECC71).", type: 3, required: false },
-          { name: "footer", description: "Custom footer text for status embeds.", type: 3, required: false },
+          { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
           {
             name: "status",
-            description: "Which status to apply the custom color to (defaults to current configuration selection).",
+            description: "Which status to display.",
             type: 3,
-            required: false,
+            required: true,
             choices: [
               { name: "Normal Operations", value: "normal_operations" },
               { name: "Schools Closed", value: "schools_closed" },
               { name: "Schools and Offices Closed", value: "schools_and_offices_closed" },
               { name: "Schools Open 2 Hours Late", value: "schools_open_2_hours_late" },
-              { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" },
-              { name: "Other/Unknown Alert", value: "unknown_alert" }
+              { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" }
             ]
-          }
+          },
+          { name: "details", description: "Optional extra details.", type: 3, required: false, max_length: 4000 },
+          { name: "title", description: "Optional embed title override.", type: 3, required: false, max_length: 256 }
         ]
-      }')
-  elif [ "$name" = "events" ]; then
-    command_payload=$(jq -n \
-      --arg name "$name" \
-      --arg description "$description" \
-      '{
-        name: $name,
-        description: $description,
+      },
+      {
+        name: "clear",
+        description: "Disable the active override immediately.",
+        type: 1
+      }
+    ]
+  },
+  {
+    name: "calendar",
+    description: "Show scheduled closures or events in the next 7 days.",
+    type: 1,
+    dm_permission: false
+  },
+  {
+    name: "history",
+    description: "Show the last 5 operating status changes.",
+    type: 1,
+    dm_permission: false
+  },
+  {
+    name: "events",
+    description: "Manage dynamic calendar events.",
+    type: 1,
+    dm_permission: false,
+    options: [
+      {
+        name: "add",
+        description: "Add a dynamic calendar event.",
         type: 1,
-        dm_permission: false,
         options: [
-          {
-            name: "add",
-            description: "Add a dynamic calendar event.",
-            type: 1,
-            options: [
-              { name: "date", description: "Date of the event (YYYY-MM-DD).", type: 3, required: true },
-              { name: "event", description: "Event description (e.g. Winter Break).", type: 3, required: true }
-            ]
-          },
-          {
-            name: "remove",
-            description: "Remove a dynamic calendar event.",
-            type: 1,
-            options: [
-              { name: "date", description: "Date of the event to remove (YYYY-MM-DD).", type: 3, required: true }
-            ]
-          },
-          {
-            name: "list",
-            description: "List all dynamic calendar events.",
-            type: 1
-          }
+          { name: "date", description: "Date of the event (YYYY-MM-DD).", type: 3, required: true },
+          { name: "event", description: "Event description (e.g. Winter Break).", type: 3, required: true }
         ]
-      }')
-  elif [ "$name" = "setup" ]; then
-    command_payload=$(jq -n \
-      --arg name "$name" \
-      --arg description "$description" \
-      '{ name: $name, description: $description, type: 1, dm_permission: false, default_member_permissions: "8" }')
-  else
-    command_payload=$(jq -n \
-      --arg name "$name" \
-      --arg description "$description" \
-      '{ name: $name, description: $description, type: 1, dm_permission: false }')
-  fi
+      },
+      {
+        name: "remove",
+        description: "Remove a dynamic calendar event.",
+        type: 1,
+        options: [
+          { name: "date", description: "Date of the event to remove (YYYY-MM-DD).", type: 3, required: true }
+        ]
+      },
+      {
+        name: "list",
+        description: "List all dynamic calendar events.",
+        type: 1
+      }
+    ]
+  },
+  {
+    name: "stats",
+    description: "Show status check and operating status statistics.",
+    type: 1,
+    dm_permission: false
+  },
+  {
+    name: "setup",
+    description: "Initial one-time setup for the status monitor.",
+    type: 1,
+    dm_permission: false,
+    default_member_permissions: "8"
+  }
+]')
 
 global_base="https://discord.com/api/v10/applications/${discord_application_id}"
-# Register commands globally so they are available across all servers
-commands_base="$global_base"
 
-commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
+echo "Registering global slash commands via bulk overwrite..."
+resp=$(curl -sS -X PUT "${global_base}/commands" \
   -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-  -H "Content-Type: application/json")
-command_id=$(echo "$commands_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id' | head -n 1)
+  -H "Content-Type: application/json" \
+  --data "$payload")
 
-if [ -n "$command_id" ]; then
-  command_resp=$(curl -sS -X PATCH "${commands_base}/commands/${command_id}" \
-    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "$command_payload")
-else
-  command_resp=$(curl -sS -X POST "${commands_base}/commands" \
-    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "$command_payload")
-fi
-
-if [ -z "$(echo "$command_resp" | jq -r '.id // empty')" ]; then
-  echo "Failed to register /${name} command: $command_resp" >&2
+if ! echo "$resp" | jq -e 'type == "array"' >/dev/null; then
+  echo "Failed to register global commands: $resp" >&2
   exit 1
 fi
+echo "Registered global slash commands successfully."
 
-# If we are registering a global command, delete any guild command to avoid duplicate commands.
 if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-  guild_resp=$(curl -sS -X GET "${global_base}/guilds/${DISCORD_GUILD_ID}/commands" \
+  echo "Clearing guild-specific commands to prevent duplicates..."
+  guild_resp=$(curl -sS -X PUT "${global_base}/guilds/${DISCORD_GUILD_ID}/commands" \
     -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-    -H "Content-Type: application/json")
-  guild_ids=$(echo "$guild_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
-  if [ -n "$guild_ids" ]; then
-    echo "Removing guild /${name} command(s) to prevent duplicates..."
-    while IFS= read -r id; do
-      [ -z "$id" ] && continue
-      curl -sS -X DELETE "${global_base}/guilds/${DISCORD_GUILD_ID}/commands/${id}" \
-        -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-        -H "Content-Type: application/json" >/dev/null || true
-    done <<< "$guild_ids"
+    -H "Content-Type: application/json" \
+    --data "[]")
+  if ! echo "$guild_resp" | jq -e 'type == "array"' >/dev/null; then
+    echo "Warning: Failed to clear guild commands: $guild_resp" >&2
   fi
 fi
-}
-
-delete_command() {
-  local name="$1"
-  local global_base="https://discord.com/api/v10/applications/${discord_application_id}"
-  local commands_base="$global_base"
-
-  # Delete from global commands base
-  local commands_resp
-  commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
-    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-    -H "Content-Type: application/json")
-  local command_ids
-  command_ids=$(echo "$commands_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
-  if [ -n "$command_ids" ]; then
-    while IFS= read -r id; do
-      [ -z "$id" ] && continue
-      echo "Deleting global command /${name} (ID: ${id})..."
-      curl -sS -X DELETE "${commands_base}/commands/${id}" \
-        -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-        -H "Content-Type: application/json" >/dev/null || true
-    done <<< "$command_ids"
-  fi
-
-  # Also delete from guild scope if guild id is set to prevent duplicates
-  if [ -n "${DISCORD_GUILD_ID:-}" ]; then
-    local guild_resp
-    guild_resp=$(curl -sS -X GET "${global_base}/guilds/${DISCORD_GUILD_ID}/commands" \
-      -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-      -H "Content-Type: application/json")
-    local guild_ids
-    guild_ids=$(echo "$guild_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
-    if [ -n "$guild_ids" ]; then
-      while IFS= read -r id; do
-        [ -z "$id" ] && continue
-        echo "Deleting guild command /${name} (ID: ${id}) to prevent duplicates..."
-        curl -sS -X DELETE "${global_base}/guilds/${DISCORD_GUILD_ID}/commands/${id}" \
-          -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-          -H "Content-Type: application/json" >/dev/null || true
-      done <<< "$guild_ids"
-    fi
-  fi
-}
-
-ensure_command "post-status" "Post the latest HCPSS status now."
-ensure_command "override" "Override the posted status for a set number of days."
-ensure_command "calendar" "Show scheduled closures or events in the next 7 days."
-ensure_command "history" "Show the last 5 operating status changes."
-ensure_command "events" "Manage dynamic calendar events."
-ensure_command "stats" "Show status check and operating status statistics."
-ensure_command "setup" "Initial one-time setup for the status monitor."
-
-delete_command "overide"
-delete_command "config"
 
 echo "Publishing Worker..."
 wrangler deploy
