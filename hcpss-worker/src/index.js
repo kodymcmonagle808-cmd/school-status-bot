@@ -399,22 +399,145 @@ async function postMessageToChannel(env, payload) {
   });
 }
 
-async function postLog(env, logChannelId, message) {
+async function handlePanelSpeed(body, env) {
+  const start = Date.now();
+  let ok = false;
+  let statusText = '';
+  try {
+    const r = await fetch(HCPSS_URL);
+    ok = r.ok;
+    statusText = `${r.status} ${r.statusText}`;
+  } catch (e) {
+    statusText = e.message;
+  }
+  const duration = Date.now() - start;
+  await updateInteractionOriginal(env, body.token, {
+    content: `⚡ **Scraper speed test:**\n• Status: \`${statusText}\`\n• Fetch time: \`${duration}ms\`\n• Result: ${ok ? '🟢 Ok' : '🔴 Failed'}`,
+    embeds: []
+  });
+}
+
+async function handlePanelCheck(body, env) {
+  const invokerId = body.member && body.member.user && body.member.user.id;
+  const result = await doCheckAndPost(env, { source: 'panel-trigger', invokerId });
+  const content = result.ok
+    ? (result.isError ? '⚠️ Posted the HCPSS error status embed.' : '✅ Posted the latest HCPSS status.')
+    : `❌ Could not post status: ${result.error || result.status}`;
+  await updateInteractionOriginal(env, body.token, {
+    content,
+    embeds: []
+  });
+}
+
+async function postLog(env, logChannelId, message, stats = {}) {
   if (!logChannelId) return;
   const token = env.DISCORD_BOT_TOKEN;
   if (!token) return;
 
-  await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bot ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      content: message,
-      allowed_mentions: { parse: [] }
-    })
-  }).catch(() => {});
+  // Prepend the new log message to the log history array stored in KV
+  let logs = [];
+  const rawLogs = await env.STATUS_KV.get('panel_logs');
+  if (rawLogs) {
+    try {
+      logs = JSON.parse(rawLogs);
+    } catch {
+      logs = [];
+    }
+  }
+  
+  const timeStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(new Date());
+
+  logs.unshift(`[${timeStr}] ${message}`);
+  logs = logs.slice(0, 7); // keep last 7 logs
+  await env.STATUS_KV.put('panel_logs', JSON.stringify(logs));
+
+  // Record latest latency if provided
+  if (typeof stats.latency === 'number') {
+    await env.STATUS_KV.put('last_check_latency', String(stats.latency));
+  }
+  
+  const latency = await env.STATUS_KV.get('last_check_latency') || 'N/A';
+  const lastCheckTime = Date.now();
+  await env.STATUS_KV.put('last_check_time', String(lastCheckTime));
+
+  // Build the embed
+  const logsContent = logs.length ? logs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
+  const embed = {
+    title: '🛠️ HCPSS Status Monitor - Control Panel',
+    color: 10181046, // Purple
+    description: `**System Status**: 🟢 Online\n` +
+                 `**Last Check**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
+                 `**Scraper Latency**: \`${latency}ms\`\n` +
+                 `**KV Namespace**: \`STATUS_KV\` (Connected)\n\n` +
+                 `**Recent System Logs:**\n${logsContent}\n\n` +
+                 `*Use the buttons below to run diagnostic actions.*`,
+    timestamp: new Date().toISOString()
+  };
+
+  const components = [
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
+        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔄' } },
+        { type: 2, style: 2, label: 'View Config', custom_id: 'panel_config', emoji: { name: '⚙️' } },
+        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } }
+      ]
+    }
+  ];
+
+  const payload = {
+    embeds: [embed],
+    components
+  };
+
+  const panelMsgId = await env.STATUS_KV.get('log_panel_message_id');
+  let success = false;
+
+  if (panelMsgId) {
+    // Try updating existing panel
+    try {
+      const resp = await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages/${panelMsgId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bot ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) {
+        success = true;
+      }
+    } catch {
+      // If update fails, we'll post a new one below
+    }
+  }
+
+  if (!success) {
+    // Post a new panel message
+    try {
+      const resp = await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bot ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        await env.STATUS_KV.put('log_panel_message_id', data.id);
+      }
+    } catch (err) {
+      console.error('Failed to post control panel:', err);
+    }
+  }
 }
 
 async function trackStatusHistory(env, currentStatus, primaryDate) {
@@ -519,7 +642,9 @@ async function doCheckAndPost(env, options = {}) {
   const logChannelId = config.log_channel_id;
   const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
 
+  const start = Date.now();
   const builtStatus = await buildStatusPayload(env, { includeComponents: true });
+  const latency = Date.now() - start;
 
   const statusKey = builtStatus.statusKey || 'normal_operations';
   
@@ -548,7 +673,7 @@ async function doCheckAndPost(env, options = {}) {
 
   if (!postResult.ok) {
     const postError = await postResult.text();
-    await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`);
+    await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`, { latency });
     return { ok: false, error: postError, status: postResult.status };
   }
 
@@ -570,7 +695,8 @@ async function doCheckAndPost(env, options = {}) {
   await postLog(
     env,
     logChannelId,
-    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`
+    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
+    { latency }
   );
 
   if (!builtStatus.isOverride && !builtStatus.isError) {
@@ -998,6 +1124,41 @@ export default {
           components: buildConfigComponents(effective.editing_status_key),
           flags: EPHEMERAL_FLAG
         });
+      }
+
+      if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_')) {
+        if (!(await canUseCommands(body.member, env))) {
+          return interactionResponse({
+            content: 'You do not have permission to use the control panel.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const customId = body.data.custom_id;
+        if (customId === 'panel_speed') {
+          ctx.waitUntil(handlePanelSpeed(body, env));
+          return deferredInteractionResponse();
+        }
+
+        if (customId === 'panel_check') {
+          ctx.waitUntil(handlePanelCheck(body, env));
+          return deferredInteractionResponse();
+        }
+
+        if (customId === 'panel_config') {
+          const config = await getConfig(env);
+          const effective = getEffectiveConfig(config);
+          return interactionResponse({
+            content: renderConfigMessage(config),
+            components: buildConfigComponents(effective.editing_status_key),
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        if (customId === 'panel_history') {
+          const payload = await runHistoryCommand(env);
+          return interactionResponse(payload);
+        }
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
