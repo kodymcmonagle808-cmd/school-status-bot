@@ -24,7 +24,7 @@ list_resp=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CF_A
 
 kv_id=$(echo "$list_resp" | jq -r --arg title "$namespace_title" '.result[]? | select(.title == $title) | .id' | head -n 1)
 if [ -z "$kv_id" ]; then
-  kv_id=$(echo "$list_resp" | jq -r '.result | map(select(.title | test("^hcpss-status-kv-[0-9]+$"))) | sort_by(.title) | last | .id // empty')
+  kv_id=$(echo "$list_resp" | jq -r '.result // [] | map(select(.title | test("^hcpss-status-kv-[0-9]+$"))) | sort_by(.title) | last | .id // empty')
 fi
 
 if [ -z "$kv_id" ]; then
