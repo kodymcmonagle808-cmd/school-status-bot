@@ -455,7 +455,7 @@ async function postLog(env, logChannelId, message, stats = {}) {
     }).format(new Date());
 
     logs.unshift(`[${timeStr}] ${message}`);
-    logs = logs.slice(0, 7); // keep last 7 logs
+    logs = logs.slice(0, 25); // keep last 25 logs
     await env.STATUS_KV.put('panel_logs', JSON.stringify(logs));
   }
 
@@ -469,7 +469,8 @@ async function postLog(env, logChannelId, message, stats = {}) {
   await env.STATUS_KV.put('last_check_time', String(lastCheckTime));
 
   // Build the embed
-  const logsContent = logs.length ? logs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
+  const recentLogs = logs.slice(0, 3);
+  const logsContent = recentLogs.length ? recentLogs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 10181046, // Purple
@@ -489,7 +490,8 @@ async function postLog(env, logChannelId, message, stats = {}) {
         { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
         { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔄' } },
         { type: 2, style: 2, label: 'View Config', custom_id: 'panel_config', emoji: { name: '⚙️' } },
-        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } }
+        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
+        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } }
       ]
     }
   ];
@@ -629,6 +631,38 @@ async function runHistoryCommand(env) {
       const timeStr = formatCheckedAt(new Date(h.timestamp));
       return `**#${index + 1} - ${h.date || 'Unknown Date'}**\n*Detected at: ${timeStr}*\n${h.status}`;
     }).join('\n\n___\n\n');
+  }
+
+  return {
+    embeds: [embed],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+async function runLogsCommand(env) {
+  const checkedAt = new Date();
+  const rawLogs = await env.STATUS_KV.get('panel_logs');
+  let logs = [];
+  if (rawLogs) {
+    try {
+      logs = JSON.parse(rawLogs);
+    } catch (e) {
+      logs = [];
+    }
+  }
+
+  const embed = {
+    title: '📋 HCPSS Status Monitor - System Logs',
+    color: 10181046, // Purple
+    timestamp: checkedAt.toISOString(),
+    footer: { text: 'HCPSS Status Monitor' }
+  };
+
+  if (logs.length === 0) {
+    embed.description = 'No system logs recorded yet.';
+  } else {
+    // Show the full log history
+    embed.description = logs.map(line => `\`${line}\``).join('\n');
   }
 
   return {
@@ -1229,6 +1263,11 @@ export default {
 
         if (customId === 'panel_history') {
           const payload = await runHistoryCommand(env);
+          return interactionResponse(payload);
+        }
+
+        if (customId === 'panel_logs') {
+          const payload = await runLogsCommand(env);
           return interactionResponse(payload);
         }
       }
