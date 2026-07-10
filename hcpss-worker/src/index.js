@@ -445,17 +445,19 @@ async function postLog(env, logChannelId, message, stats = {}) {
     }
   }
   
-  const timeStr = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true
-  }).format(new Date());
+  if (message) {
+    const timeStr = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(new Date());
 
-  logs.unshift(`[${timeStr}] ${message}`);
-  logs = logs.slice(0, 7); // keep last 7 logs
-  await env.STATUS_KV.put('panel_logs', JSON.stringify(logs));
+    logs.unshift(`[${timeStr}] ${message}`);
+    logs = logs.slice(0, 7); // keep last 7 logs
+    await env.STATUS_KV.put('panel_logs', JSON.stringify(logs));
+  }
 
   // Record latest latency if provided
   if (typeof stats.latency === 'number') {
@@ -669,40 +671,57 @@ async function doCheckAndPost(env, options = {}) {
     __channelId: channelId
   };
 
-  const postResult = await postMessageToChannel(env, payload);
+  const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+  const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+  const lastKnownStatus = await env.STATUS_KV.get('last_known_status');
+  const statusChanged = lastKnownStatus !== liveStatusText;
+  
+  const isScheduled = options.source === 'scheduled';
+  const shouldPostAlert = !isScheduled || statusChanged;
 
-  if (!postResult.ok) {
-    const postError = await postResult.text();
-    await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`, { latency });
-    return { ok: false, error: postError, status: postResult.status };
+  let postedMessageId = null;
+  if (shouldPostAlert) {
+    const postResult = await postMessageToChannel(env, payload);
+
+    if (!postResult.ok) {
+      const postError = await postResult.text();
+      await postLog(env, logChannelId, `HCPSS check failed (source: ${options.source || 'unknown'}): ${postError}`, { latency });
+      return { ok: false, error: postError, status: postResult.status };
+    }
+
+    const postedMessage = await postResult.json();
+    postedMessageId = postedMessage.id;
+    const previousMessageId = await env.STATUS_KV.get('last_message_id');
+    const previousChannelId = await env.STATUS_KV.get('last_channel_id');
+    await env.STATUS_KV.put('last_message_id', postedMessageId);
+    await env.STATUS_KV.put('last_channel_id', channelId);
+
+    if (previousMessageId && previousMessageId !== postedMessageId) {
+      const deleteChannelId = previousChannelId || channelId;
+      await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+      }).catch(() => {});
+    }
+
+    await postLog(
+      env,
+      logChannelId,
+      `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
+      { latency }
+    );
+  } else {
+    // Scheduled check with no status change: just update stats & timestamp, no new log message
+    await postLog(
+      env,
+      logChannelId,
+      null,
+      { latency }
+    );
   }
-
-  const postedMessage = await postResult.json();
-  const postedMessageId = postedMessage.id;
-  const previousMessageId = await env.STATUS_KV.get('last_message_id');
-  const previousChannelId = await env.STATUS_KV.get('last_channel_id');
-  await env.STATUS_KV.put('last_message_id', postedMessageId);
-  await env.STATUS_KV.put('last_channel_id', channelId);
-
-  if (previousMessageId && previousMessageId !== postedMessageId) {
-    const deleteChannelId = previousChannelId || channelId;
-    await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-    }).catch(() => {});
-  }
-
-  await postLog(
-    env,
-    logChannelId,
-    `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
-    { latency }
-  );
 
   if (!builtStatus.isOverride && !builtStatus.isError) {
-    const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
     if (firstEmbed) {
-      const liveStatusText = firstEmbed.description || '';
       const statusTitle = firstEmbed.title || '';
       await trackStatusHistory(env, liveStatusText, statusTitle);
     }
