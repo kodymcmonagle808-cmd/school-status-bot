@@ -298,7 +298,7 @@ function determineStatusKey(cards) {
   return 'unknown_alert';
 }
 
-async function buildStatusEmbeds(footer = 'HCPSS Status Monitor', cards = null) {
+async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null) {
   const checkedAt = new Date();
   if (!cards) {
     const html = await fetchHtml(HCPSS_URL);
@@ -307,7 +307,12 @@ async function buildStatusEmbeds(footer = 'HCPSS Status Monitor', cards = null) 
   const statusDate = parseStatusDate(cards[0] && cards[0].date, checkedAt);
   const primaryDate = normalizeStatusDate(cards[0] && cards[0].date, checkedAt);
   const isNormalFromSite = !cards.length || cards.every(c => !c.title || /normal operations/i.test(c.title));
-  const calendarEvent = SCHOOL_CALENDAR_EVENTS[formatYmdNY(statusDate)];
+  
+  const ymd = formatYmdNY(statusDate);
+  let calendarEvent = env ? await env.STATUS_KV.get(`calendar_event:${ymd}`) : null;
+  if (!calendarEvent) {
+    calendarEvent = SCHOOL_CALENDAR_EVENTS[ymd];
+  }
 
   let desc = assembleDescription(cards);
   if (isNormalFromSite && calendarEvent) {
@@ -316,29 +321,44 @@ async function buildStatusEmbeds(footer = 'HCPSS Status Monitor', cards = null) 
     desc = `## **${calendarEvent}**\n\nStaff and students report in accordance with the HCPSS calendar.`;
   }
 
-  const color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
-  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
+  const statusKey = determineStatusKey(cards);
+  let color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
+  if (config && config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number') {
+    color = config.status_embed_colors[statusKey];
+  }
+  const customFooter = (config && config.alert_embed_footer) || footer;
+
+  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt).slice(0, MAX_EMBEDS);
 }
 
-function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor') {
+function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config = null) {
   const checkedAt = new Date();
   const detail = error && error.message ? `\n\nTechnical detail: ${error.message}` : '';
+  let color = 15158332;
+  if (config && config.status_embed_colors && typeof config.status_embed_colors['unknown_alert'] === 'number') {
+    color = config.status_embed_colors['unknown_alert'];
+  }
+  const customFooter = (config && config.alert_embed_footer) || footer;
   return [{
     title: 'HCPSS status check failed',
     url: HCPSS_URL,
     description: `The monitor could not fetch the HCPSS status page right now. Try again in a minute or check https://hcpss.org directly.${detail}`,
-    color: 15158332,
-    footer: { text: footerWithCheckedAt(footer, checkedAt) },
+    color: color,
+    footer: { text: footerWithCheckedAt(customFooter, checkedAt) },
     timestamp: checkedAt.toISOString()
   }];
 }
 
-function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor') {
+function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config = null) {
   const checkedAt = new Date();
   const statusKey = override && override.status_key ? String(override.status_key) : '';
   const statusLabel = override && override.status_label ? String(override.status_label) : 'Override';
   const isNormal = statusKey === 'normal_operations';
-  const color = isNormal ? 3066993 : 15158332;
+  let color = isNormal ? 3066993 : 15158332;
+  if (config && config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number') {
+    color = config.status_embed_colors[statusKey];
+  }
+  const customFooter = (config && config.alert_embed_footer) || footer;
 
   const title = (override && override.title)
     ? String(override.title).slice(0, 256)
@@ -347,15 +367,18 @@ function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor') {
   const details = (override && override.details) ? String(override.details).trim() : '';
   const body = details ? `## **${statusLabel}**\n\n${details}` : `## **${statusLabel}**`;
 
-  return splitEmbeds(title, body, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
+  return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt).slice(0, MAX_EMBEDS);
 }
 
 async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null } = {}) {
+  const storedConfig = await getConfig(env, guildId);
+  const config = getEffectiveConfig(storedConfig);
+
   const activeOverride = env ? await getActiveOverride(env, guildId) : null;
   if (activeOverride) {
     const payload = {
       content: '',
-      embeds: buildOverrideEmbeds(activeOverride, footer)
+      embeds: buildOverrideEmbeds(activeOverride, footer, config)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
@@ -364,7 +387,7 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
   if (error) {
     const payload = {
       content: '',
-      embeds: buildStatusErrorEmbeds(error, footer)
+      embeds: buildStatusErrorEmbeds(error, footer, config)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: true, error, statusKey: 'unknown_alert' };
@@ -375,14 +398,14 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
     const statusKey = determineStatusKey(finalCards);
     const payload = {
       content: '',
-      embeds: await buildStatusEmbeds(footer, finalCards)
+      embeds: await buildStatusEmbeds(env, footer, finalCards, config)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: false, statusKey };
   } catch (err) {
     const payload = {
       content: '',
-      embeds: buildStatusErrorEmbeds(err, footer)
+      embeds: buildStatusErrorEmbeds(err, footer, config)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: true, error: err, statusKey: 'unknown_alert' };
@@ -500,11 +523,18 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
     {
       type: 1,
       components: [
+        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
         { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔄' } },
+        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
+      ]
+    },
+    {
+      type: 1,
+      components: [
         { type: 2, style: 2, label: 'View Config', custom_id: 'panel_config', emoji: { name: '⚙️' } },
         { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } }
+        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
+        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
       ]
     }
   ];
@@ -557,7 +587,7 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   }
 }
 
-async function trackStatusHistory(env, currentStatus, primaryDate) {
+async function trackStatusHistory(env, currentStatus, primaryDate, statusKey = '') {
   const lastKnown = await env.STATUS_KV.get('last_known_status');
   if (lastKnown === currentStatus) {
     return; // No change
@@ -581,9 +611,23 @@ async function trackStatusHistory(env, currentStatus, primaryDate) {
     date: primaryDate
   });
 
-  history = history.slice(0, 5);
-
+  history = history.slice(0, 10); // Keep last 10 status changes
   await env.STATUS_KV.put('status_history', JSON.stringify(history));
+
+  // Increment operating status count in KV
+  if (statusKey && statusKey !== 'normal_operations') {
+    try {
+      let stats = {};
+      const rawStats = await env.STATUS_KV.get('status_stats');
+      if (rawStats) {
+        stats = JSON.parse(rawStats) || {};
+      }
+      stats[statusKey] = (stats[statusKey] || 0) + 1;
+      await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
+    } catch (e) {
+      console.error('Failed to increment operating status stats:', e);
+    }
+  }
 }
 
 function runCalendarCommand() {
@@ -745,6 +789,22 @@ async function doCheckAndPost(env, options = {}) {
   }
   const latency = Date.now() - start;
 
+  // Increment check counts in KV
+  try {
+    let stats = {};
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    if (rawStats) {
+      stats = JSON.parse(rawStats) || {};
+    }
+    stats.scrapes_total = (stats.scrapes_total || 0) + 1;
+    if (error) {
+      stats.scrapes_failed = (stats.scrapes_failed || 0) + 1;
+    }
+    await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
+  } catch (e) {
+    console.error('Failed to update scraper statistics:', e);
+  }
+
   // Determine target guilds to post/check for.
   let targetGuildIds = [];
   if (options.guildId) {
@@ -784,7 +844,7 @@ async function doCheckAndPost(env, options = {}) {
     if (lastKnownStatus !== liveStatusTextGlobal) {
       if (firstEmbedGlobal) {
         const statusTitle = firstEmbedGlobal.title || '';
-        await trackStatusHistory(env, liveStatusTextGlobal, statusTitle);
+        await trackStatusHistory(env, liveStatusTextGlobal, statusTitle, liveStatusResult.statusKey);
       }
       await env.STATUS_KV.put('last_known_status', liveStatusTextGlobal);
     }
@@ -949,6 +1009,7 @@ function getEffectiveConfig(stored) {
   if (!next.log_channel_id) next.log_channel_id = DEFAULT_LOG_CHANNEL_ID;
   if (!Array.isArray(next.ping_role_ids)) next.ping_role_ids = [];
   if (!next.status_ping_roles) next.status_ping_roles = {};
+  if (!next.status_embed_colors) next.status_embed_colors = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
   return next;
 }
@@ -1139,6 +1200,7 @@ function renderConfigMessage(config) {
   const channel = effective.alert_channel_id ? `<#${effective.alert_channel_id}>` : '(not set)';
   const logChannel = effective.log_channel_id ? `<#${effective.log_channel_id}>` : '(not set)';
   const staffRole = effective.staff_role_id ? `<@&${effective.staff_role_id}>` : '(not set)';
+  const embedFooter = effective.alert_embed_footer || '(default)';
   
   const STATUS_LABELS = {
     normal_operations: 'Normal Operations',
@@ -1152,18 +1214,26 @@ function renderConfigMessage(config) {
   const statusPings = Object.entries(STATUS_LABELS).map(([key, label]) => {
     const roleId = effective.status_ping_roles && effective.status_ping_roles[key];
     const pingDisplay = roleId ? `<@&${roleId}>` : '(none)';
-    return `• **${label}**: ${pingDisplay}`;
+    
+    let colorDisplay = '';
+    if (effective.status_embed_colors && typeof effective.status_embed_colors[key] === 'number') {
+      colorDisplay = ` [Color: #${effective.status_embed_colors[key].toString(16).toUpperCase().padStart(6, '0')}`;
+    }
+    
+    return `• **${label}**: ${pingDisplay}${colorDisplay}`;
   }).join('\n');
 
   const editingKey = effective.editing_status_key || 'normal_operations';
   const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
 
   return `**HCPSS Status Monitor Configuration**\n` +
-         `Alert channel: ${channel}\n` +
-         `Log channel: ${logChannel}\n` +
-         `Staff role: ${staffRole}\n\n` +
-         `**Ping Roles per Status:**\n${statusPings}\n\n` +
-         `*Currently configuring status: **${editingLabel}***`;
+         `• Alert channel: ${channel}\n` +
+         `• Log channel: ${logChannel}\n` +
+         `• Staff role: ${staffRole}\n` +
+         `• Custom Footer: \`${embedFooter}\`\n\n` +
+         `**Ping Roles & Custom Colors per Status:**\n${statusPings}\n\n` +
+         `*Currently configuring status: **${editingLabel}***\n` +
+         `*(Tip: Use \`/config color:<HEX>\` or \`/config footer:<text>\` to change theme)*`;
 }
 
 function buildConfigComponents(editingStatusKey = 'normal_operations') {
@@ -1270,6 +1340,201 @@ async function applyConfigUpdate(body, env) {
   return next;
 }
 
+async function runEventsCommand(body, env) {
+  const options = body && body.data && body.data.options;
+  const sub = Array.isArray(options) && options[0] && options[0].type === 1 ? options[0] : null;
+  const subName = sub && sub.name ? String(sub.name) : '';
+  const subOptions = sub && Array.isArray(sub.options) ? sub.options : [];
+  const guildId = body.guild_id || '';
+  const invokerId = body && body.member && body.member.user && body.member.user.id;
+
+  if (subName === 'add') {
+    const dateRaw = getCommandOption(subOptions, 'date');
+    const eventRaw = getCommandOption(subOptions, 'event');
+
+    const dateStr = (dateRaw ? String(dateRaw) : '').trim();
+    const eventStr = (eventRaw ? String(eventRaw) : '').trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      await updateInteractionOriginal(env, body.token, {
+        content: '❌ Invalid date format. Please use `YYYY-MM-DD` (e.g. `2026-12-25`).',
+        embeds: []
+      });
+      return;
+    }
+
+    await env.STATUS_KV.put(`calendar_event:${dateStr}`, eventStr);
+
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    await postLog(env, cfg.log_channel_id, `Calendar event added: **${dateStr}** - *${eventStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+
+    await updateInteractionOriginal(env, body.token, {
+      content: `✅ Added calendar event for **${dateStr}**: *${eventStr}*`,
+      embeds: []
+    });
+    return;
+  }
+
+  if (subName === 'remove') {
+    const dateRaw = getCommandOption(subOptions, 'date');
+    const dateStr = (dateRaw ? String(dateRaw) : '').trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      await updateInteractionOriginal(env, body.token, {
+        content: '❌ Invalid date format. Please use `YYYY-MM-DD` (e.g. `2026-12-25`).',
+        embeds: []
+      });
+      return;
+    }
+
+    const existing = await env.STATUS_KV.get(`calendar_event:${dateStr}`);
+    if (!existing) {
+      await updateInteractionOriginal(env, body.token, {
+        content: `⚠️ No dynamic calendar event found for date **${dateStr}**.`,
+        embeds: []
+      });
+      return;
+    }
+
+    await env.STATUS_KV.delete(`calendar_event:${dateStr}`);
+
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    await postLog(env, cfg.log_channel_id, `Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+
+    await updateInteractionOriginal(env, body.token, {
+      content: `✅ Removed calendar event for **${dateStr}** (was: *${existing}*)`,
+      embeds: []
+    });
+    return;
+  }
+
+  if (subName === 'list') {
+    let listResult;
+    try {
+      listResult = await env.STATUS_KV.list({ prefix: 'calendar_event:' });
+    } catch (e) {
+      await updateInteractionOriginal(env, body.token, {
+        content: `❌ Failed to list calendar events: ${e.message}`,
+        embeds: []
+      });
+      return;
+    }
+
+    const events = [];
+    for (const key of listResult.keys) {
+      const dateStr = key.name.replace(/^calendar_event:/, '');
+      const eventStr = await env.STATUS_KV.get(key.name);
+      if (eventStr) {
+        events.push({ dateStr, eventStr });
+      }
+    }
+
+    events.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+
+    const embed = {
+      title: '🗓️ Dynamic School Calendar Events',
+      color: 3066993,
+      timestamp: new Date().toISOString(),
+      footer: { text: 'HCPSS Status Monitor' }
+    };
+
+    if (events.length === 0) {
+      embed.description = 'No dynamic calendar events configured. Events added via `/events add` will show up here.';
+    } else {
+      embed.description = events.map(e => `• **${e.dateStr}**: ${e.eventStr}`).join('\n');
+    }
+
+    await updateInteractionOriginal(env, body.token, {
+      content: '',
+      embeds: [embed]
+    });
+    return;
+  }
+
+  await updateInteractionOriginal(env, body.token, { content: 'Invalid events command.', embeds: [] });
+}
+
+async function runStatsCommand(env) {
+  const checkedAt = new Date();
+  let stats = {};
+  try {
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    if (rawStats) {
+      stats = JSON.parse(rawStats) || {};
+    }
+  } catch (e) {
+    stats = {};
+  }
+
+  const scrapesTotal = stats.scrapes_total || 0;
+  const scrapesFailed = stats.scrapes_failed || 0;
+  const scrapesSuccess = Math.max(0, scrapesTotal - scrapesFailed);
+  const uptimePct = scrapesTotal > 0 ? ((scrapesSuccess / scrapesTotal) * 100).toFixed(2) : '100.00';
+
+  const STATUS_LABELS = {
+    schools_closed: 'Schools Closed',
+    schools_and_offices_closed: 'Schools and Offices Closed',
+    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+    schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+    unknown_alert: 'Other/Unknown Alert'
+  };
+
+  const countsDisplay = Object.entries(STATUS_LABELS).map(([key, label]) => {
+    const count = stats[key] || 0;
+    return `• **${label}**: ${count}`;
+  }).join('\n');
+
+  const embed = {
+    title: '📊 HCPSS Status Monitor - Statistics',
+    color: 0x34495E,
+    description: `**Scraper Diagnostics:**\n` +
+                 `• Total Checks: \`${scrapesTotal}\`\n` +
+                 `• Scraper Success Rate: \`${uptimePct}%\` (\`${scrapesSuccess}/${scrapesTotal}\` successful)\n\n` +
+                 `**Operating Status Changes (School Year):**\n` +
+                 `${countsDisplay}`,
+    timestamp: checkedAt.toISOString(),
+    footer: { text: 'HCPSS Status Monitor' }
+  };
+
+  return {
+    embeds: [embed],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+async function handlePanelRefresh(body, env) {
+  const guildId = body.guild_id || '';
+  const stored = await getConfig(env, guildId);
+  const config = getEffectiveConfig(stored);
+  const logChannelId = config.log_channel_id;
+  if (logChannelId) {
+    await postLog(env, logChannelId, null, {}, guildId);
+  }
+  await updateInteractionOriginal(env, body.token, {
+    content: '✅ Control panel updated.',
+    embeds: []
+  });
+}
+
+async function handlePanelClearLogs(body, env) {
+  const guildId = body.guild_id || '';
+  const stored = await getConfig(env, guildId);
+  const config = getEffectiveConfig(stored);
+  const logChannelId = config.log_channel_id;
+
+  const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
+  await env.STATUS_KV.put(logKey, JSON.stringify([]));
+
+  if (logChannelId) {
+    await postLog(env, logChannelId, null, {}, guildId);
+  }
+
+  await updateInteractionOriginal(env, body.token, {
+    content: '✅ System logs cleared.',
+    embeds: []
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1329,13 +1594,74 @@ export default {
       }
 
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
-        const config = await getConfig(env, guildId);
+        const options = body.data.options;
+        let config = await getConfig(env, guildId);
+        let message = '';
+        
+        if (Array.isArray(options) && options.length > 0) {
+          const colorRaw = getCommandOption(options, 'color');
+          const footerRaw = getCommandOption(options, 'footer');
+          const statusRaw = getCommandOption(options, 'status');
+
+          let changed = false;
+          
+          if (colorRaw !== undefined) {
+            const colorStr = String(colorRaw).trim();
+            if (colorStr.toLowerCase() === 'default' || colorStr.toLowerCase() === 'none' || colorStr.toLowerCase() === 'clear') {
+              const statusKey = statusRaw || config.editing_status_key || 'normal_operations';
+              if (!config.status_embed_colors) config.status_embed_colors = {};
+              delete config.status_embed_colors[statusKey];
+              changed = true;
+              message += `• Reset color to default for status \`${statusKey}\`.\n`;
+            } else {
+              const hexMatch = colorStr.match(/^#?([0-9A-Fa-f]{6})$/);
+              if (hexMatch) {
+                const colorInt = parseInt(hexMatch[1], 16);
+                const statusKey = statusRaw || config.editing_status_key || 'normal_operations';
+                if (!config.status_embed_colors) config.status_embed_colors = {};
+                config.status_embed_colors[statusKey] = colorInt;
+                changed = true;
+                message += `• Set color for status \`${statusKey}\` to \`#${hexMatch[1].toUpperCase()}\`.\n`;
+              } else {
+                message += `• ❌ Invalid HEX color \`${colorStr}\`. Use a 6-digit hex code (e.g. \`2ECC71\`).\n`;
+              }
+            }
+          }
+
+          if (footerRaw !== undefined) {
+            const footerStr = String(footerRaw).trim();
+            if (footerStr.toLowerCase() === 'default' || footerStr.toLowerCase() === 'none' || footerStr.toLowerCase() === 'clear') {
+              delete config.alert_embed_footer;
+              changed = true;
+              message += `• Reset footer to default.\n`;
+            } else {
+              config.alert_embed_footer = footerStr.slice(0, 2048);
+              changed = true;
+              message += `• Set footer to: "${config.alert_embed_footer}"\n`;
+            }
+          }
+
+          if (changed) {
+            await setConfig(env, guildId, config);
+          }
+        }
+
         const effective = getEffectiveConfig(config);
         return interactionResponse({
-          content: renderConfigMessage(config),
+          content: (message ? `**Updates applied:**\n${message}\n` : '') + renderConfigMessage(config),
           components: buildConfigComponents(effective.editing_status_key),
           flags: EPHEMERAL_FLAG
         });
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'events') {
+        ctx.waitUntil(runEventsCommand(body, env));
+        return deferredInteractionResponse();
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'stats') {
+        const payload = await runStatsCommand(env);
+        return interactionResponse(payload);
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_')) {
@@ -1375,6 +1701,16 @@ export default {
         if (customId === 'panel_logs') {
           const payload = await runLogsCommand(env, guildId);
           return interactionResponse(payload);
+        }
+
+        if (customId === 'panel_refresh') {
+          ctx.waitUntil(handlePanelRefresh(body, env));
+          return deferredInteractionResponse();
+        }
+
+        if (customId === 'panel_clear_logs') {
+          ctx.waitUntil(handlePanelClearLogs(body, env));
+          return deferredInteractionResponse();
         }
       }
 

@@ -72,7 +72,7 @@ ensure_command() {
   local description="$2"
 
   local command_payload
-  if [ "$name" = "overide" ] || [ "$name" = "override" ]; then
+  if [ "$name" = "override" ]; then
     command_payload=$(jq -n \
       --arg name "$name" \
       --arg description "$description" \
@@ -108,6 +108,68 @@ ensure_command() {
           {
             name: "clear",
             description: "Disable the active override immediately.",
+            type: 1
+          }
+        ]
+      }')
+  elif [ "$name" = "config" ]; then
+    command_payload=$(jq -n \
+      --arg name "$name" \
+      --arg description "$description" \
+      '{
+        name: $name,
+        description: $description,
+        type: 1,
+        dm_permission: false,
+        options: [
+          { name: "color", description: "Custom HEX color code for status embeds (e.g. 2ECC71).", type: 3, required: false },
+          { name: "footer", description: "Custom footer text for status embeds.", type: 3, required: false },
+          {
+            name: "status",
+            description: "Which status to apply the custom color to (defaults to current configuration selection).",
+            type: 3,
+            required: false,
+            choices: [
+              { name: "Normal Operations", value: "normal_operations" },
+              { name: "Schools Closed", value: "schools_closed" },
+              { name: "Schools and Offices Closed", value: "schools_and_offices_closed" },
+              { name: "Schools Open 2 Hours Late", value: "schools_open_2_hours_late" },
+              { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" },
+              { name: "Other/Unknown Alert", value: "unknown_alert" }
+            ]
+          }
+        ]
+      }')
+  elif [ "$name" = "events" ]; then
+    command_payload=$(jq -n \
+      --arg name "$name" \
+      --arg description "$description" \
+      '{
+        name: $name,
+        description: $description,
+        type: 1,
+        dm_permission: false,
+        options: [
+          {
+            name: "add",
+            description: "Add a dynamic calendar event.",
+            type: 1,
+            options: [
+              { name: "date", description: "Date of the event (YYYY-MM-DD).", type: 3, required: true },
+              { name: "event", description: "Event description (e.g. Winter Break).", type: 3, required: true }
+            ]
+          },
+          {
+            name: "remove",
+            description: "Remove a dynamic calendar event.",
+            type: 1,
+            options: [
+              { name: "date", description: "Date of the event to remove (YYYY-MM-DD).", type: 3, required: true }
+            ]
+          },
+          {
+            name: "list",
+            description: "List all dynamic calendar events.",
             type: 1
           }
         ]
@@ -210,6 +272,8 @@ ensure_command "config" "Configure alert channel, log channel, staff role, and p
 ensure_command "override" "Override the posted status for a set number of days."
 ensure_command "calendar" "Show scheduled closures or events in the next 7 days."
 ensure_command "history" "Show the last 5 operating status changes."
+ensure_command "events" "Manage dynamic calendar events."
+ensure_command "stats" "Show status check and operating status statistics."
 
 delete_command "overide"
 
