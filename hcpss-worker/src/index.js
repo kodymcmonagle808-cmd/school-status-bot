@@ -637,6 +637,52 @@ async function runHistoryCommand(env) {
   };
 }
 
+async function handleScraperFailure(env, logChannelId, config, error) {
+  const currentFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0) + 1;
+  await env.STATUS_KV.put('scraper_failures_count', String(currentFailures));
+
+  const maxFailuresThreshold = 3;
+  if (currentFailures >= maxFailuresThreshold) {
+    const alreadyAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
+    if (!alreadyAlerted) {
+      await env.STATUS_KV.put('scraper_failure_alerted', 'true');
+      
+      const staffRoleId = config.staff_role_id;
+      const pingText = staffRoleId ? `<@&${staffRoleId}> ` : '';
+      const errorMessage = error && error.message ? error.message : 'Unknown scraping error';
+
+      const token = env.DISCORD_BOT_TOKEN;
+      if (token && logChannelId) {
+        await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            content: `⚠️ ${pingText}**SCRAPER FAILURE ALERT!**\nThe HCPSS status scraper has failed **${currentFailures} consecutive times**.\n` +
+                     `• Latest Error: \`${errorMessage}\`\n` +
+                     `• This warning will not repeat until the scraper recovers.`,
+            allowed_mentions: staffRoleId ? { roles: [staffRoleId] } : { parse: [] }
+          })
+        }).catch(() => {});
+      }
+    }
+  }
+}
+
+async function handleScraperSuccess(env) {
+  const failures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+  if (failures > 0) {
+    await env.STATUS_KV.put('scraper_failures_count', '0');
+    
+    const wasAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
+    if (wasAlerted) {
+      await env.STATUS_KV.delete('scraper_failure_alerted');
+    }
+  }
+}
+
 async function doCheckAndPost(env, options = {}) {
   const stored = await getConfig(env);
   const config = getEffectiveConfig(stored);
@@ -677,7 +723,7 @@ async function doCheckAndPost(env, options = {}) {
   const statusChanged = lastKnownStatus !== liveStatusText;
   
   const isScheduled = options.source === 'scheduled';
-  const shouldPostAlert = !isScheduled || statusChanged;
+  const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
 
   let postedMessageId = null;
   if (shouldPostAlert) {
@@ -718,6 +764,13 @@ async function doCheckAndPost(env, options = {}) {
       null,
       { latency }
     );
+  }
+
+  // Handle scraper failure counter and alert ping
+  if (builtStatus.isError) {
+    await handleScraperFailure(env, logChannelId, config, builtStatus.error);
+  } else {
+    await handleScraperSuccess(env);
   }
 
   if (!builtStatus.isOverride && !builtStatus.isError) {
