@@ -6,7 +6,7 @@ const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 const EPHEMERAL_FLAG = 64;
 const POST_STATUS_COMMAND = 'post-status';
 const CONFIG_COMMAND = 'config';
-const OVERRIDE_COMMAND = 'overide';
+const OVERRIDE_COMMAND = 'override';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 

@@ -166,9 +166,56 @@ if [ -n "${DISCORD_GUILD_ID:-}" ]; then
 fi
 }
 
+delete_command() {
+  local name="$1"
+  local global_base="https://discord.com/api/v10/applications/${discord_application_id}"
+  local commands_base="$global_base"
+  if [ -n "${DISCORD_GUILD_ID:-}" ]; then
+    commands_base="${global_base}/guilds/${DISCORD_GUILD_ID}"
+  fi
+
+  # Delete from active commands base
+  local commands_resp
+  commands_resp=$(curl -sS -X GET "${commands_base}/commands" \
+    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+    -H "Content-Type: application/json")
+  local command_ids
+  command_ids=$(echo "$commands_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
+  if [ -n "$command_ids" ]; then
+    while IFS= read -r id; do
+      [ -z "$id" ] && continue
+      echo "Deleting command /${name} (ID: ${id}) from ${commands_base}..."
+      curl -sS -X DELETE "${commands_base}/commands/${id}" \
+        -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+        -H "Content-Type: application/json" >/dev/null || true
+    done <<< "$command_ids"
+  fi
+
+  # If using guild commands, also delete from global scope to prevent duplicates
+  if [ -n "${DISCORD_GUILD_ID:-}" ]; then
+    local global_resp
+    global_resp=$(curl -sS -X GET "${global_base}/commands" \
+      -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+      -H "Content-Type: application/json")
+    local global_ids
+    global_ids=$(echo "$global_resp" | jq -r --arg name "$name" '.[]? | select(.name == $name) | .id')
+    if [ -n "$global_ids" ]; then
+      while IFS= read -r id; do
+        [ -z "$id" ] && continue
+        echo "Deleting global command /${name} (ID: ${id}) to prevent duplicates..."
+        curl -sS -X DELETE "${global_base}/commands/${id}" \
+          -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+          -H "Content-Type: application/json" >/dev/null || true
+      done <<< "$global_ids"
+    fi
+  fi
+}
+
 ensure_command "post-status" "Post the latest HCPSS status now."
 ensure_command "config" "Configure alert channel, log channel, staff role, and ping roles."
-ensure_command "overide" "Override the posted status for a set number of days."
+ensure_command "override" "Override the posted status for a set number of days."
+
+delete_command "overide"
 
 echo "Publishing Worker..."
 wrangler deploy
