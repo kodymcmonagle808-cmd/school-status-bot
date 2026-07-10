@@ -291,11 +291,17 @@ function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor') {
 
 function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor') {
   const checkedAt = new Date();
-  const mode = override && override.mode === 'normal' ? 'normal' : 'alert';
-  const color = mode === 'normal' ? 3066993 : 15158332;
+  const statusKey = override && override.status_key ? String(override.status_key) : '';
+  const statusLabel = override && override.status_label ? String(override.status_label) : 'Override';
+  const isNormal = statusKey === 'normal_operations';
+  const color = isNormal ? 3066993 : 15158332;
 
-  const title = (override && override.title) ? String(override.title).slice(0, 256) : 'HCPSS Status (Override)';
-  const body = (override && override.body) ? String(override.body) : 'Override is active.';
+  const title = (override && override.title)
+    ? String(override.title).slice(0, 256)
+    : `HCPSS Status (Override) - ${statusLabel}`.slice(0, 256);
+
+  const details = (override && override.details) ? String(override.details).trim() : '';
+  const body = details ? `## **${statusLabel}**\n\n${details}` : `## **${statusLabel}**`;
 
   return splitEmbeds(title, body, HCPSS_URL, color, footer, checkedAt).slice(0, MAX_EMBEDS);
 }
@@ -496,45 +502,61 @@ async function runOverrideCommand(body, env) {
   const options = body && body.data && body.data.options;
   const invokerId = body && body.member && body.member.user && body.member.user.id;
 
-  const shouldClear = !!getCommandOption(options, 'clear');
-  if (shouldClear) {
+  const sub = Array.isArray(options) && options[0] && options[0].type === 1 ? options[0] : null;
+  const subName = sub && sub.name ? String(sub.name) : '';
+  const subOptions = sub && Array.isArray(sub.options) ? sub.options : [];
+
+  if (subName === 'clear') {
     await clearOverride(env);
     await updateInteractionOriginal(env, body.token, { content: 'Override cleared.', embeds: [] });
     return;
   }
 
-  const daysRaw = getCommandOption(options, 'days');
-  const modeRaw = getCommandOption(options, 'mode');
-  const titleRaw = getCommandOption(options, 'title');
-  const bodyRaw = getCommandOption(options, 'body');
+  if (subName !== 'set') {
+    await updateInteractionOriginal(env, body.token, { content: 'Invalid override command.', embeds: [] });
+    return;
+  }
+
+  const daysRaw = getCommandOption(subOptions, 'days');
+  const statusRaw = getCommandOption(subOptions, 'status');
+  const titleRaw = getCommandOption(subOptions, 'title');
+  const detailsRaw = getCommandOption(subOptions, 'details');
 
   const daysParsed = Number.isFinite(Number(daysRaw)) ? Math.trunc(Number(daysRaw)) : 1;
   const days = Math.max(1, Math.min(30, daysParsed));
-  const mode = modeRaw === 'normal' ? 'normal' : 'alert';
-  const title = (titleRaw ? String(titleRaw) : 'HCPSS Status (Override)').trim();
-  const message = (bodyRaw ? String(bodyRaw) : '').trim();
+  const statusKey = statusRaw ? String(statusRaw) : '';
 
-  if (!message) {
-    await updateInteractionOriginal(env, body.token, {
-      content: 'Missing required option: `body`.',
-      embeds: []
-    });
+  const STATUS_LABELS = {
+    normal_operations: 'Normal Operations',
+    schools_closed: 'Schools Closed',
+    schools_and_offices_closed: 'Schools and Offices Closed',
+    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+    schools_close_3_hours_early: 'Schools Close 3 Hours Early'
+  };
+
+  const statusLabel = STATUS_LABELS[statusKey];
+  if (!statusLabel) {
+    await updateInteractionOriginal(env, body.token, { content: 'Invalid status selection.', embeds: [] });
     return;
   }
+
+  const title = (titleRaw ? String(titleRaw) : '').trim();
+  const details = (detailsRaw ? String(detailsRaw) : '').trim();
 
   const now = Date.now();
   const until = now + days * 24 * 60 * 60 * 1000;
   await setOverride(env, {
-    mode,
-    title,
-    body: message,
+    status_key: statusKey,
+    status_label: statusLabel,
+    title: title || null,
+    details: details || null,
     created_at: now,
     created_by: invokerId || null,
     until
   });
 
   const cfg = getEffectiveConfig(await getConfig(env));
-  await postLog(env, cfg.log_channel_id, `Override set (mode: ${mode}, days: ${days}${invokerId ? `, by: ${invokerId}` : ''}).`);
+  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: ${invokerId}` : ''}).`);
 
   await updateInteractionOriginal(env, body.token, {
     content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,

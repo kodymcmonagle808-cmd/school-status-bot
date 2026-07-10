@@ -82,11 +82,34 @@ ensure_command() {
         type: 1,
         dm_permission: false,
         options: [
-          { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
-          { name: "mode", description: "Normal (no pings) or Alert (pings).", type: 3, required: true, choices: [ { name: "Normal", value: "normal" }, { name: "Alert", value: "alert" } ] },
-          { name: "body", description: "Status message text.", type: 3, required: true, max_length: 4000 },
-          { name: "title", description: "Embed title.", type: 3, required: false, max_length: 256 },
-          { name: "clear", description: "Clear any active override.", type: 5, required: false }
+          {
+            name: "set",
+            description: "Enable an override for a number of days.",
+            type: 1,
+            options: [
+              { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
+              {
+                name: "status",
+                description: "Which status to display.",
+                type: 3,
+                required: true,
+                choices: [
+                  { name: "Normal Operations", value: "normal_operations" },
+                  { name: "Schools Closed", value: "schools_closed" },
+                  { name: "Schools and Offices Closed", value: "schools_and_offices_closed" },
+                  { name: "Schools Open 2 Hours Late", value: "schools_open_2_hours_late" },
+                  { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" }
+                ]
+              },
+              { name: "details", description: "Optional extra details.", type: 3, required: false, max_length: 4000 },
+              { name: "title", description: "Optional embed title override.", type: 3, required: false, max_length: 256 }
+            ]
+          },
+          {
+            name: "clear",
+            description: "Disable the active override immediately.",
+            type: 1
+          }
         ]
       }')
   else
