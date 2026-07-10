@@ -72,7 +72,7 @@ ensure_command() {
   local description="$2"
 
   local command_payload
-  if [ "$name" = "overide" ]; then
+  if [ "$name" = "overide" ] || [ "$name" = "override" ]; then
     command_payload=$(jq -n \
       --arg name "$name" \
       --arg description "$description" \
@@ -169,6 +169,7 @@ fi
 ensure_command "post-status" "Post the latest HCPSS status now."
 ensure_command "config" "Configure alert channel, log channel, staff role, and ping roles."
 ensure_command "overide" "Override the posted status for a set number of days."
+ensure_command "override" "Override the posted status for a set number of days."
 
 echo "Publishing Worker..."
 wrangler deploy

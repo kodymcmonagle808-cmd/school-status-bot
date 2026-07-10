@@ -7,6 +7,7 @@ const EPHEMERAL_FLAG = 64;
 const POST_STATUS_COMMAND = 'post-status';
 const CONFIG_COMMAND = 'config';
 const OVERRIDE_COMMAND = 'overide';
+const OVERRIDE_ALIAS_COMMAND = 'override';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 
@@ -508,7 +509,12 @@ async function runOverrideCommand(body, env) {
 
   if (subName === 'clear') {
     await clearOverride(env);
-    await updateInteractionOriginal(env, body.token, { content: 'Override cleared.', embeds: [] });
+    const invokerId = body && body.member && body.member.user && body.member.user.id;
+    const result = await doCheckAndPost(env, { source: 'override-clear', invokerId });
+    const message = result && result.ok
+      ? 'Override cleared. Posted the current live HCPSS status.'
+      : `Override cleared, but could not post live status: ${result.error || result.status || 'unknown error'}`;
+    await updateInteractionOriginal(env, body.token, { content: message, embeds: [] });
     return;
   }
 
@@ -757,7 +763,7 @@ export default {
         return deferredInteractionResponse();
       }
 
-      if (body.type === 2 && body.data && body.data.name === OVERRIDE_COMMAND) {
+      if (body.type === 2 && body.data && (body.data.name === OVERRIDE_COMMAND || body.data.name === OVERRIDE_ALIAS_COMMAND)) {
         ctx.waitUntil(runOverrideCommand(body, env));
         return deferredInteractionResponse();
       }
