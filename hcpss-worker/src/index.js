@@ -256,10 +256,54 @@ function buildCheckAgainComponents() {
   return [{ type: 1, components: [{ type: 2, style: 1, label: 'Check again', custom_id: 'check_again' }] }];
 }
 
-async function buildStatusEmbeds(footer = 'HCPSS Status Monitor') {
+function determineStatusKey(cards) {
+  if (!cards || cards.length === 0) {
+    return 'normal_operations';
+  }
+  
+  const isNormal = cards.every(c => !c.title || /normal operations/i.test(c.title));
+  if (isNormal) {
+    return 'normal_operations';
+  }
+
+  const alertCard = cards.find(c => c.title && !/normal operations/i.test(c.title));
+  if (!alertCard) return 'normal_operations';
+
+  const title = alertCard.title.toLowerCase();
+  const body = (alertCard.body || '').toLowerCase();
+
+  if (title.includes('schools and offices closed') || body.includes('schools and offices closed')) {
+    return 'schools_and_offices_closed';
+  }
+  if (title.includes('schools closed') || body.includes('schools closed')) {
+    return 'schools_closed';
+  }
+  if (title.includes('2 hours late') || title.includes('two hours late') || body.includes('2 hours late') || body.includes('two hours late')) {
+    return 'schools_open_2_hours_late';
+  }
+  if (title.includes('3 hours early') || title.includes('three hours early') || body.includes('3 hours early') || body.includes('three hours early')) {
+    return 'schools_close_3_hours_early';
+  }
+
+  if (title.includes('closed') || body.includes('closed')) {
+    return 'schools_closed';
+  }
+  if (title.includes('late') || body.includes('late') || title.includes('delay') || body.includes('delay')) {
+    return 'schools_open_2_hours_late';
+  }
+  if (title.includes('early') || body.includes('early')) {
+    return 'schools_close_3_hours_early';
+  }
+
+  return 'unknown_alert';
+}
+
+async function buildStatusEmbeds(footer = 'HCPSS Status Monitor', cards = null) {
   const checkedAt = new Date();
-  const html = await fetchHtml(HCPSS_URL);
-  const cards = extractCards(html);
+  if (!cards) {
+    const html = await fetchHtml(HCPSS_URL);
+    cards = extractCards(html);
+  }
   const statusDate = parseStatusDate(cards[0] && cards[0].date, checkedAt);
   const primaryDate = normalizeStatusDate(cards[0] && cards[0].date, checkedAt);
   const isNormalFromSite = !cards.length || cards.every(c => !c.title || /normal operations/i.test(c.title));
@@ -314,23 +358,26 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
       embeds: buildOverrideEmbeds(activeOverride, footer)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
-    return { payload, isError: false, isOverride: true };
+    return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
   }
 
   try {
+    const html = await fetchHtml(HCPSS_URL);
+    const cards = extractCards(html);
+    const statusKey = determineStatusKey(cards);
     const payload = {
       content: '',
-      embeds: await buildStatusEmbeds(footer)
+      embeds: await buildStatusEmbeds(footer, cards)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
-    return { payload, isError: false };
+    return { payload, isError: false, statusKey };
   } catch (error) {
     const payload = {
       content: '',
       embeds: buildStatusErrorEmbeds(error, footer)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
-    return { payload, isError: true, error };
+    return { payload, isError: true, error, statusKey: 'unknown_alert' };
   }
 }
 
@@ -473,13 +520,27 @@ async function doCheckAndPost(env, options = {}) {
   const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
 
   const builtStatus = await buildStatusPayload(env, { includeComponents: true });
-  const isNormal = builtStatus.payload.embeds && builtStatus.payload.embeds[0] && builtStatus.payload.embeds[0].color === 3066993;
 
-  const content = (!isNormal && pingRoleIds.length) ? pingRoleIds.map(id => `<@&${id}>`).join(' ') : '';
+  const statusKey = builtStatus.statusKey || 'normal_operations';
+  
+  let roleId = undefined;
+  if (config.status_ping_roles) {
+    roleId = config.status_ping_roles[statusKey];
+  }
+
+  let rolesToPing = [];
+  if (roleId) {
+    rolesToPing = [roleId];
+  } else if (roleId === undefined && statusKey !== 'normal_operations') {
+    // Fallback to legacy ping_role_ids for non-normal statuses
+    rolesToPing = pingRoleIds;
+  }
+
+  const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
   const payload = {
     ...builtStatus.payload,
     content,
-    allowed_mentions: pingRoleIds.length ? { roles: pingRoleIds } : { parse: [] },
+    allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
     __channelId: channelId
   };
 
@@ -556,6 +617,8 @@ function getEffectiveConfig(stored) {
   if (!next.staff_role_id) next.staff_role_id = DEFAULT_STAFF_ROLE_ID;
   if (!next.log_channel_id) next.log_channel_id = DEFAULT_LOG_CHANNEL_ID;
   if (!Array.isArray(next.ping_role_ids)) next.ping_role_ids = [];
+  if (!next.status_ping_roles) next.status_ping_roles = {};
+  if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
   return next;
 }
 
@@ -741,13 +804,43 @@ function renderConfigMessage(config) {
   const channel = effective.alert_channel_id ? `<#${effective.alert_channel_id}>` : '(not set)';
   const logChannel = effective.log_channel_id ? `<#${effective.log_channel_id}>` : '(not set)';
   const staffRole = effective.staff_role_id ? `<@&${effective.staff_role_id}>` : '(not set)';
-  const roles = Array.isArray(effective.ping_role_ids) && effective.ping_role_ids.length
-    ? effective.ping_role_ids.map(id => `<@&${id}>`).join(' ')
-    : '(none)';
-  return `Alert channel: ${channel}\nLog channel: ${logChannel}\nStaff role: ${staffRole}\nPing roles (emergencies): ${roles}`;
+  
+  const STATUS_LABELS = {
+    normal_operations: 'Normal Operations',
+    schools_closed: 'Schools Closed',
+    schools_and_offices_closed: 'Schools and Offices Closed',
+    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+    schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+    unknown_alert: 'Other/Unknown Alert'
+  };
+
+  const statusPings = Object.entries(STATUS_LABELS).map(([key, label]) => {
+    const roleId = effective.status_ping_roles && effective.status_ping_roles[key];
+    const pingDisplay = roleId ? `<@&${roleId}>` : '(none)';
+    return `• **${label}**: ${pingDisplay}`;
+  }).join('\n');
+
+  const editingKey = effective.editing_status_key || 'normal_operations';
+  const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
+
+  return `**HCPSS Status Monitor Configuration**\n` +
+         `Alert channel: ${channel}\n` +
+         `Log channel: ${logChannel}\n` +
+         `Staff role: ${staffRole}\n\n` +
+         `**Ping Roles per Status:**\n${statusPings}\n\n` +
+         `*Currently configuring status: **${editingLabel}***`;
 }
 
-function buildConfigComponents() {
+function buildConfigComponents(editingStatusKey = 'normal_operations') {
+  const STATUS_LABELS = {
+    normal_operations: 'Normal Operations',
+    schools_closed: 'Schools Closed',
+    schools_and_offices_closed: 'Schools and Offices Closed',
+    schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+    schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+    unknown_alert: 'Other/Unknown Alert'
+  };
+  
   return [
     {
       type: 1,
@@ -784,21 +877,29 @@ function buildConfigComponents() {
     {
       type: 1,
       components: [{
-        type: 6,
-        custom_id: 'cfg_roles',
-        placeholder: 'Select role(s) to ping on emergencies',
-        min_values: 0,
-        max_values: 5
+        type: 3,
+        custom_id: 'cfg_status_select',
+        placeholder: `Status to ping: ${STATUS_LABELS[editingStatusKey] || 'Select status'}`,
+        options: Object.entries(STATUS_LABELS).map(([key, label]) => ({
+          label,
+          value: key,
+          default: key === editingStatusKey
+        })),
+        min_values: 1,
+        max_values: 1
       }]
     },
     {
       type: 1,
-      components: [{
-        type: 2,
-        style: 2,
-        label: 'Clear ping roles',
-        custom_id: 'cfg_clear_roles'
-      }]
+      components: [
+        {
+          type: 6,
+          custom_id: 'cfg_status_role',
+          placeholder: `Select ping role for ${STATUS_LABELS[editingStatusKey] || 'selected status'}`,
+          min_values: 0,
+          max_values: 1
+        }
+      ]
     }
   ];
 }
@@ -809,16 +910,24 @@ async function applyConfigUpdate(body, env) {
   const values = body.data && body.data.values;
 
   const next = { ...current };
+  if (!next.status_ping_roles) next.status_ping_roles = {};
+  if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
+
   if (customId === 'cfg_channel' && Array.isArray(values) && values[0]) {
     next.alert_channel_id = values[0];
   } else if (customId === 'cfg_log_channel' && Array.isArray(values) && values[0]) {
     next.log_channel_id = values[0];
   } else if (customId === 'cfg_staff_role' && Array.isArray(values) && values[0]) {
     next.staff_role_id = values[0];
-  } else if (customId === 'cfg_roles' && Array.isArray(values)) {
-    next.ping_role_ids = values.slice(0, 5);
-  } else if (customId === 'cfg_clear_roles') {
-    next.ping_role_ids = [];
+  } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
+    next.editing_status_key = values[0];
+  } else if (customId === 'cfg_status_role') {
+    const editingKey = next.editing_status_key || 'normal_operations';
+    if (Array.isArray(values) && values[0]) {
+      next.status_ping_roles[editingKey] = values[0];
+    } else {
+      next.status_ping_roles[editingKey] = null;
+    }
   }
 
   await setConfig(env, next);
@@ -883,9 +992,10 @@ export default {
 
       if (body.type === 2 && body.data && body.data.name === CONFIG_COMMAND) {
         const config = await getConfig(env);
+        const effective = getEffectiveConfig(config);
         return interactionResponse({
           content: renderConfigMessage(config),
-          components: buildConfigComponents(),
+          components: buildConfigComponents(effective.editing_status_key),
           flags: EPHEMERAL_FLAG
         });
       }
@@ -915,7 +1025,7 @@ export default {
           type: 7,
           data: {
             content: renderConfigMessage(next),
-            components: buildConfigComponents()
+            components: buildConfigComponents(next.editing_status_key)
           }
         });
       }
