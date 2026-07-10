@@ -84,8 +84,8 @@ ensure_command() {
         options: [
           { name: "days", description: "How many days the override should last (1-30).", type: 4, required: true, min_value: 1, max_value: 30 },
           { name: "mode", description: "Normal (no pings) or Alert (pings).", type: 3, required: true, choices: [ { name: "Normal", value: "normal" }, { name: "Alert", value: "alert" } ] },
-          { name: "title", description: "Embed title.", type: 3, required: false, max_length: 256 },
           { name: "body", description: "Status message text.", type: 3, required: true, max_length: 4000 },
+          { name: "title", description: "Embed title.", type: 3, required: false, max_length: 256 },
           { name: "clear", description: "Clear any active override.", type: 5, required: false }
         ]
       }')
