@@ -1,4 +1,4 @@
-const HCPSS_URL = 'https://hcpss.org';
+const HCPSS_URL = 'https://status.hcpss.org';
 const EMBED_LIMIT = 4096;
 const EMBED_SAFE = 3900;
 const MAX_EMBEDS = 10;
@@ -191,20 +191,73 @@ async function verifyDiscordRequest(rawBody, signatureHex, timestamp, publicKeyH
 }
 
 function extractCards(html) {
-  const parts = html.split(/<div[^>]+class=["']views-row["'][^>]*>/i).slice(1);
   const cards = [];
-  for (const p of parts) {
-    const dateMatch = p.match(/<div[^>]*class=["']views-field-changed["'][^>]*>(.*?)<\/div>/is);
-    const titleMatch = p.match(/<(?:h1|h2|h3)[^>]*>(.*?)<\/(?:h1|h2|h3)>/is);
-    const bodyMatch = p.match(/<div[^>]*class=["']alert-content["'][^>]*>(.*?)<\/div>/is) || p.match(/<p[^>]*>(.*?)<\/p>/is);
-    const stripTags = s => (s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-    const dateText = stripTags(dateMatch && dateMatch[1]);
-    const titleText = stripTags(titleMatch && titleMatch[1]);
-    const bodyText = stripTags(bodyMatch && bodyMatch[1]);
-    if (titleText || bodyText) {
-      cards.push({ date: dateText, title: titleText, body: bodyText });
+  const stripTags = s => (s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+
+  // Try parsing the new status.hcpss.org format first
+  const statusBlockMatch = html.match(/<section[^>]+id=["']status-block["'][^>]*>(.*?)<\/section>/is);
+  if (statusBlockMatch) {
+    const blockContent = statusBlockMatch[1];
+    const divParts = blockContent.split(/<div[^>]*>/is);
+    for (const part of divParts) {
+      if (part.includes('status-date')) {
+        const dateMatch = part.match(/<span[^>]*class=["']status-date["'][^>]*>(.*?)<\/span>/is);
+        
+        const hMatch = part.match(/<(h1|h2|h3)[^>]*>(.*?)<\/\1>/is);
+        let titleText = '';
+        if (hMatch) {
+          const hContent = hMatch[2];
+          const spans = hContent.match(/<span[^>]*>(.*?)<\/span>/gis);
+          if (spans) {
+            for (const span of spans) {
+              if (!span.includes('status-date')) {
+                titleText = stripTags(span);
+                break;
+              }
+            }
+          }
+          if (!titleText) {
+            const dateVal = dateMatch ? stripTags(dateMatch[1]) : '';
+            titleText = stripTags(hContent).replace(dateVal, '').trim();
+          }
+        }
+        
+        const dateText = dateMatch ? stripTags(dateMatch[1]) : '';
+        
+        const pMatches = part.match(/<p[^>]*>(.*?)<\/p>/gis) || [];
+        const bodyParts = [];
+        for (const p of pMatches) {
+          const pClean = stripTags(p);
+          if (pClean.toLowerCase().includes('view hcpss calendar')) {
+            continue;
+          }
+          bodyParts.push(pClean);
+        }
+        const bodyText = bodyParts.join('\n\n');
+        
+        if (titleText || bodyText) {
+          cards.push({ date: dateText, title: titleText, body: bodyText });
+        }
+      }
     }
   }
+
+  // Fallback to legacy views-row format
+  if (cards.length === 0) {
+    const parts = html.split(/<div[^>]+class=["']views-row["'][^>]*>/i).slice(1);
+    for (const p of parts) {
+      const dateMatch = p.match(/<div[^>]*class=["']views-field-changed["'][^>]*>(.*?)<\/div>/is);
+      const titleMatch = p.match(/<(?:h1|h2|h3)[^>]*>(.*?)<\/(?:h1|h2|h3)>/is);
+      const bodyMatch = p.match(/<div[^>]*class=["']alert-content["'][^>]*>(.*?)<\/div>/is) || p.match(/<p[^>]*>(.*?)<\/p>/is);
+      const dateText = stripTags(dateMatch && dateMatch[1]);
+      const titleText = stripTags(titleMatch && titleMatch[1]);
+      const bodyText = stripTags(bodyMatch && bodyMatch[1]);
+      if (titleText || bodyText) {
+        cards.push({ date: dateText, title: titleText, body: bodyText });
+      }
+    }
+  }
+
   return cards;
 }
 

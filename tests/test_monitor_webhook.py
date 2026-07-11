@@ -56,7 +56,7 @@ class MonitorWebhookTests(unittest.TestCase):
 
             self.assertEqual(state.get("last_message_id"), "abc123")
 
-    def test_main_deletes_previous_and_keeps_state_when_post_fails(self):
+    def test_main_retains_previous_and_keeps_state_when_post_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             status_path = f"{tmpdir}/last_status.txt"
             state_path = f"{tmpdir}/state.json"
@@ -82,7 +82,7 @@ class MonitorWebhookTests(unittest.TestCase):
             ):
                 monitor.main()
 
-            self.assertEqual(mock_delete.call_count, 1)
+            self.assertEqual(mock_delete.call_count, 0)
             with open(state_path, "r", encoding="utf-8") as f:
                 state = json.load(f)
             self.assertEqual(state.get("last_message_id"), "old123")

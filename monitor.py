@@ -7,7 +7,7 @@ import pytz
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 # Configuration
-URL = "https://hcpss.org"
+URL = "https://status.hcpss.org"
 STATUS_FILE = "last_status.txt"
 MSG_ID_FILE = "last_message_id.txt"
 WEBHOOK_STATE_FILE = os.getenv("DISCORD_WEBHOOK_STATE_FILE", "last_message_state.json")
@@ -169,7 +169,16 @@ def main():
         return
 
     soup = BeautifulSoup(response.text, 'html.parser')
-    status_cards = soup.find_all(class_="views-row")
+    status_cards = []
+    
+    status_block = soup.find(id="status-block")
+    if status_block:
+        for div in status_block.find_all('div'):
+            if div.find(class_="status-date"):
+                status_cards.append(div)
+                
+    if not status_cards:
+        status_cards = soup.find_all(class_="views-row")
     
     extracted_blocks = []
     stable_snapshot_parts = []
@@ -177,16 +186,44 @@ def main():
 
     if status_cards:
         for card in status_cards:
-            date_el = card.find(class_="views-field-changed") or card.find('h3') or card.find(class_="field-name-post-date")
-            title_el = card.find(class_="status-header") or card.find('h2') or card.find('h1')
-            body_el = card.find(class_="alert-content") or card.find('p')
-            
+            date_el = card.find(class_="status-date") or card.find(class_="views-field-changed") or card.find('h3') or card.find(class_="field-name-post-date")
             date_text = " ".join(date_el.get_text().split()) if date_el else ""
-            status_title = " ".join(title_el.get_text().split()) if title_el else ""
-            body_text = " ".join(body_el.get_text().split()) if body_el else ""
             
-            if "view hcpss calendar" in body_text.lower():
-                body_text = body_text.lower().replace("view hcpss calendar", "").strip()
+            title_el = card.find(class_="status-header")
+            spans = []
+            h2_el = None
+            if not title_el:
+                h2_el = card.find('h2') or card.find('h1') or card.find('h3')
+                if h2_el:
+                    spans = h2_el.find_all('span')
+                    if spans:
+                        non_date_spans = [s for s in spans if "status-date" not in (s.get('class') or [])]
+                        if non_date_spans:
+                            title_el = non_date_spans[0]
+                        else:
+                            title_el = h2_el
+                    else:
+                        title_el = h2_el
+            
+            status_title = " ".join(title_el.get_text().split()) if title_el else ""
+            if h2_el and not card.find(class_="status-header") and not spans:
+                if date_text and date_text in status_title:
+                    status_title = status_title.replace(date_text, "").strip()
+            
+            body_el = card.find(class_="alert-content")
+            if body_el:
+                body_text = " ".join(body_el.get_text().split())
+                if "view hcpss calendar" in body_text.lower():
+                    body_text = body_text.lower().replace("view hcpss calendar", "").strip()
+            else:
+                p_tags = card.find_all('p')
+                body_parts = []
+                for p in p_tags:
+                    p_text = " ".join(p.get_text().split())
+                    if "view hcpss calendar" in p_text.lower():
+                        continue
+                    body_parts.append(p_text)
+                body_text = "\n\n".join(body_parts)
 
             if status_title and "normal operations" not in status_title.lower():
                 is_normal = False
