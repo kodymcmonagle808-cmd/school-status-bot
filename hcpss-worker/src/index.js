@@ -1315,6 +1315,18 @@ function getModalInputValue(body, customId) {
   return '';
 }
 
+function getNavBarRow(activeTab) {
+  return {
+    type: 1,
+    components: [
+      { type: 2, style: activeTab === 'dashboard' ? 3 : 2, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
+      { type: 2, style: activeTab === 'config_general' ? 3 : 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+      { type: 2, style: activeTab === 'config_status' ? 3 : 2, label: 'Status & Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+      { type: 2, style: activeTab === 'config_schedule' ? 3 : 2, label: 'Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } }
+    ]
+  };
+}
+
 async function buildControlPanelPayload(env, guildId) {
   const stored = await getConfig(env, guildId);
   const config = getEffectiveConfig(stored);
@@ -1329,15 +1341,17 @@ async function buildControlPanelPayload(env, guildId) {
     const embed = {
       title: '⚙️ HCPSS Status Monitor - General Config',
       color: 0x3498DB,
-      description: `Configure the general settings for this server.\n\n` +
-                   `• **Alert Channel**: ${channel}\n` +
-                   `• **Log Channel**: ${logChannel}\n` +
-                   `• **Staff Role**: ${staffRole}\n` +
-                   `• **Custom Footer**: \`${embedFooter}\``,
+      description: `### 🔧 Server Settings\n` +
+                   `• **Alerts Destination**: ${channel}\n` +
+                   `• **System Logs Destination**: ${logChannel}\n` +
+                   `• **Moderator Staff Role**: ${staffRole}\n` +
+                   `• **Alert Embed Footer**: \`${embedFooter}\`\n\n` +
+                   `*Modify settings using the dropdowns and text buttons below.*`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
+      getNavBarRow('config_general'),
       {
         type: 1,
         components: [{
@@ -1373,10 +1387,7 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: 2, label: 'Configure Colors/Pings', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
-          { type: 2, style: 2, label: 'Configure Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } },
-          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
-          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } }
         ]
       }
     ];
@@ -1412,13 +1423,15 @@ async function buildControlPanelPayload(env, guildId) {
     const embed = {
       title: '🎨 HCPSS Status Monitor - Status & Theme Config',
       color: 0xE74C3C,
-      description: `Select a status below to set its ping role and embed color.\n\n` +
-                   `**Current Settings:**\n${statusPings}\n\n` +
-                   `*Currently editing: **${editingLabel}***`,
+      description: `### 🔔 Roles & Embed Themes\n` +
+                   `Select a status from the dropdown to edit its **mention role** and **embed color**.\n\n` +
+                   `**Current Mapping:**\n${statusPings}\n\n` +
+                   `👉 *Currently editing: **${editingLabel}***`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
+      getNavBarRow('config_status'),
       {
         type: 1,
         components: [{
@@ -1447,9 +1460,7 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } },
-          { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
-          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } }
         ]
       }
     ];
@@ -1467,13 +1478,15 @@ async function buildControlPanelPayload(env, guildId) {
     const embed = {
       title: '🗓️ HCPSS Status Monitor - Schedule Config',
       color: 0x2ECC71,
-      description: `Configure the times when the bot automatically scrapes the HCPSS status website.\n\n` +
+      description: `### ⏱️ Automated Check Times\n` +
+                   `Configure when the bot automatically scrapes the HCPSS status website.\n\n` +
                    `• **Current Schedule**: ${formattedTimes || '(none)'}\n\n` +
-                   `*Select up to **4 times** from the dropdown below.*`,
+                   `*Select between 1 and 4 check times from the dropdown below.*`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
+      getNavBarRow('config_schedule'),
       {
         type: 1,
         components: [{
@@ -1488,13 +1501,6 @@ async function buildControlPanelPayload(env, guildId) {
           min_values: 1,
           max_values: 4
         }]
-      },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
-          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
-        ]
       }
     ];
 
@@ -1526,30 +1532,32 @@ async function buildControlPanelPayload(env, guildId) {
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 0x9B59B6,
-    description: `**System Status**: 🟢 Online\n` +
-                 `**Last Check**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
-                 `**Scraper Latency**: \`${latency}ms\`\n` +
-                 `**KV Namespace**: \`STATUS_KV\` (Connected)\n\n` +
-                 `**Recent System Logs:**\n${logsContent}\n\n` +
-                 `*Use the buttons below to run diagnostics or configure settings.*`,
+    description: `### 📊 System Status\n` +
+                 `• **Bot Status**: 🟢 Online\n` +
+                 `• **Last Checked**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
+                 `• **Scraper Speed**: \`${latency}ms\`\n` +
+                 `• **Database**: \`STATUS_KV\` (Connected)\n\n` +
+                 `### 📋 Recent Logs\n` +
+                 `${logsContent}\n\n` +
+                 `*Use the buttons below to run diagnostics or switch tabs.*`,
     timestamp: new Date().toISOString()
   };
 
   const components = [
+    getNavBarRow('dashboard'),
     {
       type: 1,
       components: [
         { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
-        { type: 2, style: 1, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
+        { type: 2, style: 2, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
+        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } },
+        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
+        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } }
       ]
     },
     {
       type: 1,
       components: [
-        { type: 2, style: 2, label: 'Configure Bot', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
-        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
         { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
       ]
     },
