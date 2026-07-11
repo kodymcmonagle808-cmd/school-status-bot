@@ -256,6 +256,22 @@ function buildCheckAgainComponents() {
   return [{ type: 1, components: [{ type: 2, style: 1, label: 'Check again', custom_id: 'check_again' }] }];
 }
 
+function getDefaultStatusColor(statusKey) {
+  switch (statusKey) {
+    case 'normal_operations':
+      return 3066993; // #2ECC71
+    case 'schools_closed':
+    case 'schools_and_offices_closed':
+    case 'unknown_alert':
+      return 16711680; // #FF0000
+    case 'schools_open_2_hours_late':
+    case 'schools_close_3_hours_early':
+      return 8421504; // #808080
+    default:
+      return 16711680; // Default to #FF0000
+  }
+}
+
 function determineStatusKey(cards) {
   if (!cards || cards.length === 0) {
     return 'normal_operations';
@@ -322,7 +338,7 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
   }
 
   const statusKey = determineStatusKey(cards);
-  let color = cards.some(c => c.title && !/normal operations/i.test(c.title)) ? 15158332 : 3066993;
+  let color = getDefaultStatusColor(statusKey);
   if (config && config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number') {
     color = config.status_embed_colors[statusKey];
   }
@@ -334,7 +350,7 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
 function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config = null) {
   const checkedAt = new Date();
   const detail = error && error.message ? `\n\nTechnical detail: ${error.message}` : '';
-  let color = 15158332;
+  let color = getDefaultStatusColor('unknown_alert');
   if (config && config.status_embed_colors && typeof config.status_embed_colors['unknown_alert'] === 'number') {
     color = config.status_embed_colors['unknown_alert'];
   }
@@ -354,7 +370,7 @@ function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config =
   const statusKey = override && override.status_key ? String(override.status_key) : '';
   const statusLabel = override && override.status_label ? String(override.status_label) : 'Override';
   const isNormal = statusKey === 'normal_operations';
-  let color = isNormal ? 3066993 : 15158332;
+  let color = getDefaultStatusColor(statusKey);
   if (config && config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number') {
     color = config.status_embed_colors[statusKey];
   }
@@ -1276,10 +1292,11 @@ async function buildControlPanelPayload(env, guildId) {
     const statusPings = Object.entries(STATUS_LABELS).map(([key, label]) => {
       const roleId = config.status_ping_roles && config.status_ping_roles[key];
       const pingDisplay = roleId ? `<@&${roleId}>` : '(none)';
-      let colorDisplay = '';
+      let activeColor = getDefaultStatusColor(key);
       if (config.status_embed_colors && typeof config.status_embed_colors[key] === 'number') {
-        colorDisplay = ` [Color: #${config.status_embed_colors[key].toString(16).toUpperCase().padStart(6, '0')}]`;
+        activeColor = config.status_embed_colors[key];
       }
+      const colorDisplay = ` [Color: #${activeColor.toString(16).toUpperCase().padStart(6, '0')}]`;
       const marker = key === editingKey ? '👉 ' : '• ';
       return `${marker}**${label}**: ${pingDisplay}${colorDisplay}`;
     }).join('\n');
