@@ -877,86 +877,282 @@ async function doCheckAndPost(env, options = {}) {
 
     const statusKey = builtStatus.statusKey || 'normal_operations';
 
-    let roleId = undefined;
-    if (config.status_ping_roles) {
-      roleId = config.status_ping_roles[statusKey];
-    }
+    const hasRoleWithLogos = !!config.role_with_logos;
+    const noLogoRoles = Array.isArray(config.role_without_logos) ? config.role_without_logos : [];
+    const hasRoleWithoutLogos = noLogoRoles.length > 0;
+    const hasLogoRoles = hasRoleWithLogos || hasRoleWithoutLogos;
 
-    let rolesToPing = [];
-    if (roleId) {
-      rolesToPing = [roleId];
-    } else if (roleId === undefined && statusKey !== 'normal_operations') {
-      rolesToPing = pingRoleIds;
-    }
-
-    const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
-    const payload = {
-      ...builtStatus.payload,
-      content,
-      allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
-      __channelId: channelId
-    };
-
-    const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
-    const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
-    
-    const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
-    const statusChanged = lastPostedText !== liveStatusText;
-
-    const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
-
-    let postedMessageId = null;
-    if (shouldPostAlert) {
-      const postResult = await postMessageToChannel(env, payload);
-      if (!postResult.ok) {
-        const postError = await postResult.text();
-        await postLog(
-          env,
-          logChannelId,
-          `HCPSS check failed for guild ${guildId} (source: ${options.source || 'unknown'}): ${postError}`,
-          { latency },
-          guildId
-        );
-        results.push({ guildId, ok: false, error: postError, status: postResult.status });
-        continue;
-      }
-
-      const postedMessage = await postResult.json();
-      postedMessageId = postedMessage.id;
-
-      const previousMessageId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
-      const previousChannelId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
-      
-      await env.STATUS_KV.put(`last_message_id:${guildId}`, postedMessageId);
-      await env.STATUS_KV.put(`last_channel_id:${guildId}`, channelId);
-      await env.STATUS_KV.put(`last_posted_text:${guildId}`, liveStatusText);
-
-      if (previousMessageId && previousMessageId !== postedMessageId) {
-        const deleteChannelId = previousChannelId || channelId;
-        await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+    if (hasLogoRoles) {
+      // Clean up legacy single-post message if it exists
+      const legacyMsgId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
+      if (legacyMsgId) {
+        const legacyChanId = await env.STATUS_KV.get(`last_channel_id:${guildId}`) || channelId;
+        await fetch(`https://discord.com/api/v10/channels/${legacyChanId}/messages/${legacyMsgId}`, {
           method: 'DELETE',
           headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
         }).catch(() => {});
+        await env.STATUS_KV.delete(`last_message_id:${guildId}`).catch(() => {});
+        await env.STATUS_KV.delete(`last_channel_id:${guildId}`).catch(() => {});
+        await env.STATUS_KV.delete(`last_posted_text:${guildId}`).catch(() => {});
       }
 
-      await postLog(
-        env,
-        logChannelId,
-        `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
-        { latency },
-        guildId
-      );
-      results.push({ guildId, ok: true, id: postedMessageId });
+      let checkedLog = false;
+
+      // 1. Post/Update With Logos Alert (if configured)
+      if (hasRoleWithLogos) {
+        const targetChannelId = config.channel_with_logos || channelId;
+        const roleToPing = config.role_with_logos;
+        const content = `<@&${roleToPing}>`;
+        
+        const payload = {
+          ...builtStatus.payload,
+          content,
+          allowed_mentions: { roles: [roleToPing] },
+          __channelId: targetChannelId
+        };
+
+        const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+        const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+        const lastPostedText = await env.STATUS_KV.get('last_posted_text_with_logos:' + guildId);
+        const statusChanged = lastPostedText !== liveStatusText;
+        const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
+
+        if (shouldPostAlert) {
+          const postResult = await postMessageToChannel(env, payload);
+          if (!postResult.ok) {
+            const postError = await postResult.text();
+            await postLog(
+              env,
+              logChannelId,
+              `HCPSS check (with logos) failed for guild ${guildId}: ${postError}`,
+              { latency },
+              guildId
+            );
+            results.push({ guildId, ok: false, error: postError, status: postResult.status });
+          } else {
+            const postedMessage = await postResult.json();
+            const postedMessageId = postedMessage.id;
+
+            const previousMessageId = await env.STATUS_KV.get(`last_message_id_with_logos:${guildId}`);
+            const previousChannelId = await env.STATUS_KV.get(`last_channel_id_with_logos:${guildId}`);
+
+            await env.STATUS_KV.put(`last_message_id_with_logos:${guildId}`, postedMessageId);
+            await env.STATUS_KV.put(`last_channel_id_with_logos:${guildId}`, targetChannelId);
+            await env.STATUS_KV.put(`last_posted_text_with_logos:${guildId}`, liveStatusText);
+
+            if (previousMessageId && previousMessageId !== postedMessageId) {
+              const deleteChannelId = previousChannelId || targetChannelId;
+              await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+              }).catch(() => {});
+            }
+
+            await postLog(
+              env,
+              logChannelId,
+              `HCPSS check (with logos) posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${targetChannelId}>, message ${postedMessageId}.`,
+              { latency },
+              guildId
+            );
+            results.push({ guildId, ok: true, id: postedMessageId });
+          }
+        } else {
+          checkedLog = true;
+          results.push({ guildId, ok: true, skipped: true });
+        }
+      }
+
+      // 2. Post/Update Without Logos Alert (default fallback)
+      const targetChannelId = config.channel_without_logos || channelId;
+      
+      let roles = [];
+      const noLogoRoles = Array.isArray(config.role_without_logos) ? config.role_without_logos : [];
+      roles.push(...noLogoRoles);
+      // Add default pings so that if a user has neither logo role, they default to no logos
+      for (const r of rolesToPing) {
+        if (r && r !== config.role_with_logos && !noLogoRoles.includes(r)) {
+          roles.push(r);
+        }
+      }
+
+      // Strip thumbnail from embeds
+      const embedsWithoutLogos = (builtStatus.payload.embeds || []).map(embed => {
+        const nextEmbed = { ...embed };
+        delete nextEmbed.thumbnail;
+        return nextEmbed;
+      });
+
+      const content = roles.length ? roles.map(id => `<@&${id}>`).join(' ') : '';
+      const payload = {
+        ...builtStatus.payload,
+        embeds: embedsWithoutLogos,
+        content,
+        allowed_mentions: roles.length ? { roles } : { parse: [] },
+        __channelId: targetChannelId
+      };
+
+      const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+      const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+      const lastPostedText = await env.STATUS_KV.get(`last_posted_text_without_logos:${guildId}`);
+      const statusChanged = lastPostedText !== liveStatusText;
+      const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
+
+      if (shouldPostAlert) {
+        const postResult = await postMessageToChannel(env, payload);
+        if (!postResult.ok) {
+          const postError = await postResult.text();
+          await postLog(
+            env,
+            logChannelId,
+            `HCPSS check (without logos) failed for guild ${guildId}: ${postError}`,
+            { latency },
+            guildId
+          );
+          results.push({ guildId, ok: false, error: postError, status: postResult.status });
+        } else {
+          const postedMessage = await postResult.json();
+          const postedMessageId = postedMessage.id;
+
+          const previousMessageId = await env.STATUS_KV.get(`last_message_id_without_logos:${guildId}`);
+          const previousChannelId = await env.STATUS_KV.get(`last_channel_id_without_logos:${guildId}`);
+
+          await env.STATUS_KV.put(`last_message_id_without_logos:${guildId}`, postedMessageId);
+          await env.STATUS_KV.put(`last_channel_id_without_logos:${guildId}`, targetChannelId);
+          await env.STATUS_KV.put(`last_posted_text_without_logos:${guildId}`, liveStatusText);
+
+          if (previousMessageId && previousMessageId !== postedMessageId) {
+            const deleteChannelId = previousChannelId || targetChannelId;
+            await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            }).catch(() => {});
+          }
+
+          await postLog(
+            env,
+            logChannelId,
+            `HCPSS check (without logos) posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${targetChannelId}>, message ${postedMessageId}.`,
+            { latency },
+            guildId
+          );
+          results.push({ guildId, ok: true, id: postedMessageId });
+        }
+      } else {
+        if (!checkedLog) {
+          results.push({ guildId, ok: true, skipped: true });
+        }
+      }
+
+      if (isScheduled && checkedLog) {
+        // Scheduled check with no status change: just update stats & timestamp, no new log message
+        await postLog(
+          env,
+          logChannelId,
+          null,
+          { latency },
+          guildId
+        );
+      }
+
     } else {
-      // Scheduled check with no status change: just update stats & timestamp, no new log message
-      await postLog(
-        env,
-        logChannelId,
-        null,
-        { latency },
-        guildId
-      );
-      results.push({ guildId, ok: true, skipped: true });
+      // --- LEGACY SINGLE-POST SYSTEM ---
+      // Clean up two-post messages if they exist
+      for (const suffix of ['with_logos', 'without_logos']) {
+        const logoMsgId = await env.STATUS_KV.get(`last_message_id_${suffix}:${guildId}`);
+        if (logoMsgId) {
+          const logoChanId = await env.STATUS_KV.get(`last_channel_id_${suffix}:${guildId}`) || channelId;
+          await fetch(`https://discord.com/api/v10/channels/${logoChanId}/messages/${logoMsgId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          }).catch(() => {});
+          await env.STATUS_KV.delete(`last_message_id_${suffix}:${guildId}`).catch(() => {});
+          await env.STATUS_KV.delete(`last_channel_id_${suffix}:${guildId}`).catch(() => {});
+          await env.STATUS_KV.delete(`last_posted_text_${suffix}:${guildId}`).catch(() => {});
+        }
+      }
+
+      let roleId = undefined;
+      if (config.status_ping_roles) {
+        roleId = config.status_ping_roles[statusKey];
+      }
+
+      let rolesToPing = [];
+      if (roleId) {
+        rolesToPing = [roleId];
+      } else if (roleId === undefined && statusKey !== 'normal_operations') {
+        rolesToPing = pingRoleIds;
+      }
+
+      const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+      const payload = {
+        ...builtStatus.payload,
+        content,
+        allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
+        __channelId: channelId
+      };
+
+      const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
+      const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+      
+      const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
+      const statusChanged = lastPostedText !== liveStatusText;
+
+      const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
+
+      let postedMessageId = null;
+      if (shouldPostAlert) {
+        const postResult = await postMessageToChannel(env, payload);
+        if (!postResult.ok) {
+          const postError = await postResult.text();
+          await postLog(
+            env,
+            logChannelId,
+            `HCPSS check failed for guild ${guildId} (source: ${options.source || 'unknown'}): ${postError}`,
+            { latency },
+            guildId
+          );
+          results.push({ guildId, ok: false, error: postError, status: postResult.status });
+          continue;
+        }
+
+        const postedMessage = await postResult.json();
+        postedMessageId = postedMessage.id;
+
+        const previousMessageId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
+        const previousChannelId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
+        
+        await env.STATUS_KV.put(`last_message_id:${guildId}`, postedMessageId);
+        await env.STATUS_KV.put(`last_channel_id:${guildId}`, channelId);
+        await env.STATUS_KV.put(`last_posted_text:${guildId}`, liveStatusText);
+
+        if (previousMessageId && previousMessageId !== postedMessageId) {
+          const deleteChannelId = previousChannelId || channelId;
+          await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          }).catch(() => {});
+        }
+
+        await postLog(
+          env,
+          logChannelId,
+          `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
+          { latency },
+          guildId
+        );
+        results.push({ guildId, ok: true, id: postedMessageId });
+      } else {
+        // Scheduled check with no status change: just update stats & timestamp, no new log message
+        await postLog(
+          env,
+          logChannelId,
+          null,
+          { latency },
+          guildId
+        );
+        results.push({ guildId, ok: true, skipped: true });
+      }
     }
   }
 
@@ -1014,6 +1210,16 @@ function getEffectiveConfig(stored) {
   if (!next.status_ping_roles) next.status_ping_roles = {};
   if (!next.status_embed_colors) next.status_embed_colors = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
+  if (!next.role_with_logos) next.role_with_logos = null;
+  if (next.role_without_logos === undefined || next.role_without_logos === null) {
+    next.role_without_logos = [];
+  } else if (typeof next.role_without_logos === 'string') {
+    next.role_without_logos = [next.role_without_logos];
+  } else if (!Array.isArray(next.role_without_logos)) {
+    next.role_without_logos = [];
+  }
+  if (!next.channel_with_logos) next.channel_with_logos = null;
+  if (!next.channel_without_logos) next.channel_without_logos = null;
   return next;
 }
 
@@ -1289,7 +1495,84 @@ async function buildControlPanelPayload(env, guildId) {
         type: 1,
         components: [
           { type: 2, style: 2, label: 'Configure Colors/Pings', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+          { type: 2, style: 2, label: 'Role-Based Logos', custom_id: 'panel_to_config_logos', emoji: { name: '🖼️' } },
           { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
+          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_logos') {
+    const roleWithLogos = config.role_with_logos ? `<@&${config.role_with_logos}>` : '(not set)';
+    const noLogoRoles = Array.isArray(config.role_without_logos) ? config.role_without_logos : [];
+    const roleWithoutLogosDisplay = noLogoRoles.length 
+      ? noLogoRoles.map(id => `<@&${id}>`).join(', ') 
+      : '(not set)';
+    const channelWithLogos = config.channel_with_logos ? `<#${config.channel_with_logos}>` : '(not set)';
+    const channelWithoutLogos = config.channel_without_logos ? `<#${config.channel_without_logos}>` : '(not set)';
+
+    const embed = {
+      title: '🖼️ HCPSS Status Monitor - Role-Based Logos Config',
+      color: 0x9B59B6,
+      description: `Configure separate roles and channels for alerts with/without logos.\n\n` +
+                   `• **Role with Logos**: ${roleWithLogos}\n` +
+                   `• **Roles without Logos**: ${roleWithoutLogosDisplay}\n` +
+                   `• **Channel with Logos**: ${channelWithLogos}\n` +
+                   `• **Channel without Logos**: ${channelWithoutLogos}\n\n` +
+                   `*If channels are not set, they will fall back to the default Alert Channel.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_role_with_logos',
+          placeholder: 'Select role with logos',
+          min_values: 0,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_role_without_logos',
+          placeholder: 'Select roles without logos (up to 5)',
+          min_values: 0,
+          max_values: 5
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_channel_with_logos',
+          placeholder: 'Select channel with logos',
+          min_values: 0,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_channel_without_logos',
+          placeholder: 'Select channel without logos',
+          min_values: 0,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
           { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
         ]
       }
@@ -1467,6 +1750,14 @@ async function applyConfigUpdate(body, env) {
     } else {
       next.status_ping_roles[editingKey] = null;
     }
+  } else if (customId === 'cfg_role_with_logos') {
+    next.role_with_logos = (Array.isArray(values) && values[0]) ? values[0] : null;
+  } else if (customId === 'cfg_role_without_logos') {
+    next.role_without_logos = Array.isArray(values) ? values.filter(Boolean) : [];
+  } else if (customId === 'cfg_channel_with_logos') {
+    next.channel_with_logos = (Array.isArray(values) && values[0]) ? values[0] : null;
+  } else if (customId === 'cfg_channel_without_logos') {
+    next.channel_without_logos = (Array.isArray(values) && values[0]) ? values[0] : null;
   }
 
   await setConfig(env, guildId, next);
@@ -1912,6 +2203,15 @@ export default {
           });
         }
 
+        if (customId === 'panel_to_config_logos') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_logos');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({
+            type: 7,
+            data: payload
+          });
+        }
+
         if (customId === 'panel_to_dashboard') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard');
           const payload = await buildControlPanelPayload(env, guildId);
@@ -2051,58 +2351,153 @@ export default {
             }];
 
             const statusKey = selectedStatusKey;
-            let roleId = undefined;
-            if (config.status_ping_roles) {
-              roleId = config.status_ping_roles[statusKey];
-            }
-
-            let rolesToPing = [];
-            const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
-            if (roleId) {
-              rolesToPing = [roleId];
-            } else if (roleId === undefined && statusKey !== 'normal_operations') {
-              rolesToPing = pingRoleIds;
-            }
-
-            const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
             const customFooter = config.alert_embed_footer || 'HCPSS Status Monitor';
             const color = config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number'
               ? config.status_embed_colors[statusKey]
               : getDefaultStatusColor(statusKey);
-
             const thumbnailUrl = getStatusThumbnail(statusKey);
-            const embeds = splitEmbeds(
-              `HCPSS Status for Today (Test)`,
-              cards[0].body,
-              HCPSS_URL,
-              color,
-              customFooter,
-              new Date(),
-              thumbnailUrl
-            ).slice(0, MAX_EMBEDS);
+            const hasRoleWithLogos = !!config.role_with_logos;
+            const noLogoRoles = Array.isArray(config.role_without_logos) ? config.role_without_logos : [];
+            const hasRoleWithoutLogos = noLogoRoles.length > 0;
+            const hasLogoRoles = hasRoleWithLogos || hasRoleWithoutLogos;
+ 
+            let sentDetails = [];
+ 
+            if (hasLogoRoles) {
+              // 1. Send with-logos alert (if configured)
+              if (hasRoleWithLogos) {
+                const targetChannelId = config.channel_with_logos || alertChannelId;
+                const roleToPing = config.role_with_logos;
+                const content = `<@&${roleToPing}>`;
+                const embeds = splitEmbeds(
+                  `HCPSS Status for Today (Test - With Logos)`,
+                  cards[0].body,
+                  HCPSS_URL,
+                  color,
+                  customFooter,
+                  new Date(),
+                  thumbnailUrl
+                ).slice(0, MAX_EMBEDS);
 
-            const postResp = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bot ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                content,
-                embeds,
-                allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] }
-              })
-            });
+                const postResp = await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bot ${token}`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    content,
+                    embeds,
+                    allowed_mentions: { roles: [roleToPing] }
+                  })
+                });
+                if (!postResp.ok) {
+                  const errTxt = await postResp.text();
+                  throw new Error(`Discord API error posting test message (with logos): ${postResp.status} ${errTxt}`);
+                }
+                sentDetails.push(`• Sent with-logos alert to <#${targetChannelId}> pinging <@&${roleToPing}>`);
+              }
 
-            if (!postResp.ok) {
-              const errTxt = await postResp.text();
-              throw new Error(`Discord API error posting test message: ${postResp.status} ${errTxt}`);
+              // 2. Send without-logos alert (default fallback)
+              const targetChannelId = config.channel_without_logos || alertChannelId;
+              let roles = [];
+              roles.push(...noLogoRoles);
+              // Get default pings
+              let rolesToPing = [];
+              let roleId = undefined;
+              if (config.status_ping_roles) {
+                roleId = config.status_ping_roles[statusKey];
+              }
+              const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+              if (roleId) {
+                rolesToPing = [roleId];
+              } else if (roleId === undefined && statusKey !== 'normal_operations') {
+                rolesToPing = pingRoleIds;
+              }
+              // Add default pings so that if a user has neither logo role, they default to no logos
+              for (const r of rolesToPing) {
+                if (r && r !== config.role_with_logos && !noLogoRoles.includes(r)) {
+                  roles.push(r);
+                }
+              }
+
+              const content = roles.length ? roles.map(id => `<@&${id}>`).join(' ') : '';
+              const embeds = splitEmbeds(
+                `HCPSS Status for Today (Test - Without Logos)`,
+                cards[0].body,
+                HCPSS_URL,
+                color,
+                customFooter,
+                new Date(),
+                ''
+              ).slice(0, MAX_EMBEDS);
+
+              const postResp = await fetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bot ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  content,
+                  embeds,
+                  allowed_mentions: roles.length ? { roles } : { parse: [] }
+                })
+              });
+              if (!postResp.ok) {
+                const errTxt = await postResp.text();
+                throw new Error(`Discord API error posting test message (without logos): ${postResp.status} ${errTxt}`);
+              }
+              sentDetails.push(`• Sent without-logos alert to <#${targetChannelId}>${roles.length ? ` pinging ${roles.map(id => `<@&${id}>`).join(', ')}` : ''}`);
+            } else {
+              let rolesToPing = [];
+              let roleId = undefined;
+              if (config.status_ping_roles) {
+                roleId = config.status_ping_roles[statusKey];
+              }
+
+              const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+              if (roleId) {
+                rolesToPing = [roleId];
+              } else if (roleId === undefined && statusKey !== 'normal_operations') {
+                rolesToPing = pingRoleIds;
+              }
+
+              const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+              const embeds = splitEmbeds(
+                `HCPSS Status for Today (Test)`,
+                cards[0].body,
+                HCPSS_URL,
+                color,
+                customFooter,
+                new Date(),
+                thumbnailUrl
+              ).slice(0, MAX_EMBEDS);
+
+              const postResp = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bot ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  content,
+                  embeds,
+                  allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] }
+                })
+              });
+
+              if (!postResp.ok) {
+                const errTxt = await postResp.text();
+                throw new Error(`Discord API error posting test message: ${postResp.status} ${errTxt}`);
+              }
+              sentDetails.push(`• Sent alert to <#${alertChannelId}>${rolesToPing.length ? ` pinging ${rolesToPing.map(id => `<@&${id}>`).join(', ')}` : ''}`);
             }
 
             await postLog(
               env,
               logChannelId,
-              `🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}>.`,
+              `🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent ${hasLogoRoles ? 'dual-role alerts' : 'legacy alert'}.`,
               {},
               guildId
             );
@@ -2119,9 +2514,7 @@ export default {
             await updateInteractionOriginal(env, body.token, {
               content: `✅ **Diagnostic Test Successful!**\n\n` +
                        `• Status Simulated: **${STATUS_LABELS[selectedStatusKey] || selectedStatusKey}**\n` +
-                       `• Alert Channel: <#${alertChannelId}>\n` +
-                       `• Role Pings: ${rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(', ') : '*(none)*'}\n\n` +
-                       `Check <#${alertChannelId}> to see the rendered test embed card.`,
+                       `${sentDetails.join('\n')}`,
               components: []
             });
           } catch (err) {
