@@ -11,6 +11,13 @@ DISCORD_GUILD_ID = ""
 binding = "STATUS_KV"
 id = "PASTE_YOUR_KV_ID_HERE"
 
-# Cron trigger: runs at :01, :16, :31, :46 each hour (matches previous GitHub schedule)
+# Cron trigger: check at 5:20 AM, 7:20 AM, and 8:00 PM Eastern (EDT: UTC-4, EST: UTC-5)
 [triggers]
-crons = ["1,16,31,46 * * * *"]
+crons = [
+  "20 9 * * *",   # 5:20 AM EDT
+  "20 10 * * *",  # 5:20 AM EST
+  "20 11 * * *",  # 7:20 AM EDT
+  "20 12 * * *",  # 7:20 AM EST
+  "0 0 * * *",    # 8:00 PM EDT
+  "0 1 * * *"     # 8:00 PM EST
+]
