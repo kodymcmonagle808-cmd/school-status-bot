@@ -784,8 +784,13 @@ async function runLogsCommand(env, guildId = '') {
   if (logs.length === 0) {
     embed.description = 'No system logs recorded yet.';
   } else {
-    // Show the full log history
-    embed.description = logs.map(line => `\`${line}\``).join('\n');
+    embed.description = logs.map(line => {
+      const match = line.match(/^\[(.*?)\] (.*)$/);
+      if (match) {
+        return `\`[${match[1]}]\` ${match[2]}`;
+      }
+      return line;
+    }).join('\n');
   }
 
   return {
@@ -990,7 +995,7 @@ async function doCheckAndPost(env, options = {}) {
         await postLog(
           env,
           logChannelId,
-          `HCPSS check failed for guild ${guildId} (source: ${options.source || 'unknown'}): ${postError}`,
+          `❌ HCPSS status check failed (source: ${options.source || 'unknown'}): ${postError}`,
           { latency },
           guildId
         );
@@ -1019,7 +1024,7 @@ async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `HCPSS check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to channel <#${channelId}>, message ${postedMessageId}.`,
+        `✅ HCPSS status check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
         { latency },
         guildId
       );
@@ -1510,7 +1515,13 @@ async function buildControlPanelPayload(env, guildId) {
   const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
 
   const recentLogs = logs.slice(0, 3);
-  const logsContent = recentLogs.length ? recentLogs.map(line => `\`${line}\``).join('\n') : '*No logs yet.*';
+  const logsContent = recentLogs.length ? recentLogs.map(line => {
+    const match = line.match(/^\[(.*?)\] (.*)$/);
+    if (match) {
+      return `\`[${match[1]}]\` ${match[2]}`;
+    }
+    return line;
+  }).join('\n') : '*No logs yet.*';
 
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
