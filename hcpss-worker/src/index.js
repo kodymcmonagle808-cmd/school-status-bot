@@ -805,6 +805,9 @@ async function handleScraperFailure(env, logChannelId, config, error) {
 
   const maxFailuresThreshold = 3;
   if (currentFailures >= maxFailuresThreshold) {
+    if (config && config.toggle_error_alerts === false) {
+      return;
+    }
     const alreadyAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
     if (!alreadyAlerted) {
       await env.STATUS_KV.put('scraper_failure_alerted', 'true');
@@ -971,11 +974,12 @@ async function doCheckAndPost(env, options = {}) {
       rolesToPing = pingRoleIds;
     }
 
-    const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+    const pingsEnabled = config.toggle_pings !== false;
+    const content = (pingsEnabled && rolesToPing.length) ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
     const payload = {
       ...builtStatus.payload,
       content,
-      allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] },
+      allowed_mentions: (pingsEnabled && rolesToPing.length) ? { roles: rolesToPing } : { parse: [] },
       __channelId: channelId
     };
 
@@ -985,7 +989,8 @@ async function doCheckAndPost(env, options = {}) {
     const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
     const statusChanged = lastPostedText !== liveStatusText;
 
-    const shouldPostAlert = !isScheduled || (statusChanged && !builtStatus.isError);
+    const alwaysPost = config.toggle_always_post === true;
+    const shouldPostAlert = !isScheduled || alwaysPost || (statusChanged && !builtStatus.isError);
 
     let postedMessageId = null;
     if (shouldPostAlert) {
@@ -1099,6 +1104,9 @@ function getEffectiveConfig(stored) {
   if (!Array.isArray(next.check_schedule)) {
     next.check_schedule = ["5:20", "7:20", "10:00", "20:00"];
   }
+  if (typeof next.toggle_pings !== 'boolean') next.toggle_pings = true;
+  if (typeof next.toggle_always_post !== 'boolean') next.toggle_always_post = false;
+  if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
   return next;
 }
 
@@ -1316,13 +1324,16 @@ function getModalInputValue(body, customId) {
 }
 
 function getNavBarRow(activeTab) {
+  const isSettings = ['config_general', 'config_schedule', 'config_toggles'].includes(activeTab);
+  const isStats = ['config_stats', 'config_override_select'].includes(activeTab);
   return {
     type: 1,
     components: [
       { type: 2, style: activeTab === 'dashboard' ? 3 : 2, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
-      { type: 2, style: activeTab === 'config_general' ? 3 : 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
-      { type: 2, style: activeTab === 'config_status' ? 3 : 2, label: 'Status & Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
-      { type: 2, style: activeTab === 'config_schedule' ? 3 : 2, label: 'Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } }
+      { type: 2, style: isSettings ? 3 : 2, label: 'Settings', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+      { type: 2, style: activeTab === 'config_status' ? 3 : 2, label: 'Status Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+      { type: 2, style: activeTab === 'config_calendar' ? 3 : 2, label: 'Calendar', custom_id: 'panel_to_config_calendar', emoji: { name: '📅' } },
+      { type: 2, style: isStats ? 3 : 2, label: 'Stats', custom_id: 'panel_to_config_stats', emoji: { name: '📈' } }
     ]
   };
 }
@@ -1387,7 +1398,48 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } }
+          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
+          { type: 2, style: 1, label: 'Manage Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } },
+          { type: 2, style: 1, label: 'Manage Toggles', custom_id: 'panel_to_config_toggles', emoji: { name: '⚙️' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_toggles') {
+    const pings = config.toggle_pings !== false ? '🟢 Enabled' : '🔴 Disabled';
+    const alwaysPost = config.toggle_always_post === true ? '🟢 Enabled' : '🔴 Disabled';
+    const errorAlerts = config.toggle_error_alerts !== false ? '🟢 Enabled' : '🔴 Disabled';
+
+    const embed = {
+      title: '⚙️ Settings - Toggles & Options',
+      color: 0x3498DB,
+      description: `### 🚨 Feature Toggles\n` +
+                   `• **Role Mentions**: ${pings}\n` +
+                   `  *Toggle whether roles are pinged on status changes (or only send embeds).* \n\n` +
+                   `• **Always Post Status**: ${alwaysPost}\n` +
+                   `  *Toggle whether to post status updates at check times even if nothing changed.* \n\n` +
+                   `• **Scraper Failure Alerts**: ${errorAlerts}\n` +
+                   `  *Toggle warning pings to staff if the scraper fails consecutively.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_toggles'),
+      {
+        type: 1,
+        components: [
+          { type: 2, style: config.toggle_pings !== false ? 4 : 3, label: config.toggle_pings !== false ? 'Disable Pings' : 'Enable Pings', custom_id: 'cfg_toggle_pings', emoji: { name: '🔔' } },
+          { type: 2, style: config.toggle_always_post === true ? 4 : 3, label: config.toggle_always_post === true ? 'Disable Always Post' : 'Enable Always Post', custom_id: 'cfg_toggle_always_post', emoji: { name: '📝' } },
+          { type: 2, style: config.toggle_error_alerts !== false ? 4 : 3, label: config.toggle_error_alerts !== false ? 'Disable Failure Alerts' : 'Enable Failure Alerts', custom_id: 'cfg_toggle_error_alerts', emoji: { name: '⚠️' } }
+        ]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
         ]
       }
     ];
@@ -1501,6 +1553,177 @@ async function buildControlPanelPayload(env, guildId) {
           min_values: 1,
           max_values: 4
         }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_calendar') {
+    const checkedAt = new Date();
+    const events = [];
+    
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(checkedAt.getTime() + i * 24 * 60 * 60 * 1000);
+      const ymd = formatYmdNY(d);
+      let event = await env.STATUS_KV.get(`calendar_event:${ymd}`);
+      if (!event) {
+        event = SCHOOL_CALENDAR_EVENTS[ymd];
+      }
+      if (event) {
+        events.push(`• **${formatStatusDate(d)}** (${ymd}): *${event}*`);
+      }
+    }
+    const calendarList = events.length ? events.join('\n') : '*No scheduled closures or events in the next 7 days.*';
+
+    const embed = {
+      title: '📅 HCPSS Status Monitor - School Calendar',
+      color: 0xE67E22,
+      description: `### 🗓️ Upcoming Closures (Next 7 Days)\n` +
+                   `${calendarList}\n\n` +
+                   `*Use the buttons below to manage dynamic calendar overrides (e.g. adding closures or custom events).*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_calendar'),
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 1, label: 'Add Event', custom_id: 'panel_btn_add_event', emoji: { name: '➕' } },
+          { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_stats') {
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    let stats = {};
+    if (rawStats) {
+      try { stats = JSON.parse(rawStats) || {}; } catch {}
+    }
+
+    const scrapesTotal = stats.scrapes_total || 0;
+    const scrapesFailed = stats.scrapes_failed || 0;
+    const successRate = scrapesTotal > 0 
+      ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100).toFixed(2)
+      : '100.00';
+
+    const STATUS_LABELS = {
+      normal_operations: 'Normal Operations',
+      schools_closed: 'Schools Closed',
+      schools_and_offices_closed: 'Schools and Offices Closed',
+      schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+      schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+      unknown_alert: 'Other/Unknown Alert'
+    };
+
+    const incidentList = Object.entries(STATUS_LABELS).map(([key, label]) => {
+      const count = stats[key] || 0;
+      return `• **${label}**: \`${count}\` occurrences`;
+    }).join('\n');
+
+    const activeOverride = await getActiveOverride(env, guildId);
+    let overrideInfo = '';
+    let components = [
+      getNavBarRow('config_stats')
+    ];
+
+    if (activeOverride) {
+      const durationHours = Math.max(0, Math.ceil((activeOverride.until - Date.now()) / (1000 * 60 * 60)));
+      const days = Math.ceil(durationHours / 24);
+      overrideInfo = `⚠️ **Active Override Detected!**\n` +
+                     `• **Status Forced**: \`${STATUS_LABELS[activeOverride.status_key] || activeOverride.status_label}\`\n` +
+                     `• **Time Remaining**: \`${days} days\` (~${durationHours} hours)\n` +
+                     `• **Details**: *${activeOverride.details || 'None provided.'}*\n` +
+                     `• **Custom Title**: *${activeOverride.title || 'None.'}*`;
+
+      components.push({
+        type: 1,
+        components: [
+          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🗑️' } }
+        ]
+      });
+    } else {
+      overrideInfo = `✅ **No Active Override**\n*The bot is currently running in Live Scraper Mode, showing the actual status posted on the HCPSS website.*`;
+      components.push({
+        type: 1,
+        components: [
+          { type: 2, style: 1, label: 'Set Status Override', custom_id: 'panel_to_config_override_select', emoji: { name: '🛠️' } }
+        ]
+      });
+    }
+
+    const embed = {
+      title: '📈 HCPSS Status Monitor - Diagnostics & Stats',
+      color: 0x9B59B6,
+      description: `### 📊 Scraper Diagnostics\n` +
+                   `• **Total Scrapes**: \`${scrapesTotal}\` checks\n` +
+                   `• **Failed Scrapes**: \`${scrapesFailed}\` errors\n` +
+                   `• **Success Rate**: \`${successRate}%\`\n\n` +
+                   `### 📋 Incident Statistics (All-Time)\n` +
+                   `${incidentList}\n\n` +
+                   `### 🛠️ Status Override Configuration\n` +
+                   `${overrideInfo}`,
+      timestamp: new Date().toISOString()
+    };
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_override_select') {
+    const STATUS_LABELS = {
+      normal_operations: 'Normal Operations',
+      schools_closed: 'Schools Closed',
+      schools_and_offices_closed: 'Schools and Offices Closed',
+      schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+      schools_close_3_hours_early: 'Schools Close 3 Hours Early'
+    };
+
+    const editingKey = config.editing_override_status_key || 'normal_operations';
+    const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
+
+    const embed = {
+      title: '🛠️ Configure Status Override',
+      color: 0xF1C40F,
+      description: `### ⚠️ Select Status to Override\n` +
+                   `Choose the status you want to force from the select menu below, then click **Set Duration & Details** to enter how long the override should last.\n\n` +
+                   `👉 *Selected status: **${editingLabel}***`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_stats'),
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_override_status_select',
+          placeholder: `Selected: ${editingLabel}`,
+          options: Object.entries(STATUS_LABELS).map(([key, label]) => ({
+            label,
+            value: key,
+            default: key === editingKey
+          })),
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 1, label: 'Set Duration & Details...', custom_id: 'panel_btn_override_details', emoji: { name: '✍️' } },
+          { type: 2, style: 2, label: 'Cancel', custom_id: 'panel_to_config_stats', emoji: { name: '⬅️' } }
+        ]
       }
     ];
 
@@ -1613,6 +1836,14 @@ async function applyConfigUpdate(body, env) {
     }
   } else if (customId === 'cfg_schedule_select' && Array.isArray(values)) {
     next.check_schedule = values.slice(0, 4);
+  } else if (customId === 'cfg_toggle_pings') {
+    next.toggle_pings = next.toggle_pings === false ? true : false;
+  } else if (customId === 'cfg_toggle_always_post') {
+    next.toggle_always_post = next.toggle_always_post === true ? false : true;
+  } else if (customId === 'cfg_toggle_error_alerts') {
+    next.toggle_error_alerts = next.toggle_error_alerts === false ? true : false;
+  } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
+    next.editing_override_status_key = values[0];
   }
 
   await setConfig(env, guildId, next);
@@ -1892,6 +2123,80 @@ export default {
           }
         }
 
+        if (modalId === 'modal_add_event') {
+          const dateStr = getModalInputValue(body, 'input_event_date').trim();
+          const descStr = getModalInputValue(body, 'input_event_desc').trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            await env.STATUS_KV.put(`calendar_event:${dateStr}`, descStr);
+            const invokerId = body.member && body.member.user && body.member.user.id;
+            await postLog(env, config.log_channel_id, `📅 Calendar event added: **${dateStr}** - *${descStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+            updated = true;
+          } else {
+            return interactionResponse({
+              content: '❌ Invalid date format. Please use `YYYY-MM-DD` (e.g. `2026-12-25`).',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+        }
+
+        if (modalId === 'modal_remove_event') {
+          const dateStr = getModalInputValue(body, 'input_event_date').trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            await env.STATUS_KV.delete(`calendar_event:${dateStr}`);
+            const invokerId = body.member && body.member.user && body.member.user.id;
+            await postLog(env, config.log_channel_id, `📅 Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+            updated = true;
+          } else {
+            return interactionResponse({
+              content: '❌ Invalid date format. Please use `YYYY-MM-DD` (e.g. `2026-12-25`).',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+        }
+
+        if (modalId === 'modal_set_override') {
+          const daysRaw = getModalInputValue(body, 'input_override_days').trim();
+          const titleRaw = getModalInputValue(body, 'input_override_title').trim();
+          const detailsRaw = getModalInputValue(body, 'input_override_details').trim();
+
+          const daysParsed = parseInt(daysRaw, 10);
+          if (isNaN(daysParsed) || daysParsed < 1 || daysParsed > 30) {
+            return interactionResponse({
+              content: '❌ Invalid duration. Please specify a number of days between 1 and 30.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const overrideStatusKey = config.editing_override_status_key || 'normal_operations';
+          const STATUS_LABELS = {
+            normal_operations: 'Normal Operations',
+            schools_closed: 'Schools Closed',
+            schools_and_offices_closed: 'Schools and Offices Closed',
+            schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+            schools_close_3_hours_early: 'Schools Close 3 Hours Early'
+          };
+          const statusLabel = STATUS_LABELS[overrideStatusKey] || 'Override';
+
+          const overrideObj = {
+            status_key: overrideStatusKey,
+            status_label: statusLabel,
+            details: detailsRaw,
+            title: titleRaw,
+            until: Date.now() + daysParsed * 24 * 60 * 60 * 1000
+          };
+
+          await setOverride(env, guildId, overrideObj);
+
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          await postLog(env, config.log_channel_id, `🛠️ Status override enabled: **${statusLabel}** for **${daysParsed} days**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+
+          ctx.waitUntil(doCheckAndPost(env, { source: 'override-set', invokerId, guildId }));
+
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+          delete config.editing_override_status_key;
+          updated = true;
+        }
+
         if (updated) {
           await setConfig(env, guildId, config);
         }
@@ -2043,36 +2348,177 @@ export default {
         if (customId === 'panel_to_config_general') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_general');
           const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({
-            type: 7,
-            data: payload
-          });
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_to_config_status') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_status');
           const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({
-            type: 7,
-            data: payload
-          });
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_to_config_schedule') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
           const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({
-            type: 7,
-            data: payload
-          });
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_config_toggles') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_toggles');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_config_calendar') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_calendar');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_config_stats') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_config_override_select') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_override_select');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_to_dashboard') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard');
           const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_btn_clear_override') {
+          await clearOverride(env, guildId);
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          ctx.waitUntil(doCheckAndPost(env, { source: 'override-clear', invokerId, guildId }));
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_btn_add_event') {
           return jsonResponse({
-            type: 7,
-            data: payload
+            type: 9,
+            data: {
+              title: 'Add Calendar Event',
+              custom_id: 'modal_add_event',
+              components: [
+                {
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_event_date',
+                    style: 1,
+                    label: 'Date (YYYY-MM-DD)',
+                    placeholder: '2026-12-25',
+                    min_length: 10,
+                    max_length: 10,
+                    required: true
+                  }]
+                },
+                {
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_event_desc',
+                    style: 1,
+                    label: 'Event Description',
+                    placeholder: 'Christmas Holiday - Schools Closed',
+                    max_length: 200,
+                    required: true
+                  }]
+                }
+              ]
+            }
+          });
+        }
+
+        if (customId === 'panel_btn_remove_event') {
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: 'Remove Calendar Event',
+              custom_id: 'modal_remove_event',
+              components: [{
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_event_date',
+                  style: 1,
+                  label: 'Date of Event to Remove (YYYY-MM-DD)',
+                  placeholder: '2026-12-25',
+                  min_length: 10,
+                  max_length: 10,
+                  required: true
+                }]
+              }]
+            }
+          });
+        }
+
+        if (customId === 'panel_btn_override_details') {
+          const config = await getConfig(env, guildId);
+          const overrideStatusKey = config.editing_override_status_key || 'normal_operations';
+          const STATUS_LABELS = {
+            normal_operations: 'Normal Operations',
+            schools_closed: 'Schools Closed',
+            schools_and_offices_closed: 'Schools and Offices Closed',
+            schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+            schools_close_3_hours_early: 'Schools Close 3 Hours Early'
+          };
+          const statusLabel = STATUS_LABELS[overrideStatusKey] || 'Override';
+
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: `Set Override: ${statusLabel.split(' ')[0]}`,
+              custom_id: 'modal_set_override',
+              components: [
+                {
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_override_days',
+                    style: 1,
+                    label: 'Duration in Days (1-30)',
+                    placeholder: '1',
+                    min_length: 1,
+                    max_length: 2,
+                    required: true
+                  }]
+                },
+                {
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_override_title',
+                    style: 1,
+                    label: 'Embed Title Override (Optional)',
+                    placeholder: `HCPSS Status (Override) - ${statusLabel}`,
+                    required: false,
+                    max_length: 256
+                  }]
+                },
+                {
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_override_details',
+                    style: 2,
+                    label: 'Details/Reason (Optional)',
+                    placeholder: 'Inclement weather conditions...',
+                    required: false,
+                    max_length: 1000
+                  }]
+                }
+              ]
+            }
           });
         }
 
