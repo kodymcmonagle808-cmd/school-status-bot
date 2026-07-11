@@ -1329,11 +1329,11 @@ function getNavBarRow(activeTab) {
   return {
     type: 1,
     components: [
-      { type: 2, style: activeTab === 'dashboard' ? 3 : 2, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
-      { type: 2, style: isSettings ? 3 : 2, label: 'Settings', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
-      { type: 2, style: activeTab === 'config_status' ? 3 : 2, label: 'Status Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
-      { type: 2, style: activeTab === 'config_calendar' ? 3 : 2, label: 'Calendar', custom_id: 'panel_to_config_calendar', emoji: { name: '📅' } },
-      { type: 2, style: isStats ? 3 : 2, label: 'Stats', custom_id: 'panel_to_config_stats', emoji: { name: '📈' } }
+      { type: 2, style: activeTab === 'dashboard' ? 1 : 2, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
+      { type: 2, style: isSettings ? 1 : 2, label: 'Settings', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+      { type: 2, style: activeTab === 'config_status' ? 1 : 2, label: 'Status Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+      { type: 2, style: activeTab === 'config_calendar' ? 1 : 2, label: 'Calendar', custom_id: 'panel_to_config_calendar', emoji: { name: '📅' } },
+      { type: 2, style: isStats ? 1 : 2, label: 'Stats', custom_id: 'panel_to_config_stats', emoji: { name: '📈' } }
     ]
   };
 }
@@ -1431,9 +1431,27 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: config.toggle_pings !== false ? 4 : 3, label: config.toggle_pings !== false ? 'Disable Pings' : 'Enable Pings', custom_id: 'cfg_toggle_pings', emoji: { name: '🔔' } },
-          { type: 2, style: config.toggle_always_post === true ? 4 : 3, label: config.toggle_always_post === true ? 'Disable Always Post' : 'Enable Always Post', custom_id: 'cfg_toggle_always_post', emoji: { name: '📝' } },
-          { type: 2, style: config.toggle_error_alerts !== false ? 4 : 3, label: config.toggle_error_alerts !== false ? 'Disable Failure Alerts' : 'Enable Failure Alerts', custom_id: 'cfg_toggle_error_alerts', emoji: { name: '⚠️' } }
+          { 
+            type: 2, 
+            style: config.toggle_pings !== false ? 3 : 2, 
+            label: config.toggle_pings !== false ? 'Mentions: Enabled' : 'Mentions: Disabled', 
+            custom_id: 'cfg_toggle_pings', 
+            emoji: { name: config.toggle_pings !== false ? '🔔' : '🔕' } 
+          },
+          { 
+            type: 2, 
+            style: config.toggle_always_post === true ? 3 : 2, 
+            label: config.toggle_always_post === true ? 'Always Post: Enabled' : 'Always Post: Disabled', 
+            custom_id: 'cfg_toggle_always_post', 
+            emoji: { name: config.toggle_always_post === true ? '📝' : '📭' } 
+          },
+          { 
+            type: 2, 
+            style: config.toggle_error_alerts !== false ? 3 : 2, 
+            label: config.toggle_error_alerts !== false ? 'Error Alerts: Enabled' : 'Error Alerts: Disabled', 
+            custom_id: 'cfg_toggle_error_alerts', 
+            emoji: { name: config.toggle_error_alerts !== false ? '⚠️' : '🔇' } 
+          }
         ]
       },
       {
@@ -1596,7 +1614,7 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: 1, label: 'Add Event', custom_id: 'panel_btn_add_event', emoji: { name: '➕' } },
+          { type: 2, style: 3, label: 'Add Event', custom_id: 'panel_btn_add_event', emoji: { name: '➕' } },
           { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } }
         ]
       }
@@ -1650,7 +1668,7 @@ async function buildControlPanelPayload(env, guildId) {
       components.push({
         type: 1,
         components: [
-          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🗑️' } }
+          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🛑' } }
         ]
       });
     } else {
@@ -1721,7 +1739,7 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
-          { type: 2, style: 1, label: 'Set Duration & Details...', custom_id: 'panel_btn_override_details', emoji: { name: '✍️' } },
+          { type: 2, style: 3, label: 'Set Duration & Details...', custom_id: 'panel_btn_override_details', emoji: { name: '✍️' } },
           { type: 2, style: 2, label: 'Cancel', custom_id: 'panel_to_config_stats', emoji: { name: '⬅️' } }
         ]
       }
@@ -1781,7 +1799,8 @@ async function buildControlPanelPayload(env, guildId) {
     {
       type: 1,
       components: [
-        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
+        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } },
+        { type: 2, style: 5, label: 'Official HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } }
       ]
     },
     {
