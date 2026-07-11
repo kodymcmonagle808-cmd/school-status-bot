@@ -10,6 +10,49 @@ const OVERRIDE_COMMAND = 'override';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 
+const SCHEDULE_OPTIONS = [
+  { label: '12:00 AM', value: '0:00' },
+  { label: '3:00 AM', value: '3:00' },
+  { label: '4:00 AM', value: '4:00' },
+  { label: '5:00 AM', value: '5:00' },
+  { label: '5:20 AM', value: '5:20' },
+  { label: '6:00 AM', value: '6:00' },
+  { label: '6:30 AM', value: '6:30' },
+  { label: '7:00 AM', value: '7:00' },
+  { label: '7:20 AM', value: '7:20' },
+  { label: '7:30 AM', value: '7:30' },
+  { label: '8:00 AM', value: '8:00' },
+  { label: '8:30 AM', value: '8:30' },
+  { label: '9:00 AM', value: '9:00' },
+  { label: '9:30 AM', value: '9:30' },
+  { label: '10:00 AM', value: '10:00' },
+  { label: '11:00 AM', value: '11:00' },
+  { label: '12:00 PM', value: '12:00' },
+  { label: '1:00 PM', value: '13:00' },
+  { label: '2:00 PM', value: '14:00' },
+  { label: '3:00 PM', value: '15:00' },
+  { label: '4:00 PM', value: '16:00' },
+  { label: '5:00 PM', value: '17:00' },
+  { label: '6:00 PM', value: '18:00' },
+  { label: '7:00 PM', value: '19:00' },
+  { label: '8:00 PM', value: '20:00' }
+];
+
+function getEasternTimeStr(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  }).formatToParts(date);
+  const hourVal = parts.find(p => p.type === 'hour').value;
+  const minuteVal = parts.find(p => p.type === 'minute').value;
+  const hr = parseInt(hourVal, 10) % 24;
+  const min = parseInt(minuteVal, 10);
+  return `${hr}:${min.toString().padStart(2, '0')}`;
+}
+
+
 // 2026-2027 HCPSS calendar highlights for annotating "Normal Operations" days
 // (and any other status date) with the scheduled event.
 const SCHOOL_CALENDAR_EVENTS = {
@@ -821,6 +864,45 @@ async function handleScraperSuccess(env) {
 async function doCheckAndPost(env, options = {}) {
   const start = Date.now();
 
+  // Determine target guilds to post/check for.
+  let targetGuildIds = [];
+  if (options.guildId) {
+    targetGuildIds = [options.guildId];
+  } else {
+    // Collect all guilds from KV keys starting with 'config:'
+    try {
+      const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
+      targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
+    } catch (e) {
+      console.error('Failed to list configs in KV:', e);
+    }
+    
+    // Ensure default guild from environment is included if configured
+    if (env.DISCORD_GUILD_ID && !targetGuildIds.includes(env.DISCORD_GUILD_ID)) {
+      targetGuildIds.push(env.DISCORD_GUILD_ID);
+    }
+  }
+
+  const isScheduled = options.source === 'scheduled';
+  let activeGuildIds = [...targetGuildIds];
+
+  if (isScheduled) {
+    const currentEtStr = getEasternTimeStr(new Date());
+    const matchedGuilds = [];
+    for (const guildId of targetGuildIds) {
+      const stored = await getConfig(env, guildId);
+      const config = getEffectiveConfig(stored);
+      if (config.check_schedule.includes(currentEtStr)) {
+        matchedGuilds.push(guildId);
+      }
+    }
+    activeGuildIds = matchedGuilds;
+  }
+
+  if (activeGuildIds.length === 0) {
+    return { ok: true, skipped: true, message: "No guilds scheduled for this time." };
+  }
+
   // 1. Fetch HTML and extract cards once
   let cards = null;
   let error = null;
@@ -848,29 +930,6 @@ async function doCheckAndPost(env, options = {}) {
     console.error('Failed to update scraper statistics:', e);
   }
 
-  // Determine target guilds to post/check for.
-  let targetGuildIds = [];
-  if (options.guildId) {
-    targetGuildIds = [options.guildId];
-  } else {
-    // Collect all guilds from KV keys starting with 'config:'
-    try {
-      const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
-      targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
-    } catch (e) {
-      console.error('Failed to list configs in KV:', e);
-    }
-    
-    // Ensure default guild from environment is included if configured
-    if (env.DISCORD_GUILD_ID && !targetGuildIds.includes(env.DISCORD_GUILD_ID)) {
-      targetGuildIds.push(env.DISCORD_GUILD_ID);
-    }
-  }
-
-  if (targetGuildIds.length === 0) {
-    return { ok: true, message: "No guilds configured." };
-  }
-
   // Fetch status once using a default/live payload to determine global history/failures tracking.
   const liveStatusResult = await buildStatusPayload(env, {
     includeComponents: true,
@@ -894,9 +953,8 @@ async function doCheckAndPost(env, options = {}) {
   }
 
   const results = [];
-  const isScheduled = options.source === 'scheduled';
 
-  for (const guildId of targetGuildIds) {
+  for (const guildId of activeGuildIds) {
     const stored = await getConfig(env, guildId);
     const config = getEffectiveConfig(stored);
     const channelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
@@ -1054,6 +1112,9 @@ function getEffectiveConfig(stored) {
   if (!next.status_ping_roles) next.status_ping_roles = {};
   if (!next.status_embed_colors) next.status_embed_colors = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
+  if (!Array.isArray(next.check_schedule)) {
+    next.check_schedule = ["5:20", "7:20", "10:00", "20:00"];
+  }
   return next;
 }
 
@@ -1329,6 +1390,7 @@ async function buildControlPanelPayload(env, guildId) {
         type: 1,
         components: [
           { type: 2, style: 2, label: 'Configure Colors/Pings', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } },
+          { type: 2, style: 2, label: 'Configure Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } },
           { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
           { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
         ]
@@ -1402,6 +1464,50 @@ async function buildControlPanelPayload(env, guildId) {
         type: 1,
         components: [
           { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } },
+          { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
+          { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_schedule') {
+    const currentSchedule = config.check_schedule || [];
+    const formattedTimes = currentSchedule.map(timeStr => {
+      const option = SCHEDULE_OPTIONS.find(o => o.value === timeStr);
+      return option ? option.label : timeStr;
+    }).join(', ');
+
+    const embed = {
+      title: '🗓️ HCPSS Status Monitor - Schedule Config',
+      color: 0x2ECC71,
+      description: `Configure the times when the bot automatically scrapes the HCPSS status website.\n\n` +
+                   `• **Current Schedule**: ${formattedTimes || '(none)'}\n\n` +
+                   `*Select up to **4 times** from the dropdown below.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_schedule_select',
+          placeholder: 'Select check times (max 4)',
+          options: SCHEDULE_OPTIONS.map(opt => ({
+            label: opt.label,
+            value: opt.value,
+            default: currentSchedule.includes(opt.value)
+          })),
+          min_values: 1,
+          max_values: 4
+        }]
+      },
+      {
+        type: 1,
+        components: [
           { type: 2, style: 2, label: 'General Config', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } },
           { type: 2, style: 3, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } }
         ]
@@ -1507,6 +1613,8 @@ async function applyConfigUpdate(body, env) {
     } else {
       next.status_ping_roles[editingKey] = null;
     }
+  } else if (customId === 'cfg_schedule_select' && Array.isArray(values)) {
+    next.check_schedule = values.slice(0, 4);
   }
 
   await setConfig(env, guildId, next);
@@ -1945,6 +2053,15 @@ export default {
 
         if (customId === 'panel_to_config_status') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_status');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({
+            type: 7,
+            data: payload
+          });
+        }
+
+        if (customId === 'panel_to_config_schedule') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
           const payload = await buildControlPanelPayload(env, guildId);
           return jsonResponse({
             type: 7,

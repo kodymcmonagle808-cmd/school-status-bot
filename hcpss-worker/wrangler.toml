@@ -11,11 +11,10 @@ DISCORD_GUILD_ID = ""
 binding = "STATUS_KV"
 id = "PASTE_YOUR_KV_ID_HERE"
 
-# Cron trigger: check at 5:20 AM, 7:20 AM, 10:00 AM, and 8:00 PM Eastern (EDT: UTC-4, EST: UTC-5)
+# Cron trigger: cover all 25 potential local times, optimized for EDT and EST
 [triggers]
 crons = [
-  "20 9,10 * * *",
-  "20 11,12 * * *",
-  "0 14,15 * * *",
-  "0 0,1 * * *"
+  "0 * * * *",       # Hourly checks (all :00 times)
+  "20 9-12 * * *",   # 5:20 AM and 7:20 AM checks (EDT/EST)
+  "30 10-14 * * *"   # Half-hourly checks between 6:30 AM and 9:30 AM (EDT/EST)
 ]
