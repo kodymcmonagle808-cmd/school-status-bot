@@ -1988,9 +1988,9 @@ export default {
           });
         }
 
+        const setupDoneKey = `setup_done:${guildId}`;
         const isForce = body.data.custom_id === 'setup_select_log_channel_force';
         if (!isForce) {
-          const setupDoneKey = `setup_done:${guildId}`;
           const setupDone = await env.STATUS_KV.get(setupDoneKey);
           if (setupDone === 'true') {
             return interactionResponse({
@@ -2025,17 +2025,49 @@ export default {
               { key: 'unknown_alert', name: 'HCPSS Other/Unknown Alert' }
             ];
 
-            const createdRoles = await Promise.all(
-              rolesToCreate.map(async (role) => {
-                const roleId = await createGuildRole(guildId, role.name, token);
-                return { key: role.key, name: role.name, id: roleId };
-              })
-            );
-
             const stored = await getConfig(env, guildId);
             const config = { ...stored };
             config.log_channel_id = selectedChannelId;
             if (!config.status_ping_roles) config.status_ping_roles = {};
+
+            // Fetch guild roles to check if they already exist in the server
+            let guildRoles = [];
+            try {
+              const rolesUrl = `https://discord.com/api/v10/guilds/${guildId}/roles`;
+              const rolesResp = await fetch(rolesUrl, {
+                method: 'GET',
+                headers: {
+                  Authorization: `Bot ${token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              if (rolesResp.ok) {
+                guildRoles = await rolesResp.json();
+              }
+            } catch (err) {
+              console.error('Failed to fetch guild roles, falling back to config check only:', err);
+            }
+
+            const createdRoles = await Promise.all(
+              rolesToCreate.map(async (role) => {
+                const existingId = config.status_ping_roles[role.key];
+
+                // 1. Check if the ID stored in config exists in the server
+                if (existingId && guildRoles.some(r => r.id === existingId)) {
+                  return { key: role.key, name: role.name, id: existingId };
+                }
+
+                // 2. Check if a role with the same name exists in the server
+                const matchByName = guildRoles.find(r => r.name === role.name);
+                if (matchByName) {
+                  return { key: role.key, name: role.name, id: matchByName.id };
+                }
+
+                // 3. Otherwise, create a new role
+                const roleId = await createGuildRole(guildId, role.name, token);
+                return { key: role.key, name: role.name, id: roleId };
+              })
+            );
 
             for (const r of createdRoles) {
               config.status_ping_roles[r.key] = r.id;
