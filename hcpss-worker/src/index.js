@@ -276,19 +276,7 @@ function getDefaultStatusColor(statusKey) {
 }
 
 function getStatusThumbnail(statusKey) {
-  switch (statusKey) {
-    case 'normal_operations':
-      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f3eb.png'; // School 🏫
-    case 'schools_closed':
-    case 'schools_and_offices_closed':
-      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/2744.png'; // Snowflake ❄️
-    case 'schools_open_2_hours_late':
-    case 'schools_close_3_hours_early':
-      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/23f0.png'; // Alarm Clock ⏰
-    case 'unknown_alert':
-    default:
-      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/26a0.png'; // Warning ⚠️
-  }
+  return '';
 }
 
 function determineStatusKey(cards) {
@@ -380,7 +368,6 @@ function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config =
     url: HCPSS_URL,
     description: `The monitor could not fetch the HCPSS status page right now. Try again in a minute or check https://hcpss.org directly.${detail}`,
     color: color,
-    thumbnail: { url: getStatusThumbnail('unknown_alert') },
     footer: { text: footerWithCheckedAt(customFooter, checkedAt) },
     timestamp: checkedAt.toISOString()
   }];
