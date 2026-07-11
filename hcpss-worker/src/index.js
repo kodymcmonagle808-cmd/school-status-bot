@@ -220,7 +220,7 @@ function assembleDescription(cards) {
   }).join('\n___\n\n');
 }
 
-function splitEmbeds(title, description, url, color, footer, checkedAt = new Date()) {
+function splitEmbeds(title, description, url, color, footer, checkedAt = new Date(), thumbnailUrl = '') {
   const chunks = [];
   let rem = (description || '').trim();
   while (rem.length) {
@@ -245,6 +245,9 @@ function splitEmbeds(title, description, url, color, footer, checkedAt = new Dat
     if (idx === 0) {
       embed.title = title;
       embed.url = url;
+      if (thumbnailUrl) {
+        embed.thumbnail = { url: thumbnailUrl };
+      }
     } else {
       embed.title = `${title} (cont. ${idx + 1})`;
     }
@@ -269,6 +272,22 @@ function getDefaultStatusColor(statusKey) {
       return 8421504; // #808080
     default:
       return 16711680; // Default to #FF0000
+  }
+}
+
+function getStatusThumbnail(statusKey) {
+  switch (statusKey) {
+    case 'normal_operations':
+      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f3eb.png'; // School 🏫
+    case 'schools_closed':
+    case 'schools_and_offices_closed':
+      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/2744.png'; // Snowflake ❄️
+    case 'schools_open_2_hours_late':
+    case 'schools_close_3_hours_early':
+      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/23f0.png'; // Alarm Clock ⏰
+    case 'unknown_alert':
+    default:
+      return 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/26a0.png'; // Warning ⚠️
   }
 }
 
@@ -343,8 +362,9 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
     color = config.status_embed_colors[statusKey];
   }
   const customFooter = (config && config.alert_embed_footer) || footer;
+  const thumbnailUrl = getStatusThumbnail(statusKey);
 
-  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt).slice(0, MAX_EMBEDS);
+  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 }
 
 function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config = null) {
@@ -360,6 +380,7 @@ function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config =
     url: HCPSS_URL,
     description: `The monitor could not fetch the HCPSS status page right now. Try again in a minute or check https://hcpss.org directly.${detail}`,
     color: color,
+    thumbnail: { url: getStatusThumbnail('unknown_alert') },
     footer: { text: footerWithCheckedAt(customFooter, checkedAt) },
     timestamp: checkedAt.toISOString()
   }];
@@ -382,8 +403,9 @@ function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config =
 
   const details = (override && override.details) ? String(override.details).trim() : '';
   const body = details ? `## **${statusLabel}**\n\n${details}` : `## **${statusLabel}**`;
+  const thumbnailUrl = getStatusThumbnail(statusKey);
 
-  return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt).slice(0, MAX_EMBEDS);
+  return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 }
 
 async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null } = {}) {
@@ -1394,6 +1416,26 @@ async function buildControlPanelPayload(env, guildId) {
         { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
         { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
       ]
+    },
+    {
+      type: 1,
+      components: [
+        {
+          type: 3,
+          custom_id: 'panel_trigger_test_alert',
+          placeholder: '🧪 Trigger Scraper Test Alert...',
+          options: [
+            { label: 'Normal Operations', value: 'normal_operations', description: 'Simulate a Normal Operations status update' },
+            { label: 'Schools Closed', value: 'schools_closed', description: 'Simulate a Schools Closed status update' },
+            { label: 'Schools & Offices Closed', value: 'schools_and_offices_closed', description: 'Simulate a Schools & Offices Closed status update' },
+            { label: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late', description: 'Simulate a 2-Hour Delay status update' },
+            { label: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early', description: 'Simulate a 3-Hour Early Close status update' },
+            { label: 'Other/Unknown Alert', value: 'unknown_alert', description: 'Simulate an Unknown Scraper Alert' }
+          ],
+          min_values: 1,
+          max_values: 1
+        }
+      ]
     }
   ];
 
@@ -1940,6 +1982,158 @@ export default {
             }
           });
         }
+      }
+
+      if (body.type === 3 && body.data && body.data.custom_id === 'panel_trigger_test_alert') {
+        if (!(await canConfigure(body.member, env, guildId))) {
+          return interactionResponse({
+            content: '❌ You do not have permission to run scraper diagnostics.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const selectedStatusKey = body.data.values && body.data.values[0];
+        if (!selectedStatusKey) {
+          return interactionResponse({
+            content: '❌ No status was selected.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        ctx.waitUntil((async () => {
+          try {
+            const token = env.DISCORD_BOT_TOKEN;
+            const invokerId = body && body.member && body.member.user && body.member.user.id;
+            const stored = await getConfig(env, guildId);
+            const config = getEffectiveConfig(stored);
+            const alertChannelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+            const logChannelId = config.log_channel_id;
+
+            if (!alertChannelId) {
+              await updateInteractionOriginal(env, body.token, {
+                content: '❌ Scraper test failed: Alert channel is not configured. Please set it in **General Config**.',
+                components: []
+              });
+              return;
+            }
+
+            const MOCK_DATA = {
+              normal_operations: {
+                title: 'Normal Operations',
+                body: 'All schools and offices will open on time. Staff and students report in accordance with the HCPSS calendar.'
+              },
+              schools_closed: {
+                title: 'Schools Closed',
+                body: 'All Howard County public schools are closed today. All evening activities are cancelled.'
+              },
+              schools_and_offices_closed: {
+                title: 'Schools and Offices Closed',
+                body: 'All Howard County public schools and offices are closed today. Emergency personnel report as scheduled.'
+              },
+              schools_open_2_hours_late: {
+                title: 'Schools Open 2 Hours Late',
+                body: 'All Howard County public schools will open two hours late today. Morning pre-K and half-day classes are cancelled.'
+              },
+              schools_close_3_hours_early: {
+                title: 'Schools Close 3 Hours Early',
+                body: 'All Howard County public schools will close three hours early today. Afternoon pre-K and evening activities are cancelled.'
+              },
+              unknown_alert: {
+                title: 'Special Notice / Alert',
+                body: 'The HCPSS status page has posted a custom/unknown weather notice. Please consult the HCPSS website for specific details.'
+              }
+            };
+
+            const mock = MOCK_DATA[selectedStatusKey] || MOCK_DATA.unknown_alert;
+            const cards = [{
+              title: mock.title,
+              body: `🧪 **[TEST ALERT - SIMULATED STATUS]**\n\n${mock.body}`
+            }];
+
+            const statusKey = selectedStatusKey;
+            let roleId = undefined;
+            if (config.status_ping_roles) {
+              roleId = config.status_ping_roles[statusKey];
+            }
+
+            let rolesToPing = [];
+            const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+            if (roleId) {
+              rolesToPing = [roleId];
+            } else if (roleId === undefined && statusKey !== 'normal_operations') {
+              rolesToPing = pingRoleIds;
+            }
+
+            const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+            const customFooter = config.alert_embed_footer || 'HCPSS Status Monitor';
+            const color = config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number'
+              ? config.status_embed_colors[statusKey]
+              : getDefaultStatusColor(statusKey);
+
+            const thumbnailUrl = getStatusThumbnail(statusKey);
+            const embeds = splitEmbeds(
+              `HCPSS Status for Today (Test)`,
+              cards[0].body,
+              HCPSS_URL,
+              color,
+              customFooter,
+              new Date(),
+              thumbnailUrl
+            ).slice(0, MAX_EMBEDS);
+
+            const postResp = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bot ${token}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                content,
+                embeds,
+                allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] }
+              })
+            });
+
+            if (!postResp.ok) {
+              const errTxt = await postResp.text();
+              throw new Error(`Discord API error posting test message: ${postResp.status} ${errTxt}`);
+            }
+
+            await postLog(
+              env,
+              logChannelId,
+              `🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}>.`,
+              {},
+              guildId
+            );
+
+            const STATUS_LABELS = {
+              normal_operations: 'Normal Operations',
+              schools_closed: 'Schools Closed',
+              schools_and_offices_closed: 'Schools and Offices Closed',
+              schools_open_2_hours_late: 'Schools Open 2 Hours Late',
+              schools_close_3_hours_early: 'Schools Close 3 Hours Early',
+              unknown_alert: 'Other/Unknown Alert'
+            };
+
+            await updateInteractionOriginal(env, body.token, {
+              content: `✅ **Diagnostic Test Successful!**\n\n` +
+                       `• Status Simulated: **${STATUS_LABELS[selectedStatusKey] || selectedStatusKey}**\n` +
+                       `• Alert Channel: <#${alertChannelId}>\n` +
+                       `• Role Pings: ${rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(', ') : '*(none)*'}\n\n` +
+                       `Check <#${alertChannelId}> to see the rendered test embed card.`,
+              components: []
+            });
+          } catch (err) {
+            console.error('Test alert failed:', err);
+            await updateInteractionOriginal(env, body.token, {
+              content: `❌ **Test Alert Failed:** ${err.message}`,
+              components: []
+            });
+          }
+        })());
+
+        return deferredInteractionResponse();
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
