@@ -31,6 +31,23 @@ function getEasternTimeStr(date = new Date()) {
   return `${hr}:${min.toString().padStart(2, '0')}`;
 }
 
+function matchesScheduleTime(currentEtStr, scheduledTimeStr) {
+  const [currH, currM] = currentEtStr.split(':').map(Number);
+  const [schedH, schedM] = scheduledTimeStr.split(':').map(Number);
+
+  const currMin = currH * 60 + currM;
+  const schedMin = schedH * 60 + schedM;
+
+  let diff = currMin - schedMin;
+  if (diff < -1200) {
+    diff += 1440;
+  }
+
+  // Return true if current time is between scheduledTime and scheduledTime + 45 minutes
+  return diff >= 0 && diff <= 45;
+}
+
+
 
 // 2026-2027 HCPSS calendar highlights for annotating "Normal Operations" days
 // (and any other status date) with the scheduled event.
@@ -880,7 +897,10 @@ async function doCheckAndPost(env, options = {}) {
     for (const guildId of targetGuildIds) {
       const stored = await getConfig(env, guildId);
       const config = getEffectiveConfig(stored);
-      if (config.check_schedule.includes(currentEtStr)) {
+      const hasMatch = Array.isArray(config.check_schedule) && config.check_schedule.some(schedTime => 
+        matchesScheduleTime(currentEtStr, schedTime)
+      );
+      if (hasMatch) {
         matchedGuilds.push(guildId);
       }
     }
@@ -1771,6 +1791,30 @@ async function buildControlPanelPayload(env, guildId) {
     return line;
   }).join('\n') : '*No logs yet.*';
 
+  const btnPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
+  const actionComponents = [];
+  if (btnPage === 1) {
+    actionComponents.push(
+      { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
+      { type: 2, style: 2, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
+      { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } },
+      { type: 2, style: 1, label: 'Next Page', custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
+    );
+  } else if (btnPage === 2) {
+    actionComponents.push(
+      { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
+      { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
+      { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } },
+      { type: 2, style: 2, label: 'Back', custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
+      { type: 2, style: 1, label: 'Next Page', custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
+    );
+  } else {
+    actionComponents.push(
+      { type: 2, style: 5, label: 'Official HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } },
+      { type: 2, style: 2, label: 'Back', custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } }
+    );
+  }
+
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 0x9B59B6,
@@ -1781,7 +1825,7 @@ async function buildControlPanelPayload(env, guildId) {
                  `• **Database**: \`STATUS_KV\` (Connected)\n\n` +
                  `### 📋 Recent Logs\n` +
                  `${logsContent}\n\n` +
-                 `*Use the buttons below to run diagnostics or switch tabs.*`,
+                 `*Use the buttons below to run diagnostics or switch tabs. (Page ${btnPage}/3)*`,
     timestamp: new Date().toISOString()
   };
 
@@ -1789,20 +1833,7 @@ async function buildControlPanelPayload(env, guildId) {
     getNavBarRow('dashboard'),
     {
       type: 1,
-      components: [
-        { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
-        { type: 2, style: 2, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } },
-        { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-        { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } }
-      ]
-    },
-    {
-      type: 1,
-      components: [
-        { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } },
-        { type: 2, style: 5, label: 'Official HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } }
-      ]
+      components: actionComponents
     },
     {
       type: 1,
@@ -2363,6 +2394,22 @@ export default {
         if (customId === 'panel_clear_logs') {
           ctx.waitUntil(handlePanelClearLogs(body, env));
           return deferredInteractionResponse();
+        }
+
+        if (customId === 'panel_btn_page_next') {
+          const currentPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
+          const nextPage = Math.min(3, currentPage + 1);
+          await env.STATUS_KV.put(`panel_button_page:${guildId}`, String(nextPage));
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_btn_page_prev') {
+          const currentPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
+          const prevPage = Math.max(1, currentPage - 1);
+          await env.STATUS_KV.put(`panel_button_page:${guildId}`, String(prevPage));
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_to_config_general') {
