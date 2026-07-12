@@ -550,7 +550,8 @@ async function handlePanelSpeed(body, env) {
 
 async function handlePanelCheck(body, env) {
   const invokerId = body.member && body.member.user && body.member.user.id;
-  const result = await doCheckAndPost(env, { source: 'panel-trigger', invokerId });
+  const guildId = body.guild_id || '';
+  const result = await doCheckAndPost(env, { source: 'panel-trigger', invokerId, guildId });
   const content = result.ok
     ? (result.isError ? '⚠️ Posted the HCPSS error status embed.' : '✅ Posted the latest HCPSS status.')
     : `❌ Could not post status: ${result.error || result.status}`;
@@ -2956,11 +2957,10 @@ export default {
 
     try {
       const result = await doCheckAndPost(env, { source: 'manual' });
-      if (result.ok) {
-        const prefix = result.isError ? 'Posted error embed' : 'Posted';
-        return new Response(`${prefix}: ${result.id}`, { status: 200 });
+      if (!result.isError) {
+        return new Response(`Success: ${result.message}`, { status: 200 });
       }
-      return new Response('Post failed: ' + (result.error || result.status), { status: 500 });
+      return new Response('Scraper check failed: ' + result.error, { status: 500 });
     } catch (err) {
       return new Response('Error: ' + err.message, { status: 500 });
     }
