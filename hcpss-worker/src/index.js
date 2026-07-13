@@ -579,10 +579,6 @@ async function handlePanelCheck(body, env) {
 }
 
 async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
-  if (!logChannelId) return;
-  const token = env.DISCORD_BOT_TOKEN;
-  if (!token) return;
-
   const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
   const panelMsgIdKey = guildId ? `log_panel_message_id:${guildId}` : 'log_panel_message_id';
   const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
@@ -620,6 +616,10 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   
   const lastCheckTime = Date.now();
   await env.STATUS_KV.put(checkTimeKey, String(lastCheckTime));
+
+  if (!logChannelId) return;
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token) return;
 
   const currentPage = await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
   if (currentPage !== 'dashboard' && message) {
@@ -966,11 +966,19 @@ async function doCheckAndPost(env, options = {}) {
     const stored = await getConfig(env, guildId);
     const config = getEffectiveConfig(stored);
     const channelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+    const logChannelId = config.log_channel_id;
     if (!channelId) {
-      // Guild hasn't configured an alert channel yet
+      // Guild hasn't configured an alert channel yet, but we should still update check timestamp & control panel
+      await postLog(
+        env,
+        logChannelId,
+        null,
+        { latency },
+        guildId
+      );
+      results.push({ guildId, ok: true, skipped: true, reason: 'No alert channel configured' });
       continue;
     }
-    const logChannelId = config.log_channel_id;
     const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
 
     // Get the status payload for THIS guild (incorporates any active override for this guild)
@@ -1350,6 +1358,7 @@ function getMenuPageForTab(activeTab) {
   if (activeTab === 'config_status') return 2;
   if (activeTab === 'config_calendar') return 3;
   if (['config_stats', 'config_override_select'].includes(activeTab)) return 4;
+  if (activeTab === 'config_commands') return 5;
   return 1;
 }
 
@@ -1371,6 +1380,7 @@ async function getNavBarRow(env, guildId, activeTab) {
   const statusBtn = { type: 2, style: activeTab === 'config_status' ? 1 : 2, label: 'Status Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } };
   const calendarBtn = { type: 2, style: activeTab === 'config_calendar' ? 1 : 2, label: 'Calendar', custom_id: 'panel_to_config_calendar', emoji: { name: '📅' } };
   const statsBtn = { type: 2, style: isStats ? 1 : 2, label: 'Stats', custom_id: 'panel_to_config_stats', emoji: { name: '📈' } };
+  const commandsBtn = { type: 2, style: activeTab === 'config_commands' ? 1 : 2, label: 'Command Menu', custom_id: 'panel_to_config_commands', emoji: { name: '📜' } };
 
   const prevBtn = { type: 2, style: 2, custom_id: 'panel_menu_prev', emoji: { name: '⬅️' } };
   const nextBtn = { type: 2, style: 2, custom_id: 'panel_menu_next', emoji: { name: '➡️' } };
@@ -1382,9 +1392,11 @@ async function getNavBarRow(env, guildId, activeTab) {
     components.push(prevBtn, statusBtn, nextBtn);
   } else if (menuPage === 3) {
     components.push(prevBtn, calendarBtn, nextBtn);
-  } else {
-    // page 4
+  } else if (menuPage === 4) {
     components.push(prevBtn, statsBtn, nextBtn);
+  } else {
+    // page 5
+    components.push(prevBtn, commandsBtn, nextBtn);
   }
 
   return {
@@ -1673,6 +1685,32 @@ async function buildControlPanelPayload(env, guildId) {
           { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } }
         ]
       }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_commands') {
+    const embed = {
+      title: '📜 HCPSS Status Monitor - Command Menu',
+      color: 0x1ABC9C,
+      description: `### 🤖 Available Slash Commands\n\n` +
+                   `• **\`/post-status\`**: Post the latest HCPSS status now.\n` +
+                   `• **\`/override set\`**: Enable a status override for 1-30 days.\n` +
+                   `• **\`/override clear\`**: Disable the active override immediately.\n` +
+                   `• **\`/calendar\`**: Show scheduled closures or events in the next 7 days.\n` +
+                   `• **\`/history\`**: Show the last 5 operating status changes.\n` +
+                   `• **\`/events list\`**: List all dynamic calendar events.\n` +
+                   `• **\`/events add\`**: Add a dynamic calendar event (YYYY-MM-DD).\n` +
+                   `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
+                   `• **\`/stats\`**: Show status check and operating status statistics.\n` +
+                   `• **\`/setup\`**: Initial one-time setup for the status monitor.\n\n` +
+                   `*Use these commands in any channel where the bot has permission to read and send messages.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      await getNavBarRow(env, guildId, 'config_commands')
     ];
 
     return { embeds: [embed], components };
@@ -2469,7 +2507,7 @@ export default {
 
         if (customId === 'panel_menu_next') {
           const currentPage = Number(await env.STATUS_KV.get(`panel_menu_page:${guildId}`)) || 1;
-          const nextPage = currentPage === 4 ? 1 : currentPage + 1;
+          const nextPage = currentPage === 5 ? 1 : currentPage + 1;
           await env.STATUS_KV.put(`panel_menu_page:${guildId}`, String(nextPage));
           await env.STATUS_KV.put(`panel_menu_navigating:${guildId}`, 'true');
           const payload = await buildControlPanelPayload(env, guildId);
@@ -2478,7 +2516,7 @@ export default {
 
         if (customId === 'panel_menu_prev') {
           const currentPage = Number(await env.STATUS_KV.get(`panel_menu_page:${guildId}`)) || 1;
-          const prevPage = currentPage === 1 ? 4 : currentPage - 1;
+          const prevPage = currentPage === 1 ? 5 : currentPage - 1;
           await env.STATUS_KV.put(`panel_menu_page:${guildId}`, String(prevPage));
           await env.STATUS_KV.put(`panel_menu_navigating:${guildId}`, 'true');
           const payload = await buildControlPanelPayload(env, guildId);
@@ -2523,6 +2561,12 @@ export default {
 
         if (customId === 'panel_to_config_override_select') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_override_select');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_config_commands') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_commands');
           const payload = await buildControlPanelPayload(env, guildId);
           return jsonResponse({ type: 7, data: payload });
         }
