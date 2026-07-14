@@ -1362,56 +1362,40 @@ function getModalInputValue(body, customId) {
   return '';
 }
 
-function getMenuPageForTab(activeTab) {
-  if (activeTab === 'dashboard') return 1;
-  if (['config_general', 'config_schedule', 'config_toggles'].includes(activeTab)) return 1;
-  if (activeTab === 'config_status') return 2;
-  if (activeTab === 'config_calendar') return 3;
-  if (['config_stats', 'config_override_select'].includes(activeTab)) return 4;
-  if (activeTab === 'config_commands') return 5;
-  return 1;
+const PANEL_NAV_TABS = [
+  { label: 'Dashboard', value: 'dashboard', emoji: '📊', description: 'System status, logs, and quick actions' },
+  { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, schedule, and toggles' },
+  { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
+  { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
+  { label: 'Stats', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
+  { label: 'Command Menu', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
+];
+
+function getNavTabForPage(page) {
+  if (['config_general', 'config_schedule', 'config_toggles'].includes(page)) return 'config_general';
+  if (['config_stats', 'config_override_select'].includes(page)) return 'config_stats';
+  return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
 
 async function getNavBarRow(env, guildId, activeTab) {
-  let menuPage = Number(await env.STATUS_KV.get(`panel_menu_page:${guildId}`));
-  const expectedPage = getMenuPageForTab(activeTab);
-
-  const isNavigating = (await env.STATUS_KV.get(`panel_menu_navigating:${guildId}`)) === 'true';
-  if (!menuPage || (!isNavigating && expectedPage !== menuPage)) {
-    menuPage = expectedPage;
-    await env.STATUS_KV.put(`panel_menu_page:${guildId}`, String(menuPage));
-  }
-
-  const isSettings = ['config_general', 'config_schedule', 'config_toggles'].includes(activeTab);
-  const isStats = ['config_stats', 'config_override_select'].includes(activeTab);
-
-  const dashboardBtn = { type: 2, style: activeTab === 'dashboard' ? 1 : 2, label: 'Dashboard', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } };
-  const settingsBtn = { type: 2, style: isSettings ? 1 : 2, label: 'Settings', custom_id: 'panel_to_config_general', emoji: { name: '⚙️' } };
-  const statusBtn = { type: 2, style: activeTab === 'config_status' ? 1 : 2, label: 'Status Theme', custom_id: 'panel_to_config_status', emoji: { name: '🎨' } };
-  const calendarBtn = { type: 2, style: activeTab === 'config_calendar' ? 1 : 2, label: 'Calendar', custom_id: 'panel_to_config_calendar', emoji: { name: '📅' } };
-  const statsBtn = { type: 2, style: isStats ? 1 : 2, label: 'Stats', custom_id: 'panel_to_config_stats', emoji: { name: '📈' } };
-  const commandsBtn = { type: 2, style: activeTab === 'config_commands' ? 1 : 2, label: 'Command Menu', custom_id: 'panel_to_config_commands', emoji: { name: '📜' } };
-
-  const prevBtn = { type: 2, style: 2, custom_id: 'panel_menu_prev', emoji: { name: '⬅️' } };
-  const nextBtn = { type: 2, style: 2, custom_id: 'panel_menu_next', emoji: { name: '➡️' } };
-
-  const components = [];
-  if (menuPage === 1) {
-    components.push(dashboardBtn, settingsBtn, nextBtn);
-  } else if (menuPage === 2) {
-    components.push(prevBtn, statusBtn, nextBtn);
-  } else if (menuPage === 3) {
-    components.push(prevBtn, calendarBtn, nextBtn);
-  } else if (menuPage === 4) {
-    components.push(prevBtn, statsBtn, nextBtn);
-  } else {
-    // page 5
-    components.push(prevBtn, commandsBtn, nextBtn);
-  }
+  const activeValue = getNavTabForPage(activeTab);
 
   return {
     type: 1,
-    components
+    components: [{
+      type: 3,
+      custom_id: 'panel_nav_select',
+      placeholder: '🧭 Go to panel page...',
+      options: PANEL_NAV_TABS.map(tab => ({
+        label: tab.label,
+        value: tab.value,
+        description: tab.description,
+        emoji: { name: tab.emoji },
+        default: tab.value === activeValue
+      })),
+      min_values: 1,
+      max_values: 1
+    }]
   };
 }
 
@@ -1873,45 +1857,23 @@ async function buildControlPanelPayload(env, guildId) {
     return line;
   }).join('\n') : '*No logs yet.*';
 
-  const btnPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
-  const actionComponents = [];
-  if (btnPage === 1) {
-    actionComponents.push(
+  const primaryActionRow = {
+    type: 1,
+    components: [
       { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
       { type: 2, style: 2, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-      { type: 2, style: 2, custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
-    );
-  } else if (btnPage === 2) {
-    actionComponents.push(
-      { type: 2, style: 2, custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
-      { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } },
-      { type: 2, style: 2, custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
-    );
-  } else if (btnPage === 3) {
-    actionComponents.push(
-      { type: 2, style: 2, custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
+      { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
+    ]
+  };
+  const secondaryActionRow = {
+    type: 1,
+    components: [
       { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-      { type: 2, style: 2, custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
-    );
-  } else if (btnPage === 4) {
-    actionComponents.push(
-      { type: 2, style: 2, custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
       { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
-      { type: 2, style: 2, custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
-    );
-  } else if (btnPage === 5) {
-    actionComponents.push(
-      { type: 2, style: 2, custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
       { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } },
-      { type: 2, style: 2, custom_id: 'panel_btn_page_next', emoji: { name: '➡️' } }
-    );
-  } else {
-    // btnPage === 6
-    actionComponents.push(
-      { type: 2, style: 2, custom_id: 'panel_btn_page_prev', emoji: { name: '⬅️' } },
-      { type: 2, style: 5, label: 'Official HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } }
-    );
-  }
+      { type: 2, style: 5, label: 'HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } }
+    ]
+  };
 
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
@@ -1923,16 +1885,14 @@ async function buildControlPanelPayload(env, guildId) {
                  `• **Database**: \`STATUS_KV\` (Connected)\n\n` +
                  `### 📋 Recent Logs\n` +
                  `${logsContent}\n\n` +
-                 `*Use the buttons below to run diagnostics or switch tabs. (Page ${btnPage}/6)*`,
+                 `*Use the menu to switch pages and the buttons below to run diagnostics.*`,
     timestamp: new Date().toISOString()
   };
 
   const components = [
     await getNavBarRow(env, guildId, 'dashboard'),
-    {
-      type: 1,
-      components: actionComponents
-    },
+    primaryActionRow,
+    secondaryActionRow,
     {
       type: 1,
       components: [
@@ -2341,7 +2301,6 @@ export default {
 
           ctx.waitUntil(doCheckAndPost(env, { source: 'override-set', invokerId, guildId }));
 
-          await env.STATUS_KV.delete(`panel_menu_navigating:${guildId}`);
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
           delete config.editing_override_status_key;
           updated = true;
@@ -2465,8 +2424,13 @@ export default {
         }
 
         const customId = body.data.custom_id;
-        if (customId.startsWith('panel_to_') || customId === 'panel_btn_clear_override') {
-          await env.STATUS_KV.delete(`panel_menu_navigating:${guildId}`);
+
+        if (customId === 'panel_nav_select') {
+          const selected = Array.isArray(body.data.values) && body.data.values[0];
+          const target = PANEL_NAV_TABS.some(t => t.value === selected) ? selected : 'dashboard';
+          await env.STATUS_KV.put(`panel_page:${guildId}`, target);
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_speed') {
@@ -2497,40 +2461,6 @@ export default {
         if (customId === 'panel_clear_logs') {
           ctx.waitUntil(handlePanelClearLogs(body, env));
           return deferredInteractionResponse();
-        }
-
-        if (customId === 'panel_btn_page_next') {
-          const currentPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
-          const nextPage = Math.min(6, currentPage + 1);
-          await env.STATUS_KV.put(`panel_button_page:${guildId}`, String(nextPage));
-          const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({ type: 7, data: payload });
-        }
-
-        if (customId === 'panel_btn_page_prev') {
-          const currentPage = Number(await env.STATUS_KV.get(`panel_button_page:${guildId}`)) || 1;
-          const prevPage = Math.max(1, currentPage - 1);
-          await env.STATUS_KV.put(`panel_button_page:${guildId}`, String(prevPage));
-          const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({ type: 7, data: payload });
-        }
-
-        if (customId === 'panel_menu_next') {
-          const currentPage = Number(await env.STATUS_KV.get(`panel_menu_page:${guildId}`)) || 1;
-          const nextPage = currentPage === 5 ? 1 : currentPage + 1;
-          await env.STATUS_KV.put(`panel_menu_page:${guildId}`, String(nextPage));
-          await env.STATUS_KV.put(`panel_menu_navigating:${guildId}`, 'true');
-          const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({ type: 7, data: payload });
-        }
-
-        if (customId === 'panel_menu_prev') {
-          const currentPage = Number(await env.STATUS_KV.get(`panel_menu_page:${guildId}`)) || 1;
-          const prevPage = currentPage === 1 ? 5 : currentPage - 1;
-          await env.STATUS_KV.put(`panel_menu_page:${guildId}`, String(prevPage));
-          await env.STATUS_KV.put(`panel_menu_navigating:${guildId}`, 'true');
-          const payload = await buildControlPanelPayload(env, guildId);
-          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_to_config_general') {
