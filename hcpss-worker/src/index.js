@@ -148,20 +148,38 @@ function formatYmdNY(date) {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-function normalizeStatusDate(dateText, fallbackDate) {
-  if (!dateText) return formatStatusDate(fallbackDate);
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
-  const parsed = new Date(dateText);
-  if (!Number.isNaN(parsed.getTime())) return formatStatusDate(parsed);
+// Resolves the status date from the site's date text (e.g. "July 14, 2026") as a plain
+// calendar day, without any timezone conversion that could shift it to the previous day.
+function statusDateInfo(dateText, fallbackDate) {
+  const cleaned = dateText
+    ? String(dateText).replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim()
+    : '';
 
-  return dateText.replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim();
-}
+  if (cleaned) {
+    const m = cleaned.match(/([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})/);
+    if (m) {
+      const monthIdx = MONTH_NAMES.indexOf(m[1].toLowerCase().slice(0, 3));
+      if (monthIdx >= 0) {
+        const day = parseInt(m[2], 10);
+        const year = parseInt(m[3], 10);
+        const utcDate = new Date(Date.UTC(year, monthIdx, day));
+        return {
+          display: new Intl.DateTimeFormat('en-US', {
+            timeZone: 'UTC',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          }).format(utcDate),
+          ymd: `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        };
+      }
+    }
+    return { display: cleaned, ymd: formatYmdNY(fallbackDate) };
+  }
 
-function parseStatusDate(dateText, fallbackDate) {
-  if (!dateText) return fallbackDate;
-  const cleaned = String(dateText).replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim();
-  const parsed = new Date(cleaned);
-  return Number.isNaN(parsed.getTime()) ? fallbackDate : parsed;
+  return { display: formatStatusDate(fallbackDate), ymd: formatYmdNY(fallbackDate) };
 }
 
 function footerWithCheckedAt(label, checkedAt) {
@@ -419,22 +437,12 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
     const html = await fetchHtml(HCPSS_URL);
     cards = extractCards(html);
   }
-  const statusDate = parseStatusDate(cards[0] && cards[0].date, checkedAt);
-  const primaryDate = normalizeStatusDate(cards[0] && cards[0].date, checkedAt);
-  const isNormalFromSite = !cards.length || cards.every(c => !c.title || /normal operations/i.test(c.title));
-  
-  const ymd = formatYmdNY(statusDate);
-  let calendarEvent = env ? await env.STATUS_KV.get(`calendar_event:${ymd}`) : null;
-  if (!calendarEvent) {
-    calendarEvent = SCHOOL_CALENDAR_EVENTS[ymd];
-  }
+  const dateInfo = statusDateInfo(cards[0] && cards[0].date, checkedAt);
+  const primaryDate = dateInfo.display;
 
-  let desc = assembleDescription(cards);
-  if (isNormalFromSite && calendarEvent) {
-    // Calendar only overrides "Normal Operations" days. If HCPSS posts an alert
-    // (closures/delays/etc.), that alert is the source of truth for the day.
-    desc = `## **${calendarEvent}**\n\nStaff and students report in accordance with the HCPSS calendar.`;
-  }
+  // The embed always mirrors the website exactly; calendar events are only
+  // shown via /calendar and the control panel, never in the status embed.
+  const desc = assembleDescription(cards);
 
   const statusKey = determineStatusKey(cards);
   let color = getDefaultStatusColor(statusKey);
@@ -1013,7 +1021,9 @@ async function doCheckAndPost(env, options = {}) {
     };
 
     const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
-    const liveStatusText = firstEmbed ? (firstEmbed.description || '') : '';
+    // Include the title (which carries the status date) so scheduled checks post a fresh
+    // status when the site rolls over to a new day, not only when the body text changes.
+    const liveStatusText = firstEmbed ? `${firstEmbed.title || ''}\n${firstEmbed.description || ''}` : '';
     
     const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
     const statusChanged = lastPostedText !== liveStatusText;
