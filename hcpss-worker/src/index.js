@@ -439,20 +439,10 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
   }
   const dateInfo = statusDateInfo(cards[0] && cards[0].date, checkedAt);
   const primaryDate = dateInfo.display;
-  const isNormalFromSite = !cards.length || cards.every(c => !c.title || /normal operations/i.test(c.title));
-  
-  const ymd = dateInfo.ymd;
-  let calendarEvent = env ? await env.STATUS_KV.get(`calendar_event:${ymd}`) : null;
-  if (!calendarEvent) {
-    calendarEvent = SCHOOL_CALENDAR_EVENTS[ymd];
-  }
 
-  let desc = assembleDescription(cards);
-  if (isNormalFromSite && calendarEvent) {
-    // Calendar only overrides "Normal Operations" days. If HCPSS posts an alert
-    // (closures/delays/etc.), that alert is the source of truth for the day.
-    desc = `## **${calendarEvent}**\n\nStaff and students report in accordance with the HCPSS calendar.`;
-  }
+  // The embed always mirrors the website exactly; calendar events are only
+  // shown via /calendar and the control panel, never in the status embed.
+  const desc = assembleDescription(cards);
 
   const statusKey = determineStatusKey(cards);
   let color = getDefaultStatusColor(statusKey);
