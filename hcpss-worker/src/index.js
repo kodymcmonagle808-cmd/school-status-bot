@@ -1422,7 +1422,7 @@ const PANEL_NAV_TABS = [
 function getNavTabForPage(page) {
   if (['config_general', 'config_schedule', 'config_toggles'].includes(page)) return 'config_general';
   if (['config_stats', 'config_override_select'].includes(page)) return 'config_stats';
-  if (page === 'dashboard_logs') return 'dashboard';
+  if (page === 'dashboard_logs' || page === 'dashboard_bot_status') return 'dashboard';
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
 
@@ -1916,7 +1916,7 @@ async function buildControlPanelPayload(env, guildId) {
       description:
         `### 📋 Recent Logs (last 25)\n` +
         `${logsContent}\n\n` +
-        `*Use the buttons below to switch views or manage logs.*`,
+        `*Use the view dropdown or buttons below to switch views or manage logs.*`,
       timestamp: new Date().toISOString()
     };
 
@@ -1924,9 +1924,165 @@ async function buildControlPanelPayload(env, guildId) {
       await getNavBarRow(env, guildId, 'dashboard'),
       {
         type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'panel_view_select',
+          placeholder: '📂 Switch view...',
+          options: [
+            { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' }, default: true },
+            { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' } }
+          ],
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
         components: [
           { type: 2, style: 2, label: 'System Status', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
           { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  // Dashboard sub-page: Bot Status
+  if (page === 'dashboard_bot_status') {
+    const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
+    const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
+
+    const latencyRaw = await env.STATUS_KV.get(latencyKey);
+    const latencyMs = latencyRaw ? Number(latencyRaw) : null;
+    const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
+
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    let stats = {};
+    try { if (rawStats) stats = JSON.parse(rawStats) || {}; } catch {}
+    const scrapesTotal = stats.scrapes_total || 0;
+    const scrapesFailed = stats.scrapes_failed || 0;
+    const successRate = scrapesTotal > 0 ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100) : 100;
+    const scraperFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+
+    // Helper: render a 20-segment bar using ■ (filled) and spaces (empty).
+    // Wrapped in a code block so Discord preserves the trailing spaces.
+    function renderBar(value, max, segments = 20) {
+      const filled = Math.min(segments, Math.max(0, Math.round((value / max) * segments)));
+      const empty = segments - filled;
+      return '`' + '■'.repeat(filled) + ' '.repeat(empty) + '`';
+    }
+
+    // For "inverse" bars (lower value = better), flip the fill direction so
+    // a healthy state shows a full bar, not an empty one.
+    function renderBarInverse(value, max, segments = 20) {
+      const good = Math.min(segments, Math.max(0, Math.round(((max - value) / max) * segments)));
+      const bad = segments - good;
+      return '`' + '■'.repeat(good) + ' '.repeat(bad) + '`';
+    }
+
+    // ── Ping / Latency bar (0–2000 ms; lower = better → inverse bar) ──────
+    let pingLabel, pingBar, pingEmoji;
+    if (latencyMs === null) {
+      pingLabel = 'N/A';
+      pingBar = '`' + ' '.repeat(20) + '`';
+      pingEmoji = '⚪';
+    } else if (latencyMs <= 300) {
+      pingLabel = `${latencyMs}ms`;
+      pingBar = renderBarInverse(latencyMs, 2000);
+      pingEmoji = '🟢';
+    } else if (latencyMs <= 800) {
+      pingLabel = `${latencyMs}ms`;
+      pingBar = renderBarInverse(latencyMs, 2000);
+      pingEmoji = '🟡';
+    } else if (latencyMs <= 1500) {
+      pingLabel = `${latencyMs}ms`;
+      pingBar = renderBarInverse(latencyMs, 2000);
+      pingEmoji = '🟠';
+    } else {
+      pingLabel = `${latencyMs}ms`;
+      pingBar = renderBarInverse(Math.min(latencyMs, 2000), 2000);
+      pingEmoji = '🔴';
+    }
+
+    // ── Scraper health (inverse: more failures = worse) ────────────────────
+    const scraperHealthBar = renderBarInverse(scraperFailures, 5);
+    const scraperHealthEmoji = scraperFailures === 0 ? '🟢' : scraperFailures < 3 ? '🟡' : '🔴';
+    const scraperHealthLabel = scraperFailures === 0 ? 'Healthy' : `${scraperFailures} failure(s)`;
+
+    // ── Scraper success rate (higher = better) ─────────────────────────────
+    const successBar = renderBar(successRate, 100);
+    const successEmoji = successRate >= 95 ? '🟢' : successRate >= 80 ? '🟡' : '🔴';
+
+    // ── Overall uptime score (same as success rate, displayed differently) ─
+    const uptimeVal = successRate;
+    const uptimeBar = renderBar(uptimeVal, 100);
+    const uptimeEmoji = uptimeVal >= 99 ? '🟢' : uptimeVal >= 90 ? '🟡' : '🔴';
+
+    // ── Data freshness (inverse: more time elapsed = worse) ─────────────────
+    const minutesSinceCheck = Math.round((Date.now() - lastCheckTime) / 60000);
+    const freshnessMax = 120;
+    const freshnessBar = renderBarInverse(minutesSinceCheck, freshnessMax);
+    const freshnessEmoji = minutesSinceCheck <= 10 ? '🟢' : minutesSinceCheck <= 60 ? '🟡' : '🔴';
+    const freshnessLabel = minutesSinceCheck === 0 ? 'Just now' : `${minutesSinceCheck}m ago`;
+
+    // ── Incident load (how busy things have been) ──────────────────────────
+    const totalIncidents = Object.entries(stats)
+      .filter(([k]) => !['scrapes_total','scrapes_failed'].includes(k))
+      .reduce((acc, [, v]) => acc + (Number(v) || 0), 0);
+    const incidentMax = 50;
+    const incidentBar = renderBar(Math.min(totalIncidents, incidentMax), incidentMax);
+    const incidentEmoji = totalIncidents === 0 ? '🟢' : totalIncidents < 10 ? '🟡' : '🔴';
+
+    const embed = {
+      title: '📡 HCPSS Status Monitor — Bot Status',
+      color: 0x5865F2,
+      description:
+        `### 📡 Live Bot Health Metrics\n` +
+        `*Press **Refresh Metrics** to fetch a live speed test.*\n\n` +
+        `${pingEmoji} **Scraper Ping / Latency** — ${pingLabel}\n` +
+        `${pingBar}\n` +
+        `> Full bar = fast (≤0 ms) · Empty = 2 000 ms+\n\n` +
+        `${scraperHealthEmoji} **Scraper Health** — ${scraperHealthLabel}\n` +
+        `${scraperHealthBar}\n` +
+        `> Full bar = no failures · Empties per consecutive error\n\n` +
+        `${successEmoji} **Scraper Success Rate** — ${successRate.toFixed(1)}%\n` +
+        `${successBar}\n` +
+        `> \`${scrapesTotal - scrapesFailed}/${scrapesTotal}\` successful checks\n\n` +
+        `${uptimeEmoji} **Overall Uptime Score** — ${uptimeVal.toFixed(1)}%\n` +
+        `${uptimeBar}\n` +
+        `> Based on full scrape history\n\n` +
+        `${freshnessEmoji} **Data Freshness** — ${freshnessLabel}\n` +
+        `${freshnessBar}\n` +
+        `> Full bar = checked just now · Empty = 2 h+ ago\n\n` +
+        `${incidentEmoji} **Incident Load (all-time)** — ${totalIncidents} event(s)\n` +
+        `${incidentBar}\n` +
+        `> Filled = more non-normal status events recorded`,
+      timestamp: new Date().toISOString(),
+      footer: { text: 'HCPSS Status Monitor · Bot Status  •  ■ = filled  · space = empty' }
+    };
+
+    const components = [
+      await getNavBarRow(env, guildId, 'dashboard'),
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'panel_view_select',
+          placeholder: '📂 Switch view...',
+          options: [
+            { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' } },
+            { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' }, default: true }
+          ],
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'System Status', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
+          { type: 2, style: 1, label: 'Refresh Metrics', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '🔄' } }
         ]
       }
     ];
@@ -1993,9 +2149,17 @@ async function buildControlPanelPayload(env, guildId) {
     await getNavBarRow(env, guildId, 'dashboard'),
     {
       type: 1,
-      components: [
-        { type: 2, style: 1, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } }
-      ]
+      components: [{
+        type: 3,
+        custom_id: 'panel_view_select',
+        placeholder: '📂 Switch view...',
+        options: [
+          { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' } },
+          { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' } }
+        ],
+        min_values: 1,
+        max_values: 1
+      }]
     },
     {
       type: 1,
@@ -2667,6 +2831,15 @@ export default {
           return jsonResponse({ type: 7, data: payload });
         }
 
+        if (customId === 'panel_view_select') {
+          const selected = Array.isArray(body.data.values) && body.data.values[0];
+          const allowed = ['dashboard_logs', 'dashboard_bot_status'];
+          const target = allowed.includes(selected) ? selected : 'dashboard_logs';
+          await env.STATUS_KV.put(`panel_page:${guildId}`, target);
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
         if (customId === 'panel_action_select') {
           const action = Array.isArray(body.data.values) && body.data.values[0];
           if (action === 'panel_check') {
@@ -2826,6 +2999,12 @@ export default {
 
         if (customId === 'panel_to_dashboard_logs') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard_logs');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_dashboard_bot_status') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard_bot_status');
           const payload = await buildControlPanelPayload(env, guildId);
           return jsonResponse({ type: 7, data: payload });
         }
