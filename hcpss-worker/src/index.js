@@ -43,8 +43,7 @@ function matchesScheduleTime(currentEtStr, scheduledTimeStr) {
     diff += 1440;
   }
 
-  // Return true if current time is between scheduledTime and scheduledTime + 45 minutes
-  return diff >= 0 && diff <= 45;
+  return diff >= -2 && diff <= 5;
 }
 
 
