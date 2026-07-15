@@ -9,6 +9,7 @@ const CONFIG_COMMAND = 'config';
 const OVERRIDE_COMMAND = 'override';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
+const ANNOUNCE_COMMAND = 'announce';
 
 const SCHEDULE_OPTIONS = [
   { label: '5:20 AM', value: '5:20' },
@@ -1697,7 +1698,8 @@ async function buildControlPanelPayload(env, guildId) {
                    `• **\`/events add\`**: Add a dynamic calendar event (YYYY-MM-DD).\n` +
                    `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
                    `• **\`/stats\`**: Show status check and operating status statistics.\n` +
-                   `• **\`/setup\`**: Initial one-time setup for the status monitor.\n\n` +
+                   `• **\`/setup\`**: Initial one-time setup for the status monitor.\n` +
+                   `• **\`/announce\`**: Post a custom embed announcement in the current channel.\n\n` +
                    `*Use these commands in any channel where the bot has permission to read and send messages.*`,
       timestamp: new Date().toISOString()
     };
@@ -2185,6 +2187,71 @@ export default {
       const guildId = body.guild_id || '';
 
       if (body.type === 5) {
+        // Handle announce modal before the canConfigure gate (staff can announce)
+        if (body.data && body.data.custom_id === 'modal_announce') {
+          if (!(await canUseCommands(body.member, env, guildId))) {
+            return interactionResponse({
+              content: '❌ You do not have permission to use `/announce`.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const announceTitle = getModalInputValue(body, 'input_announce_title').trim();
+          const announceBody  = getModalInputValue(body, 'input_announce_body').trim();
+          const announceFooter = getModalInputValue(body, 'input_announce_footer').trim();
+          const channelId = body.channel_id || body.channel && body.channel.id || '';
+
+          if (!announceTitle && !announceBody) {
+            return interactionResponse({
+              content: '❌ Please provide at least a title or message body.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          if (!channelId) {
+            return interactionResponse({
+              content: '❌ Could not determine the channel to post in.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          const embed = {
+            title: announceTitle || undefined,
+            description: announceBody || undefined,
+            color: 0x5865F2,
+            footer: announceFooter ? { text: announceFooter } : { text: 'HCPSS Status Monitor' },
+            timestamp: new Date().toISOString()
+          };
+
+          const postRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ embeds: [embed] })
+          });
+
+          if (!postRes.ok) {
+            const errText = await postRes.text();
+            console.error('Announce post failed:', errText);
+            return interactionResponse({
+              content: `❌ Failed to post announcement (Discord error ${postRes.status}). Make sure the bot has permission to send messages in this channel.`,
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const stored = await getConfig(env, guildId);
+          const cfg = getEffectiveConfig(stored);
+          await postLog(env, cfg.log_channel_id, `📣 Announcement posted to <#${channelId}>${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+
+          return interactionResponse({
+            content: `✅ Announcement posted to <#${channelId}>!`,
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
         if (!(await canConfigure(body.member, env, guildId))) {
           return interactionResponse({
             content: 'You do not have permission to configure this bot.',
@@ -2412,6 +2479,54 @@ export default {
       if (body.type === 2 && body.data && body.data.name === 'stats') {
         const payload = await runStatsCommand(env);
         return interactionResponse(payload);
+      }
+
+      if (body.type === 2 && body.data && body.data.name === ANNOUNCE_COMMAND) {
+        return jsonResponse({
+          type: 9,
+          data: {
+            title: '📣 Post an Announcement',
+            custom_id: 'modal_announce',
+            components: [
+              {
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_announce_title',
+                  style: 1,
+                  label: 'Title',
+                  placeholder: 'e.g. Important Notice',
+                  max_length: 256,
+                  required: false
+                }]
+              },
+              {
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_announce_body',
+                  style: 2,
+                  label: 'Message',
+                  placeholder: 'Type the full announcement here...',
+                  max_length: 3900,
+                  required: true
+                }]
+              },
+              {
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_announce_footer',
+                  style: 1,
+                  label: 'Footer (optional)',
+                  placeholder: 'e.g. HCPSS Administration',
+                  max_length: 256,
+                  required: false
+                }]
+              }
+            ]
+          }
+        });
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_')) {

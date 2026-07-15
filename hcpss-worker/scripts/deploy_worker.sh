@@ -164,6 +164,12 @@ payload=$(jq -n '[
     type: 1,
     dm_permission: false,
     default_member_permissions: "8"
+  },
+  {
+    name: "announce",
+    description: "Post a custom embed announcement in this channel.",
+    type: 1,
+    dm_permission: false
   }
 ]')
 
