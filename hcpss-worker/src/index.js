@@ -1422,6 +1422,7 @@ const PANEL_NAV_TABS = [
 function getNavTabForPage(page) {
   if (['config_general', 'config_schedule', 'config_toggles'].includes(page)) return 'config_general';
   if (['config_stats', 'config_override_select'].includes(page)) return 'config_stats';
+  if (page === 'dashboard_logs') return 'dashboard';
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
 
@@ -1894,16 +1895,50 @@ async function buildControlPanelPayload(env, guildId) {
     return { embeds: [embed], components };
   }
 
-  // Otherwise, default to Dashboard Page
+  // Dashboard sub-page: Recent Logs
+  if (page === 'dashboard_logs') {
+    const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
+    let logs = [];
+    const rawLogs = await env.STATUS_KV.get(logKey);
+    if (rawLogs) {
+      try { logs = JSON.parse(rawLogs); } catch {}
+    }
+
+    const logsContent = logs.length ? logs.map(line => {
+      const match = line.match(/^\[(.*?)\] (.*)$/);
+      if (match) return `\`[${match[1]}]\` ${match[2]}`;
+      return line;
+    }).join('\n') : '*No logs yet.*';
+
+    const embed = {
+      title: '📋 HCPSS Status Monitor - Recent Logs',
+      color: 0x9B59B6,
+      description:
+        `### 📋 Recent Logs (last 25)\n` +
+        `${logsContent}\n\n` +
+        `*Use the buttons below to switch views or manage logs.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      await getNavBarRow(env, guildId, 'dashboard'),
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, label: 'System Status', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
+          { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  // Otherwise, default to Dashboard Page (System Status sub-page)
   const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
   const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
   const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
 
-  let logs = [];
-  const rawLogs = await env.STATUS_KV.get(logKey);
-  if (rawLogs) {
-    try { logs = JSON.parse(rawLogs); } catch {}
-  }
   const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
   const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
 
@@ -1936,13 +1971,6 @@ async function buildControlPanelPayload(env, guildId) {
     ? `[Jump](https://discord.com/channels/${guildId}/${lastChannelId}/${lastMessageId}) in <#${lastChannelId}>`
     : '*(no message posted yet)*';
 
-  const recentLogs = logs.slice(0, 5);
-  const logsContent = recentLogs.length ? recentLogs.map(line => {
-    const match = line.match(/^\[(.*?)\] (.*)$/);
-    if (match) return `\`[${match[1]}]\` ${match[2]}`;
-    return line;
-  }).join('\n') : '*No logs yet.*';
-
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 0x9B59B6,
@@ -1957,14 +1985,18 @@ async function buildControlPanelPayload(env, guildId) {
       `• **Active Override**: ${overrideStr}\n` +
       `• **Last Posted Message**: ${lastPostStr}\n` +
       (panelMsgId ? `• **Panel Message ID**: \`${panelMsgId}\`\n` : '') +
-      `\n### 📋 Recent Logs (last 5)\n` +
-      `${logsContent}\n\n` +
-      `*Use the nav dropdown to switch pages. Use the Quick Actions dropdown for diagnostics.*`,
+      `\n*Use the nav dropdown to switch pages. Use the Quick Actions dropdown for diagnostics.*`,
     timestamp: new Date().toISOString()
   };
 
   const components = [
     await getNavBarRow(env, guildId, 'dashboard'),
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 1, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } }
+      ]
+    },
     {
       type: 1,
       components: [{
@@ -2788,6 +2820,12 @@ export default {
 
         if (customId === 'panel_to_dashboard') {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_to_dashboard_logs') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard_logs');
           const payload = await buildControlPanelPayload(env, guildId);
           return jsonResponse({ type: 7, data: payload });
         }
