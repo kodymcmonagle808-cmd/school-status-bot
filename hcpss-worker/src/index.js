@@ -559,16 +559,64 @@ async function handlePanelSpeed(body, env) {
   const start = Date.now();
   let ok = false;
   let statusText = '';
+  let responseSize = 0;
+  let redirected = false;
   try {
     const r = await fetch(HCPSS_URL);
     ok = r.ok;
     statusText = `${r.status} ${r.statusText}`;
+    redirected = r.redirected;
+    const txt = await r.text();
+    responseSize = txt.length;
   } catch (e) {
     statusText = e.message;
   }
   const duration = Date.now() - start;
   await updateInteractionOriginal(env, body.token, {
-    content: `⚡ **Scraper speed test:**\n• Status: \`${statusText}\`\n• Fetch time: \`${duration}ms\`\n• Result: ${ok ? '🟢 Ok' : '🔴 Failed'}`,
+    content: `⚡ **Scraper Speed Test Results:**\n` +
+             `• HTTP Status: \`${statusText}\`\n` +
+             `• Fetch Time: \`${duration}ms\`\n` +
+             `• Response Size: \`${responseSize.toLocaleString()} bytes\`\n` +
+             `• Redirected: \`${redirected ? 'Yes' : 'No'}\`\n` +
+             `• Result: ${ok ? '🟢 OK' : '🔴 Failed'}`,
+    embeds: []
+  });
+}
+
+async function handlePanelKvDebug(body, env) {
+  const guildId = body.guild_id || '';
+  const lines = [];
+
+  const kvKeys = [
+    `config:${guildId || env.DISCORD_GUILD_ID}`,
+    `panel_logs:${guildId}`,
+    `last_check_latency:${guildId}`,
+    `last_check_time:${guildId}`,
+    `last_message_id:${guildId}`,
+    `last_channel_id:${guildId}`,
+    `last_posted_text:${guildId}`,
+    `override:${guildId || env.DISCORD_GUILD_ID}`,
+    `status_stats`,
+    `status_history`,
+    `last_known_status`,
+    `scraper_failures_count`,
+    `scraper_failure_alerted`,
+    `log_panel_message_id:${guildId}`,
+    `setup_done:${guildId}`
+  ];
+
+  for (const key of kvKeys) {
+    const val = await env.STATUS_KV.get(key);
+    if (val !== null) {
+      const preview = val.length > 80 ? val.slice(0, 80) + '…' : val;
+      lines.push(`\`${key}\`\n  → \`${preview}\``);
+    } else {
+      lines.push(`\`${key}\`\n  → *(not set)*`);
+    }
+  }
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `🗄️ **KV Store Diagnostic Snapshot**\n\n${lines.join('\n')}`,
     embeds: []
   });
 }
@@ -1458,11 +1506,18 @@ async function buildControlPanelPayload(env, guildId) {
       },
       {
         type: 1,
-        components: [
-          { type: 2, style: 2, label: 'Set Footer Text', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
-          { type: 2, style: 1, label: 'Manage Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '🗓️' } },
-          { type: 2, style: 1, label: 'Manage Toggles', custom_id: 'panel_to_config_toggles', emoji: { name: '⚙️' } }
-        ]
+        components: [{
+          type: 3,
+          custom_id: 'cfg_general_action_select',
+          placeholder: '🔧 More actions...',
+          options: [
+            { label: 'Set Embed Footer Text', value: 'set_footer', description: 'Customize the footer shown on status embeds', emoji: { name: '✍️' } },
+            { label: 'Manage Check Schedule', value: 'to_schedule', description: 'Configure what times the bot checks for status updates', emoji: { name: '🗓️' } },
+            { label: 'Manage Feature Toggles', value: 'to_toggles', description: 'Enable or disable pings, always-post, and error alerts', emoji: { name: '⚙️' } }
+          ],
+          min_values: 1,
+          max_values: 1
+        }]
       }
     ];
 
@@ -1470,56 +1525,59 @@ async function buildControlPanelPayload(env, guildId) {
   }
 
   if (page === 'config_toggles') {
-    const pings = config.toggle_pings !== false ? '🟢 Enabled' : '🔴 Disabled';
-    const alwaysPost = config.toggle_always_post === true ? '🟢 Enabled' : '🔴 Disabled';
-    const errorAlerts = config.toggle_error_alerts !== false ? '🟢 Enabled' : '🔴 Disabled';
+    const pings = config.toggle_pings !== false;
+    const alwaysPost = config.toggle_always_post === true;
+    const errorAlerts = config.toggle_error_alerts !== false;
 
     const embed = {
       title: '⚙️ Settings - Toggles & Options',
       color: 0x3498DB,
       description: `### 🚨 Feature Toggles\n` +
-                   `• **Role Mentions**: ${pings}\n` +
-                   `  *Toggle whether roles are pinged on status changes (or only send embeds).* \n\n` +
-                   `• **Always Post Status**: ${alwaysPost}\n` +
-                   `  *Toggle whether to post status updates at check times even if nothing changed.* \n\n` +
-                   `• **Scraper Failure Alerts**: ${errorAlerts}\n` +
-                   `  *Toggle warning pings to staff if the scraper fails consecutively.*`,
+                   `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
+                   `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
+                   `• ${alwaysPost ? '🟢' : '🔴'} **Always Post Status** — post even if status hasn't changed\n` +
+                   `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n\n` +
+                   `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
+
+    // Build default selections based on current config
+    const toggleOptions = [
+      {
+        label: 'Role Mentions',
+        value: 'toggle_pings',
+        description: 'Ping configured roles when a status change occurs',
+        emoji: { name: '🔔' },
+        default: pings
+      },
+      {
+        label: 'Always Post Status',
+        value: 'toggle_always_post',
+        description: 'Post status on every scheduled check, even if unchanged',
+        emoji: { name: '📝' },
+        default: alwaysPost
+      },
+      {
+        label: 'Scraper Failure Alerts',
+        value: 'toggle_error_alerts',
+        description: 'Notify staff if the scraper fails 3+ consecutive times',
+        emoji: { name: '⚠️' },
+        default: errorAlerts
+      }
+    ];
 
     const components = [
       await getNavBarRow(env, guildId, 'config_toggles'),
       {
         type: 1,
-        components: [
-          { 
-            type: 2, 
-            style: config.toggle_pings !== false ? 3 : 2, 
-            label: config.toggle_pings !== false ? 'Mentions: Enabled' : 'Mentions: Disabled', 
-            custom_id: 'cfg_toggle_pings', 
-            emoji: { name: config.toggle_pings !== false ? '🔔' : '🔕' } 
-          },
-          { 
-            type: 2, 
-            style: config.toggle_always_post === true ? 3 : 2, 
-            label: config.toggle_always_post === true ? 'Always Post: Enabled' : 'Always Post: Disabled', 
-            custom_id: 'cfg_toggle_always_post', 
-            emoji: { name: config.toggle_always_post === true ? '📝' : '📭' } 
-          },
-          { 
-            type: 2, 
-            style: config.toggle_error_alerts !== false ? 3 : 2, 
-            label: config.toggle_error_alerts !== false ? 'Error Alerts: Enabled' : 'Error Alerts: Disabled', 
-            custom_id: 'cfg_toggle_error_alerts', 
-            emoji: { name: config.toggle_error_alerts !== false ? '⚠️' : '🔇' } 
-          }
-        ]
-      },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
-        ]
+        components: [{
+          type: 3,
+          custom_id: 'cfg_toggle_select',
+          placeholder: 'Select which features are ON...',
+          options: toggleOptions,
+          min_values: 0,
+          max_values: 3
+        }]
       }
     ];
 
@@ -1849,70 +1907,100 @@ async function buildControlPanelPayload(env, guildId) {
   const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
   const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
 
-  const recentLogs = logs.slice(0, 3);
+  // Gather extra debug data
+  const scraperFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+  const scraperFailureAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
+  const activeOverride = await getActiveOverride(env, guildId);
+  const lastMessageId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
+  const lastChannelId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
+  const rawStats = await env.STATUS_KV.get('status_stats');
+  let stats = {};
+  try { if (rawStats) stats = JSON.parse(rawStats) || {}; } catch {}
+  const scrapesTotal = stats.scrapes_total || 0;
+  const scrapesFailed = stats.scrapes_failed || 0;
+  const successRate = scrapesTotal > 0 ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100).toFixed(1) : '100.0';
+  const panelMsgId = await env.STATUS_KV.get(`log_panel_message_id:${guildId}`);
+  const kvConnected = '`STATUS_KV` (Connected)';
+
+  const overrideStr = activeOverride
+    ? `⚠️ **${activeOverride.status_label || activeOverride.status_key}** (expires <t:${Math.floor(activeOverride.until / 1000)}:R>)`
+    : '✅ None (Live Scraper Mode)';
+
+  const scraperHealthStr = scraperFailures === 0
+    ? '🟢 Healthy'
+    : scraperFailures < 3
+      ? `🟡 ${scraperFailures} consecutive failure(s)`
+      : `🔴 ${scraperFailures} consecutive failures${scraperFailureAlerted ? ' — staff alerted' : ''}`;
+
+  const lastPostStr = lastMessageId && lastChannelId
+    ? `[Jump](https://discord.com/channels/${guildId}/${lastChannelId}/${lastMessageId}) in <#${lastChannelId}>`
+    : '*(no message posted yet)*';
+
+  const recentLogs = logs.slice(0, 5);
   const logsContent = recentLogs.length ? recentLogs.map(line => {
     const match = line.match(/^\[(.*?)\] (.*)$/);
-    if (match) {
-      return `\`[${match[1]}]\` ${match[2]}`;
-    }
+    if (match) return `\`[${match[1]}]\` ${match[2]}`;
     return line;
   }).join('\n') : '*No logs yet.*';
-
-  const primaryActionRow = {
-    type: 1,
-    components: [
-      { type: 2, style: 1, label: 'Run Check', custom_id: 'panel_check', emoji: { name: '🔍' } },
-      { type: 2, style: 2, label: 'Test Speed', custom_id: 'panel_speed', emoji: { name: '⚡' } },
-      { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
-    ]
-  };
-  const secondaryActionRow = {
-    type: 1,
-    components: [
-      { type: 2, style: 2, label: 'History', custom_id: 'panel_history', emoji: { name: '📜' } },
-      { type: 2, style: 2, label: 'Logs', custom_id: 'panel_logs', emoji: { name: '📋' } },
-      { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } },
-      { type: 2, style: 5, label: 'HCPSS Page', url: 'https://status.hcpss.org', emoji: { name: '🌐' } }
-    ]
-  };
 
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 0x9B59B6,
-    description: `### 📊 System Status\n` +
-                 `• **Bot Status**: 🟢 Online\n` +
-                 `• **Last Checked**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
-                 `• **Scraper Speed**: \`${latency}ms\`\n` +
-                 `• **Database**: \`STATUS_KV\` (Connected)\n\n` +
-                 `### 📋 Recent Logs\n` +
-                 `${logsContent}\n\n` +
-                 `*Use the menu to switch pages and the buttons below to run diagnostics.*`,
+    description:
+      `### 📊 System Status\n` +
+      `• **Bot**: 🟢 Online\n` +
+      `• **Database**: ${kvConnected}\n` +
+      `• **Last Checked**: <t:${Math.floor(lastCheckTime / 1000)}:F> (<t:${Math.floor(lastCheckTime / 1000)}:R>)\n` +
+      `• **Scraper Speed**: \`${latency}ms\`\n` +
+      `• **Scraper Health**: ${scraperHealthStr}\n` +
+      `• **Scraper Success Rate**: \`${successRate}%\` (\`${scrapesTotal - scrapesFailed}/${scrapesTotal}\` checks)\n` +
+      `• **Active Override**: ${overrideStr}\n` +
+      `• **Last Posted Message**: ${lastPostStr}\n` +
+      (panelMsgId ? `• **Panel Message ID**: \`${panelMsgId}\`\n` : '') +
+      `\n### 📋 Recent Logs (last 5)\n` +
+      `${logsContent}\n\n` +
+      `*Use the nav dropdown to switch pages. Use the Quick Actions dropdown for diagnostics.*`,
     timestamp: new Date().toISOString()
   };
 
   const components = [
     await getNavBarRow(env, guildId, 'dashboard'),
-    primaryActionRow,
-    secondaryActionRow,
     {
       type: 1,
-      components: [
-        {
-          type: 3,
-          custom_id: 'panel_trigger_test_alert',
-          placeholder: '🧪 Trigger Scraper Test Alert...',
-          options: [
-            { label: 'Normal Operations', value: 'normal_operations', description: 'Simulate a Normal Operations status update' },
-            { label: 'Schools Closed', value: 'schools_closed', description: 'Simulate a Schools Closed status update' },
-            { label: 'Schools & Offices Closed', value: 'schools_and_offices_closed', description: 'Simulate a Schools & Offices Closed status update' },
-            { label: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late', description: 'Simulate a 2-Hour Delay status update' },
-            { label: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early', description: 'Simulate a 3-Hour Early Close status update' },
-            { label: 'Other/Unknown Alert', value: 'unknown_alert', description: 'Simulate an Unknown Scraper Alert' }
-          ],
-          min_values: 1,
-          max_values: 1
-        }
-      ]
+      components: [{
+        type: 3,
+        custom_id: 'panel_action_select',
+        placeholder: '⚡ Quick Actions...',
+        options: [
+          { label: 'Run Status Check', value: 'panel_check', description: 'Fetch HCPSS status and post to alert channel', emoji: { name: '🔍' } },
+          { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
+          { label: 'Refresh Panel', value: 'panel_refresh', description: 'Refresh the control panel embed in the log channel', emoji: { name: '🔄' } },
+          { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
+          { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📋' } },
+          { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
+          { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
+        ],
+        min_values: 1,
+        max_values: 1
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'panel_trigger_test_alert',
+        placeholder: '🧪 Simulate Status Alert...',
+        options: [
+          { label: 'Normal Operations', value: 'normal_operations', description: 'Simulate a Normal Operations status update' },
+          { label: 'Schools Closed', value: 'schools_closed', description: 'Simulate a Schools Closed status update' },
+          { label: 'Schools & Offices Closed', value: 'schools_and_offices_closed', description: 'Simulate a Schools & Offices Closed status update' },
+          { label: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late', description: 'Simulate a 2-Hour Delay status update' },
+          { label: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early', description: 'Simulate a 3-Hour Early Close status update' },
+          { label: 'Other/Unknown Alert', value: 'unknown_alert', description: 'Simulate an Unknown Scraper Alert' }
+        ],
+        min_values: 1,
+        max_values: 1
+      }]
     }
   ];
 
@@ -1946,12 +2034,12 @@ async function applyConfigUpdate(body, env) {
     }
   } else if (customId === 'cfg_schedule_select' && Array.isArray(values)) {
     next.check_schedule = values.slice(0, 4);
-  } else if (customId === 'cfg_toggle_pings') {
-    next.toggle_pings = next.toggle_pings === false ? true : false;
-  } else if (customId === 'cfg_toggle_always_post') {
-    next.toggle_always_post = next.toggle_always_post === true ? false : true;
-  } else if (customId === 'cfg_toggle_error_alerts') {
-    next.toggle_error_alerts = next.toggle_error_alerts === false ? true : false;
+  } else if (customId === 'cfg_toggle_select') {
+    // Multi-select: selected values = ON, absent values = OFF
+    const selected = Array.isArray(values) ? values : [];
+    next.toggle_pings = selected.includes('toggle_pings');
+    next.toggle_always_post = selected.includes('toggle_always_post');
+    next.toggle_error_alerts = selected.includes('toggle_error_alerts');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }
@@ -2547,6 +2635,79 @@ export default {
           return jsonResponse({ type: 7, data: payload });
         }
 
+        if (customId === 'panel_action_select') {
+          const action = Array.isArray(body.data.values) && body.data.values[0];
+          if (action === 'panel_check') {
+            ctx.waitUntil(handlePanelCheck(body, env));
+            return deferredInteractionResponse();
+          }
+          if (action === 'panel_speed') {
+            ctx.waitUntil(handlePanelSpeed(body, env));
+            return deferredInteractionResponse();
+          }
+          if (action === 'panel_refresh') {
+            ctx.waitUntil(handlePanelRefresh(body, env));
+            return deferredInteractionResponse();
+          }
+          if (action === 'panel_history') {
+            const payload = await runHistoryCommand(env);
+            return interactionResponse(payload);
+          }
+          if (action === 'panel_logs') {
+            const payload = await runLogsCommand(env, guildId);
+            return interactionResponse(payload);
+          }
+          if (action === 'panel_kv_debug') {
+            ctx.waitUntil(handlePanelKvDebug(body, env));
+            return deferredInteractionResponse();
+          }
+          if (action === 'panel_clear_logs') {
+            ctx.waitUntil(handlePanelClearLogs(body, env));
+            return deferredInteractionResponse();
+          }
+          return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
+        }
+
+        if (customId === 'cfg_general_action_select') {
+          const action = Array.isArray(body.data.values) && body.data.values[0];
+          if (action === 'set_footer') {
+            const config = await getConfig(env, guildId);
+            const currentFooter = config.alert_embed_footer || '';
+            return jsonResponse({
+              type: 9,
+              data: {
+                title: 'Set Embed Footer Text',
+                custom_id: 'modal_set_footer',
+                components: [{
+                  type: 1,
+                  components: [{
+                    type: 4,
+                    custom_id: 'input_footer',
+                    style: 2,
+                    label: 'Custom Footer (or default)',
+                    placeholder: 'Howard County Public School System Daily Monitor',
+                    value: currentFooter,
+                    min_length: 1,
+                    max_length: 1000,
+                    required: true
+                  }]
+                }]
+              }
+            });
+          }
+          if (action === 'to_schedule') {
+            await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
+            const payload = await buildControlPanelPayload(env, guildId);
+            return jsonResponse({ type: 7, data: payload });
+          }
+          if (action === 'to_toggles') {
+            await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_toggles');
+            const payload = await buildControlPanelPayload(env, guildId);
+            return jsonResponse({ type: 7, data: payload });
+          }
+          return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
+        }
+
         if (customId === 'panel_speed') {
           ctx.waitUntil(handlePanelSpeed(body, env));
           return deferredInteractionResponse();
@@ -2820,6 +2981,28 @@ export default {
               }]
             }
           });
+        }
+
+        // Legacy button handlers kept for backwards compatibility
+        if (customId === 'panel_speed') {
+          ctx.waitUntil(handlePanelSpeed(body, env));
+          return deferredInteractionResponse();
+        }
+        if (customId === 'panel_check') {
+          ctx.waitUntil(handlePanelCheck(body, env));
+          return deferredInteractionResponse();
+        }
+        if (customId === 'panel_history') {
+          const payload = await runHistoryCommand(env);
+          return interactionResponse(payload);
+        }
+        if (customId === 'panel_logs') {
+          const payload = await runLogsCommand(env, guildId);
+          return interactionResponse(payload);
+        }
+        if (customId === 'panel_clear_logs') {
+          ctx.waitUntil(handlePanelClearLogs(body, env));
+          return deferredInteractionResponse();
         }
       }
 
