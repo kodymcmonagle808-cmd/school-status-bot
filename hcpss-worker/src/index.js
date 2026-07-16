@@ -2859,45 +2859,7 @@ export default {
           return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
         }
 
-        if (customId === 'cfg_general_action_select') {
-          const action = Array.isArray(body.data.values) && body.data.values[0];
-          if (action === 'set_footer') {
-            const config = await getConfig(env, guildId);
-            const currentFooter = config.alert_embed_footer || '';
-            return jsonResponse({
-              type: 9,
-              data: {
-                title: 'Set Embed Footer Text',
-                custom_id: 'modal_set_footer',
-                components: [{
-                  type: 1,
-                  components: [{
-                    type: 4,
-                    custom_id: 'input_footer',
-                    style: 2,
-                    label: 'Custom Footer (or default)',
-                    placeholder: 'Howard County Public School System Daily Monitor',
-                    value: currentFooter,
-                    min_length: 1,
-                    max_length: 1000,
-                    required: true
-                  }]
-                }]
-              }
-            });
-          }
-          if (action === 'to_schedule') {
-            await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
-            const payload = await buildControlPanelPayload(env, guildId);
-            return jsonResponse({ type: 7, data: payload });
-          }
-          if (action === 'to_toggles') {
-            await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_toggles');
-            const payload = await buildControlPanelPayload(env, guildId);
-            return jsonResponse({ type: 7, data: payload });
-          }
-          return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
-        }
+
 
         if (customId === 'panel_speed') {
           ctx.waitUntil(handlePanelSpeed(body, env));
@@ -3541,6 +3503,57 @@ export default {
         })());
 
         return deferredInteractionResponse();
+      }
+
+      if (body.type === 3 && body.data && body.data.custom_id === 'cfg_general_action_select') {
+        if (!(await canConfigure(body.member, env, guildId))) {
+          return interactionResponse({
+            content: 'You do not have permission to configure this bot.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+
+        const action = Array.isArray(body.data.values) && body.data.values[0];
+
+        if (action === 'set_footer') {
+          const config = await getConfig(env, guildId);
+          const currentFooter = config.alert_embed_footer || '';
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: 'Set Embed Footer Text',
+              custom_id: 'modal_set_footer',
+              components: [{
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_footer',
+                  style: 2,
+                  label: 'Custom Footer (or default)',
+                  placeholder: 'Howard County Public School System Daily Monitor',
+                  value: currentFooter,
+                  min_length: 1,
+                  max_length: 1000,
+                  required: true
+                }]
+              }]
+            }
+          });
+        }
+
+        if (action === 'to_schedule') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (action === 'to_toggles') {
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_toggles');
+          const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
       }
 
       if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
