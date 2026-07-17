@@ -118,7 +118,7 @@ payload=$(jq -n '[
   },
   {
     name: "history",
-    description: "Show the last 5 operating status changes.",
+    description: "Show the last 10 operating status changes.",
     type: 1,
     dm_permission: false
   },

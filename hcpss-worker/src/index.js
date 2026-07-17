@@ -1,4 +1,26 @@
-const HCPSS_URL = 'https://status.hcpss.org';
+import {
+  getEasternTimeStr,
+  matchesScheduleTime,
+  clockEmojiForTime,
+  formatScheduleTimeLabel,
+  formatCheckedAt,
+  formatStatusDate,
+  formatYmdNY,
+  delay
+} from './timeutil.js';
+import {
+  HCPSS_URL,
+  fetchHtml,
+  getStatusCards,
+  extractCards,
+  assembleDescription,
+  determineStatusKey,
+  statusDateInfo
+} from './scraper.js';
+import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
+import { trackStatusHistory, getStatusHistory, computeIncidentStats } from './history.js';
+import { toggleSubscriber, notifySubscribers } from './subscriptions.js';
+
 const EMBED_LIMIT = 4096;
 const EMBED_SAFE = 3900;
 const MAX_EMBEDS = 10;
@@ -10,53 +32,6 @@ const OVERRIDE_COMMAND = 'override';
 const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 const ANNOUNCE_COMMAND = 'announce';
-
-function getEasternTimeStr(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: false
-  }).formatToParts(date);
-  const hourVal = parts.find(p => p.type === 'hour').value;
-  const minuteVal = parts.find(p => p.type === 'minute').value;
-  const hr = parseInt(hourVal, 10) % 24;
-  const min = parseInt(minuteVal, 10);
-  return `${hr}:${min.toString().padStart(2, '0')}`;
-}
-
-function matchesScheduleTime(currentEtStr, scheduledTimeStr) {
-  const [currH, currM] = currentEtStr.split(':').map(Number);
-  const [schedH, schedM] = scheduledTimeStr.split(':').map(Number);
-
-  const currMin = currH * 60 + currM;
-  const schedMin = schedH * 60 + schedM;
-
-  let diff = currMin - schedMin;
-  if (diff < -1200) {
-    diff += 1440;
-  }
-
-  // Never fire early; allow up to 5 minutes late in case a cron tick is delayed.
-  // Duplicate firings within the window are skipped via the last_sched_slot dedupe key.
-  return diff >= 0 && diff <= 5;
-}
-
-function clockEmojiForTime(timeStr) {
-  const [h] = String(timeStr).split(':').map(Number);
-  const h12 = ((isNaN(h) ? 12 : h) % 12) || 12;
-  return String.fromCodePoint(0x1F550 + h12 - 1);
-}
-
-function formatScheduleTimeLabel(timeStr) {
-  const [h, m] = String(timeStr).split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return timeStr;
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
-}
-
-
 
 // 2026-2027 HCPSS calendar highlights for annotating "Normal Operations" days
 // (and any other status date) with the scheduled event.
@@ -112,83 +87,11 @@ const SCHOOL_CALENDAR_EVENTS = {
   '2027-07-05': 'Schools and offices closed – Independence Day (observed)'
 };
 
-async function fetchHtml(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Fetch failed ' + r.status);
-  return await r.text();
-}
-
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { 'Content-Type': 'application/json' }
   });
-}
-
-function formatCheckedAt(date) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZoneName: 'short'
-  }).format(date);
-}
-
-function formatStatusDate(date) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  }).format(date);
-}
-
-function formatYmdNY(date) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-  const get = t => (parts.find(p => p.type === t) || {}).value || '';
-  return `${get('year')}-${get('month')}-${get('day')}`;
-}
-
-const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-
-// Resolves the status date from the site's date text (e.g. "July 14, 2026") as a plain
-// calendar day, without any timezone conversion that could shift it to the previous day.
-function statusDateInfo(dateText, fallbackDate) {
-  const cleaned = dateText
-    ? String(dateText).replace(/,\s*\d{1,2}:\d{2}\s*[AP]M\s*[A-Z]{2,4}$/i, '').trim()
-    : '';
-
-  if (cleaned) {
-    const m = cleaned.match(/([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})/);
-    if (m) {
-      const monthIdx = MONTH_NAMES.indexOf(m[1].toLowerCase().slice(0, 3));
-      if (monthIdx >= 0) {
-        const day = parseInt(m[2], 10);
-        const year = parseInt(m[3], 10);
-        const utcDate = new Date(Date.UTC(year, monthIdx, day));
-        return {
-          display: new Intl.DateTimeFormat('en-US', {
-            timeZone: 'UTC',
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          }).format(utcDate),
-          ymd: `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-        };
-      }
-    }
-    return { display: cleaned, ymd: formatYmdNY(fallbackDate) };
-  }
-
-  return { display: formatStatusDate(fallbackDate), ymd: formatYmdNY(fallbackDate) };
 }
 
 function footerWithCheckedAt(label, checkedAt) {
@@ -256,89 +159,6 @@ async function verifyDiscordRequest(rawBody, signatureHex, timestamp, publicKeyH
   }
 }
 
-function extractCards(html) {
-  const cards = [];
-  const stripTags = s => (s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-
-  // Try parsing the new status.hcpss.org format first
-  const statusBlockMatch = html.match(/<section[^>]+id=["']status-block["'][^>]*>(.*?)<\/section>/is);
-  if (statusBlockMatch) {
-    const blockContent = statusBlockMatch[1];
-    const divParts = blockContent.split(/<div[^>]*>/is);
-    for (const part of divParts) {
-      if (part.includes('status-date')) {
-        const dateMatch = part.match(/<span[^>]*class=["']status-date["'][^>]*>(.*?)<\/span>/is);
-        
-        const hMatch = part.match(/<(h1|h2|h3)[^>]*>(.*?)<\/\1>/is);
-        let titleText = '';
-        if (hMatch) {
-          const hContent = hMatch[2];
-          const spans = hContent.match(/<span[^>]*>(.*?)<\/span>/gis);
-          if (spans) {
-            for (const span of spans) {
-              if (!span.includes('status-date')) {
-                titleText = stripTags(span);
-                break;
-              }
-            }
-          }
-          if (!titleText) {
-            const dateVal = dateMatch ? stripTags(dateMatch[1]) : '';
-            titleText = stripTags(hContent).replace(dateVal, '').trim();
-          }
-        }
-        
-        const dateText = dateMatch ? stripTags(dateMatch[1]) : '';
-        
-        const pMatches = part.match(/<p[^>]*>(.*?)<\/p>/gis) || [];
-        const bodyParts = [];
-        for (const p of pMatches) {
-          const pClean = stripTags(p);
-          if (pClean.toLowerCase().includes('view hcpss calendar')) {
-            continue;
-          }
-          bodyParts.push(pClean);
-        }
-        const bodyText = bodyParts.join('\n\n');
-        
-        if (titleText || bodyText) {
-          cards.push({ date: dateText, title: titleText, body: bodyText });
-        }
-      }
-    }
-  }
-
-  // Fallback to legacy views-row format
-  if (cards.length === 0) {
-    const parts = html.split(/<div[^>]+class=["']views-row["'][^>]*>/i).slice(1);
-    for (const p of parts) {
-      const dateMatch = p.match(/<div[^>]*class=["']views-field-changed["'][^>]*>(.*?)<\/div>/is);
-      const titleMatch = p.match(/<(?:h1|h2|h3)[^>]*>(.*?)<\/(?:h1|h2|h3)>/is);
-      const bodyMatch = p.match(/<div[^>]*class=["']alert-content["'][^>]*>(.*?)<\/div>/is) || p.match(/<p[^>]*>(.*?)<\/p>/is);
-      const dateText = stripTags(dateMatch && dateMatch[1]);
-      const titleText = stripTags(titleMatch && titleMatch[1]);
-      const bodyText = stripTags(bodyMatch && bodyMatch[1]);
-      if (titleText || bodyText) {
-        cards.push({ date: dateText, title: titleText, body: bodyText });
-      }
-    }
-  }
-
-  return cards;
-}
-
-function assembleDescription(cards) {
-  if (!cards.length) {
-    return '## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar.';
-  }
-  return cards.map(c => {
-    let md = '';
-    if (c.title) md += `## **${c.title}**\n\n`;
-    if (c.body) md += `${c.body}\n`;
-    return md;
-  }).join('\n___\n\n');
-}
-
 function splitEmbeds(title, description, url, color, footer, checkedAt = new Date(), thumbnailUrl = '') {
   const chunks = [];
   let rem = (description || '').trim();
@@ -375,7 +195,13 @@ function splitEmbeds(title, description, url, color, footer, checkedAt = new Dat
 }
 
 function buildCheckAgainComponents() {
-  return [{ type: 1, components: [{ type: 2, style: 1, label: 'Check again', custom_id: 'check_again' }] }];
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 1, label: 'Check again', custom_id: 'check_again' },
+      { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } }
+    ]
+  }];
 }
 
 function getDefaultStatusColor(statusKey) {
@@ -412,52 +238,7 @@ function barFromFilled(filled, segments = BAR_SEGMENTS) {
   return '`' + '■'.repeat(f) + ' '.repeat(segments - f) + '`';
 }
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-function determineStatusKey(cards) {
-  if (!cards || cards.length === 0) {
-    return 'normal_operations';
-  }
-  
-  const isNormal = cards.every(c => !c.title || /normal operations/i.test(c.title));
-  if (isNormal) {
-    return 'normal_operations';
-  }
-
-  const alertCard = cards.find(c => c.title && !/normal operations/i.test(c.title));
-  if (!alertCard) return 'normal_operations';
-
-  const title = alertCard.title.toLowerCase();
-  const body = (alertCard.body || '').toLowerCase();
-
-  if (title.includes('schools and offices closed') || body.includes('schools and offices closed')) {
-    return 'schools_and_offices_closed';
-  }
-  if (title.includes('schools closed') || body.includes('schools closed')) {
-    return 'schools_closed';
-  }
-  if (title.includes('2 hours late') || title.includes('two hours late') || body.includes('2 hours late') || body.includes('two hours late')) {
-    return 'schools_open_2_hours_late';
-  }
-  if (title.includes('3 hours early') || title.includes('three hours early') || body.includes('3 hours early') || body.includes('three hours early')) {
-    return 'schools_close_3_hours_early';
-  }
-
-  if (title.includes('closed') || body.includes('closed')) {
-    return 'schools_closed';
-  }
-  if (title.includes('late') || body.includes('late') || title.includes('delay') || body.includes('delay')) {
-    return 'schools_open_2_hours_late';
-  }
-  if (title.includes('early') || body.includes('early')) {
-    return 'schools_close_3_hours_early';
-  }
-
-  return 'unknown_alert';
-}
-
-async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null) {
+async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null, staleInfo = null) {
   const checkedAt = new Date();
   if (!cards) {
     const html = await fetchHtml(HCPSS_URL);
@@ -468,7 +249,11 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
 
   // The embed always mirrors the website exactly; calendar events are only
   // shown via /calendar and the control panel, never in the status embed.
-  const desc = assembleDescription(cards);
+  let desc = assembleDescription(cards);
+
+  if (staleInfo && staleInfo.staleAt) {
+    desc = `⚠️ *The live status page is unreachable — showing the last known status from <t:${Math.floor(staleInfo.staleAt / 1000)}:R>.*\n\n${desc}`;
+  }
 
   const statusKey = determineStatusKey(cards);
   let color = getDefaultStatusColor(statusKey);
@@ -478,7 +263,21 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
   const customFooter = (config && config.alert_embed_footer) || footer;
   const thumbnailUrl = getStatusThumbnail(statusKey);
 
-  return splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
+  const embeds = splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
+
+  // Add active NWS weather alerts for Howard County as context on the first embed.
+  if (!config || config.toggle_weather !== false) {
+    const alerts = await getActiveWeatherAlerts(env);
+    const alertLines = formatWeatherAlertLines(alerts);
+    if (alertLines && embeds[0]) {
+      embeds[0].fields = [
+        ...(embeds[0].fields || []),
+        { name: '⛅ Active Weather Alerts — Howard County', value: alertLines }
+      ];
+    }
+  }
+
+  return embeds;
 }
 
 function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config = null) {
@@ -521,7 +320,7 @@ function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config =
   return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 }
 
-async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null } = {}) {
+async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null, stale = false, staleAt = 0 } = {}) {
   const storedConfig = await getConfig(env, guildId);
   const config = getEffectiveConfig(storedConfig);
 
@@ -535,7 +334,17 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
   }
 
-  if (error) {
+  // No pre-fetched cards from the caller: fetch live, falling back to the
+  // cached last-good scrape when the status page is unreachable.
+  if (!cards && !error) {
+    const fetched = await getStatusCards(env);
+    cards = fetched.cards;
+    error = fetched.error;
+    stale = fetched.stale;
+    staleAt = fetched.staleAt;
+  }
+
+  if (!cards && error) {
     const payload = {
       content: '',
       embeds: buildStatusErrorEmbeds(error, footer, config)
@@ -545,14 +354,13 @@ async function buildStatusPayload(env, { includeComponents = false, footer = 'HC
   }
 
   try {
-    const finalCards = cards || extractCards(await fetchHtml(HCPSS_URL));
-    const statusKey = determineStatusKey(finalCards);
+    const statusKey = determineStatusKey(cards);
     const payload = {
       content: '',
-      embeds: await buildStatusEmbeds(env, footer, finalCards, config)
+      embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
-    return { payload, isError: false, statusKey };
+    return { payload, isError: false, stale, statusKey };
   } catch (err) {
     const payload = {
       content: '',
@@ -624,6 +432,9 @@ async function handlePanelKvDebug(body, env) {
     `status_stats`,
     `status_history`,
     `last_known_status`,
+    `last_good_scrape`,
+    `weather_alerts_cache`,
+    `dm_subscribers:${guildId}`,
     `scraper_failures_count`,
     `scraper_failure_alerted`,
     `log_panel_message_id:${guildId}`,
@@ -753,49 +564,6 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   }
 }
 
-async function trackStatusHistory(env, currentStatus, primaryDate, statusKey = '') {
-  const lastKnown = await env.STATUS_KV.get('last_known_status');
-  if (lastKnown === currentStatus) {
-    return; // No change
-  }
-
-  await env.STATUS_KV.put('last_known_status', currentStatus);
-
-  let history = [];
-  const rawHistory = await env.STATUS_KV.get('status_history');
-  if (rawHistory) {
-    try {
-      history = JSON.parse(rawHistory);
-    } catch (e) {
-      history = [];
-    }
-  }
-
-  history.unshift({
-    timestamp: Date.now(),
-    status: currentStatus,
-    date: primaryDate
-  });
-
-  history = history.slice(0, 10); // Keep last 10 status changes
-  await env.STATUS_KV.put('status_history', JSON.stringify(history));
-
-  // Increment operating status count in KV
-  if (statusKey && statusKey !== 'normal_operations') {
-    try {
-      let stats = {};
-      const rawStats = await env.STATUS_KV.get('status_stats');
-      if (rawStats) {
-        stats = JSON.parse(rawStats) || {};
-      }
-      stats[statusKey] = (stats[statusKey] || 0) + 1;
-      await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
-    } catch (e) {
-      console.error('Failed to increment operating status stats:', e);
-    }
-  }
-}
-
 function runCalendarCommand() {
   const checkedAt = new Date();
   const events = [];
@@ -830,27 +598,19 @@ function runCalendarCommand() {
 
 async function runHistoryCommand(env) {
   const checkedAt = new Date();
-  const rawHistory = await env.STATUS_KV.get('status_history');
-  let history = [];
-  if (rawHistory) {
-    try {
-      history = JSON.parse(rawHistory);
-    } catch (e) {
-      history = [];
-    }
-  }
+  const history = await getStatusHistory(env);
 
   const embed = {
     title: '📜 HCPSS Recent Status History',
     color: 3066993,
     timestamp: checkedAt.toISOString(),
-    footer: { text: 'HCPSS Status Monitor' }
+    footer: { text: `HCPSS Status Monitor · ${history.length} change(s) recorded` }
   };
 
   if (history.length === 0) {
     embed.description = 'No status history recorded yet. History starts recording on changes.';
   } else {
-    embed.description = history.map((h, index) => {
+    embed.description = history.slice(0, 10).map((h, index) => {
       const timeStr = formatCheckedAt(new Date(h.timestamp));
       return `**#${index + 1} - ${h.date || 'Unknown Date'}**\n*Detected at: ${timeStr}*\n${h.status}`;
     }).join('\n\n___\n\n');
@@ -1024,15 +784,14 @@ async function doCheckAndPost(env, options = {}) {
     return { ok: true, skipped: true, message: "No guilds scheduled for this time." };
   }
 
-  // 1. Fetch HTML and extract cards once
-  let cards = null;
-  let error = null;
-  try {
-    const html = await fetchHtml(HCPSS_URL);
-    cards = extractCards(html);
-  } catch (err) {
-    error = err;
-  }
+  // 1. Fetch HTML and extract cards once (falls back to the cached last-good
+  // scrape when the live page is unreachable).
+  const fetched = await getStatusCards(env);
+  const cards = fetched.cards;
+  const error = fetched.cards ? null : fetched.error;
+  const isStale = fetched.stale;
+  const staleAt = fetched.staleAt;
+  const scrapeFailed = !!fetched.error;
   const latency = Date.now() - start;
 
   // Increment check counts in KV
@@ -1043,7 +802,7 @@ async function doCheckAndPost(env, options = {}) {
       stats = JSON.parse(rawStats) || {};
     }
     stats.scrapes_total = (stats.scrapes_total || 0) + 1;
-    if (error) {
+    if (scrapeFailed) {
       stats.scrapes_failed = (stats.scrapes_failed || 0) + 1;
     }
     await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
@@ -1055,16 +814,21 @@ async function doCheckAndPost(env, options = {}) {
   const liveStatusResult = await buildStatusPayload(env, {
     includeComponents: true,
     cards,
-    error
+    error,
+    stale: isStale,
+    staleAt
   });
 
   const firstEmbedGlobal = liveStatusResult.payload.embeds && liveStatusResult.payload.embeds[0];
   const liveStatusTextGlobal = firstEmbedGlobal ? (firstEmbedGlobal.description || '') : '';
 
-  // Track global status history on change
-  if (!liveStatusResult.isOverride && !liveStatusResult.isError) {
+  // Track global status history on change. A stale fallback repeats the cached
+  // status, so it can never register as a change (or trigger DM notifications).
+  let statusChanged = false;
+  if (!liveStatusResult.isOverride && !liveStatusResult.isError && !isStale) {
     const lastKnownStatus = await env.STATUS_KV.get('last_known_status');
     if (lastKnownStatus !== liveStatusTextGlobal) {
+      statusChanged = lastKnownStatus !== null;
       if (firstEmbedGlobal) {
         const statusTitle = firstEmbedGlobal.title || '';
         await trackStatusHistory(env, liveStatusTextGlobal, statusTitle, liveStatusResult.statusKey);
@@ -1099,7 +863,9 @@ async function doCheckAndPost(env, options = {}) {
       includeComponents: true,
       guildId,
       cards,
-      error
+      error,
+      stale: isStale,
+      staleAt
     });
 
     const statusKey = builtStatus.statusKey || 'normal_operations';
@@ -1166,10 +932,19 @@ async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `✅ HCPSS status check posted (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
+        `${isStale ? '⚠️' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : ''} (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
         { latency },
         guildId
       );
+
+      // DM subscribers only when the operating status actually changed.
+      if (statusChanged && !builtStatus.isOverride) {
+        const dmCount = await notifySubscribers(env, guildId, builtStatus.payload.embeds);
+        if (dmCount > 0) {
+          await postLog(env, logChannelId, `🔔 Status change DM sent to ${dmCount} subscriber(s).`, {}, guildId);
+        }
+      }
+
       results.push({ guildId, ok: true, id: postedMessageId });
     } else {
       // Scheduled check hit a scraper error: don't post the error embed on a schedule.
@@ -1184,11 +959,12 @@ async function doCheckAndPost(env, options = {}) {
     }
   }
 
-  // Handle global scraper success/failure tracking
-  if (liveStatusResult.isError) {
+  // Handle global scraper success/failure tracking. A stale fallback still
+  // counts as a scrape failure so consecutive-failure alerts keep working.
+  if (scrapeFailed) {
     const defaultGuildConfig = getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID));
     const firstLogChannelId = targetGuildIds.length > 0 ? (getEffectiveConfig(await getConfig(env, targetGuildIds[0])).log_channel_id) : defaultGuildConfig.log_channel_id;
-    await handleScraperFailure(env, firstLogChannelId, defaultGuildConfig, liveStatusResult.error);
+    await handleScraperFailure(env, firstLogChannelId, defaultGuildConfig, fetched.error);
   } else {
     await handleScraperSuccess(env);
   }
@@ -1243,6 +1019,7 @@ function getEffectiveConfig(stored) {
   }
   if (typeof next.toggle_pings !== 'boolean') next.toggle_pings = true;
   if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
+  if (typeof next.toggle_weather !== 'boolean') next.toggle_weather = true;
   return next;
 }
 
@@ -1707,6 +1484,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
   if (page === 'config_toggles') {
     const pings = config.toggle_pings !== false;
     const errorAlerts = config.toggle_error_alerts !== false;
+    const weather = config.toggle_weather !== false;
 
     const embed = {
       title: '⚙️ Settings - Toggles & Options',
@@ -1714,7 +1492,8 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
       description: `### 🚨 Feature Toggles\n` +
                    `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
-                   `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n\n` +
+                   `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
+                   `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
@@ -1734,6 +1513,13 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
         description: 'Notify staff if the scraper fails 3+ consecutive times',
         emoji: { name: '⚠️' },
         default: errorAlerts
+      },
+      {
+        label: 'Weather Alerts',
+        value: 'toggle_weather',
+        description: 'Show active NWS weather alerts on status embeds',
+        emoji: { name: '⛅' },
+        default: weather
       }
     ];
 
@@ -1977,13 +1763,15 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
                    `• **\`/override set\`**: Enable a status override for 1-30 days.\n` +
                    `• **\`/override clear\`**: Disable the active override immediately.\n` +
                    `• **\`/calendar\`**: Show scheduled closures or events in the next 7 days.\n` +
-                   `• **\`/history\`**: Show the last 5 operating status changes.\n` +
+                   `• **\`/history\`**: Show the last 10 operating status changes.\n` +
                    `• **\`/events list\`**: List all dynamic calendar events.\n` +
                    `• **\`/events add\`**: Add a dynamic calendar event (YYYY-MM-DD).\n` +
                    `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
                    `• **\`/stats\`**: Show status check and operating status statistics.\n` +
                    `• **\`/setup\`**: Initial one-time setup for the status monitor.\n` +
                    `• **\`/announce\`**: Post a custom embed announcement in the current channel.\n\n` +
+                   `### 🔔 DM Notifications\n` +
+                   `Anyone can click the **Notify Me** button on a status message to get a DM when the operating status changes. Click again to unsubscribe.\n\n` +
                    `*Use these commands in any channel where the bot has permission to read and send messages.*`,
       timestamp: new Date().toISOString()
     };
@@ -2335,6 +2123,7 @@ async function applyConfigUpdate(body, env) {
     const selected = Array.isArray(values) ? values : [];
     next.toggle_pings = selected.includes('toggle_pings');
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
+    next.toggle_weather = selected.includes('toggle_weather');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }
@@ -2487,13 +2276,29 @@ async function runStatsCommand(env) {
     return `• **${label}**: ${count}`;
   }).join('\n');
 
+  const history = await getStatusHistory(env);
+  const yearStats = computeIncidentStats(history, checkedAt);
+  const yearCountsDisplay = Object.entries(STATUS_LABELS).map(([key, label]) => {
+    return `• **${label}**: ${yearStats.year[key] || 0}`;
+  }).join('\n');
+  const lastIncidentStr = yearStats.lastIncident
+    ? `<t:${Math.floor(yearStats.lastIncident.timestamp / 1000)}:D> — *${yearStats.lastIncident.date || 'Unknown date'}*`
+    : '*None recorded*';
+
   const embed = {
     title: '📊 HCPSS Status Monitor - Statistics',
     color: 0x34495E,
     description: `**Scraper Diagnostics:**\n` +
                  `• Total Checks: \`${scrapesTotal}\`\n` +
                  `• Scraper Success Rate: \`${uptimePct}%\` (\`${scrapesSuccess}/${scrapesTotal}\` successful)\n\n` +
-                 `**Operating Status Changes (School Year):**\n` +
+                 `**This School Year:**\n` +
+                 `• ❄️ **Closure Days**: \`${yearStats.snowDays}\`\n` +
+                 `• 🕑 **2-Hour Delays**: \`${yearStats.delays}\`\n` +
+                 `• 🏃 **Early Closings**: \`${yearStats.earlyCloses}\`\n` +
+                 `• 📌 **Last Incident**: ${lastIncidentStr}\n\n` +
+                 `**Status Changes (This School Year):**\n` +
+                 `${yearCountsDisplay}\n\n` +
+                 `**Status Changes (All-Time):**\n` +
                  `${countsDisplay}`,
     timestamp: checkedAt.toISOString(),
     footer: { text: 'HCPSS Status Monitor' }
@@ -3521,6 +3326,24 @@ export default {
         })());
 
         return deferredInteractionResponse();
+      }
+
+      if (body.type === 3 && body.data && body.data.custom_id === 'dm_subscribe') {
+        // Open to everyone — subscribing only affects the user's own DMs.
+        const userId = (body.member && body.member.user && body.member.user.id) || (body.user && body.user.id);
+        if (!userId) {
+          return interactionResponse({ content: '❌ Could not determine your user ID.', flags: EPHEMERAL_FLAG });
+        }
+        const result = await toggleSubscriber(env, guildId, userId);
+        if (result.full) {
+          return interactionResponse({ content: '❌ The subscriber list for this server is full.', flags: EPHEMERAL_FLAG });
+        }
+        return interactionResponse({
+          content: result.subscribed
+            ? "🔔 **Subscribed!** I'll DM you whenever the HCPSS operating status changes (not on every scheduled repost). Make sure DMs from this server's members are enabled. Click the button again to unsubscribe."
+            : '🔕 **Unsubscribed.** You will no longer get DMs when the status changes.',
+          flags: EPHEMERAL_FLAG
+        });
       }
 
       if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {

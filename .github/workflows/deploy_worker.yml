@@ -15,12 +15,17 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install dependencies
         run: |
           sudo npm install -g wrangler@3
           sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run worker tests
+        run: |
+          cd hcpss-worker
+          node --test
 
       - name: Run deploy script
         env:
