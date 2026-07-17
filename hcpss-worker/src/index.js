@@ -6,7 +6,9 @@ import {
   formatCheckedAt,
   formatStatusDate,
   formatYmdNY,
-  delay
+  delay,
+  isInStormWindow,
+  stormTickSlot
 } from './timeutil.js';
 import {
   HCPSS_URL,
@@ -17,7 +19,7 @@ import {
   determineStatusKey,
   statusDateInfo
 } from './scraper.js';
-import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
+import { getActiveWeatherAlerts, formatWeatherAlertLines, hasStormAlert, alertsLikelyTomorrowMorning } from './weather.js';
 import { trackStatusHistory, getStatusHistory, computeIncidentStats } from './history.js';
 import { toggleSubscriber, notifySubscribers } from './subscriptions.js';
 
@@ -266,13 +268,46 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
   const embeds = splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 
   // Add active NWS weather alerts for Howard County as context on the first embed.
-  if (!config || config.toggle_weather !== false) {
-    const alerts = await getActiveWeatherAlerts(env);
+  const weatherEnabled = !config || config.toggle_weather !== false;
+  const alerts = weatherEnabled ? await getActiveWeatherAlerts(env) : [];
+  if (weatherEnabled && embeds[0]) {
     const alertLines = formatWeatherAlertLines(alerts);
-    if (alertLines && embeds[0]) {
+    if (alertLines) {
       embeds[0].fields = [
         ...(embeds[0].fields || []),
         { name: '⛅ Active Weather Alerts — Howard County', value: alertLines }
+      ];
+    }
+  }
+
+  // Evening posts (5 PM ET onward) get a Tomorrow Outlook: the next day's
+  // calendar event plus any storm alerts likely to still be active by morning.
+  const etHour = Number(getEasternTimeStr(checkedAt).split(':')[0]);
+  if (etHour >= 17 && embeds[0]) {
+    const outlookLines = [];
+
+    const tomorrow = new Date(checkedAt.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowYmd = formatYmdNY(tomorrow);
+    let calEvent = null;
+    if (env && env.STATUS_KV) {
+      try { calEvent = await env.STATUS_KV.get(`calendar_event:${tomorrowYmd}`); } catch {}
+    }
+    if (!calEvent) calEvent = SCHOOL_CALENDAR_EVENTS[tomorrowYmd] || null;
+    if (calEvent) {
+      outlookLines.push(`📅 **${formatStatusDate(tomorrow)}**: ${calEvent}`);
+    }
+
+    if (weatherEnabled) {
+      for (const a of alertsLikelyTomorrowMorning(alerts, checkedAt.getTime()).slice(0, 2)) {
+        const until = a.endsMs ? ` (until <t:${Math.floor(a.endsMs / 1000)}:f>)` : '';
+        outlookLines.push(`🌨️ **${a.event}** may affect tomorrow morning${until}`);
+      }
+    }
+
+    if (outlookLines.length) {
+      embeds[0].fields = [
+        ...(embeds[0].fields || []),
+        { name: '🌙 Tomorrow Outlook', value: outlookLines.join('\n') }
       ];
     }
   }
@@ -697,6 +732,16 @@ async function handleScraperFailure(env, logChannelId, config, error) {
   }
 }
 
+async function handleScraperSuccessOrFailure(env, scrapeFailed, error, targetGuildIds) {
+  if (scrapeFailed) {
+    const defaultGuildConfig = getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID));
+    const firstLogChannelId = targetGuildIds.length > 0 ? (getEffectiveConfig(await getConfig(env, targetGuildIds[0])).log_channel_id) : defaultGuildConfig.log_channel_id;
+    await handleScraperFailure(env, firstLogChannelId, defaultGuildConfig, error);
+  } else {
+    await handleScraperSuccess(env);
+  }
+}
+
 async function handleScraperSuccess(env) {
   const failures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
   if (failures > 0) {
@@ -754,6 +799,7 @@ async function doCheckAndPost(env, options = {}) {
   }
 
   let activeGuildIds = [...targetGuildIds];
+  let isStormCheck = false;
 
   if (isScheduled) {
     const now = new Date();
@@ -778,6 +824,27 @@ async function doCheckAndPost(env, options = {}) {
       matchedGuilds.push(guildId);
     }
     activeGuildIds = matchedGuilds;
+
+    // Storm mode: when no regular check matched, run extra checks every 15
+    // minutes during the 4:30-7:30 AM ET decision window while a winter storm
+    // alert is active. Storm checks only post (and ping) if the status changed.
+    if (activeGuildIds.length === 0) {
+      const stormSlot = stormTickSlot(currentEtStr);
+      if (!stormSlot) {
+        return { ok: true, skipped: true, message: 'No guilds scheduled for this time.' };
+      }
+      const alerts = await getActiveWeatherAlerts(env);
+      if (!hasStormAlert(alerts)) {
+        return { ok: true, skipped: true, message: 'Storm window, but no storm alert active.' };
+      }
+      const slotVal = `${todayYmd} ${stormSlot}`;
+      if (await env.STATUS_KV.get('last_storm_slot') === slotVal) {
+        return { ok: true, skipped: true, message: 'Storm slot already checked.' };
+      }
+      await env.STATUS_KV.put('last_storm_slot', slotVal);
+      isStormCheck = true;
+      activeGuildIds = [...targetGuildIds];
+    }
   }
 
   if (activeGuildIds.length === 0) {
@@ -837,11 +904,23 @@ async function doCheckAndPost(env, options = {}) {
     }
   }
 
+  // Storm checks are silent unless the status actually changed — no reposts,
+  // no pings, just fast detection of a new closing/delay announcement.
+  if (isStormCheck && !statusChanged) {
+    await handleScraperSuccessOrFailure(env, scrapeFailed, fetched.error, targetGuildIds);
+    return { ok: true, skipped: true, message: 'Storm check: status unchanged.' };
+  }
+
   const results = [];
+  const sourceLabel = isStormCheck ? 'storm-mode' : (options.source || 'unknown');
 
   for (const guildId of activeGuildIds) {
     const stored = await getConfig(env, guildId);
     const config = getEffectiveConfig(stored);
+    if (isStormCheck && config.toggle_storm_mode === false) {
+      results.push({ guildId, ok: true, skipped: true, reason: 'Storm mode disabled' });
+      continue;
+    }
     const channelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
     const logChannelId = config.log_channel_id;
     if (!channelId) {
@@ -904,7 +983,7 @@ async function doCheckAndPost(env, options = {}) {
         await postLog(
           env,
           logChannelId,
-          `❌ HCPSS status check failed (source: ${options.source || 'unknown'}): ${postError}`,
+          `❌ HCPSS status check failed (source: ${sourceLabel}): ${postError}`,
           { latency },
           guildId
         );
@@ -932,7 +1011,7 @@ async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `${isStale ? '⚠️' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : ''} (source: ${options.source || 'unknown'}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
+        `${isStale ? '⚠️' : isStormCheck ? '🌨️' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : isStormCheck ? ' (storm mode detected a status change)' : ''} (source: ${sourceLabel}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
         { latency },
         guildId
       );
@@ -951,7 +1030,7 @@ async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `⚠️ HCPSS status check errored (source: ${options.source || 'unknown'}) — error status not posted.`,
+        `⚠️ HCPSS status check errored (source: ${sourceLabel}) — error status not posted.`,
         { latency },
         guildId
       );
@@ -961,13 +1040,7 @@ async function doCheckAndPost(env, options = {}) {
 
   // Handle global scraper success/failure tracking. A stale fallback still
   // counts as a scrape failure so consecutive-failure alerts keep working.
-  if (scrapeFailed) {
-    const defaultGuildConfig = getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID));
-    const firstLogChannelId = targetGuildIds.length > 0 ? (getEffectiveConfig(await getConfig(env, targetGuildIds[0])).log_channel_id) : defaultGuildConfig.log_channel_id;
-    await handleScraperFailure(env, firstLogChannelId, defaultGuildConfig, fetched.error);
-  } else {
-    await handleScraperSuccess(env);
-  }
+  await handleScraperSuccessOrFailure(env, scrapeFailed, fetched.error, targetGuildIds);
 
   const successCount = results.filter(r => r.ok).length;
   const failureCount = results.filter(r => !r.ok).length;
@@ -1020,6 +1093,7 @@ function getEffectiveConfig(stored) {
   if (typeof next.toggle_pings !== 'boolean') next.toggle_pings = true;
   if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
   if (typeof next.toggle_weather !== 'boolean') next.toggle_weather = true;
+  if (typeof next.toggle_storm_mode !== 'boolean') next.toggle_storm_mode = true;
   return next;
 }
 
@@ -1485,6 +1559,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
     const pings = config.toggle_pings !== false;
     const errorAlerts = config.toggle_error_alerts !== false;
     const weather = config.toggle_weather !== false;
+    const stormMode = config.toggle_storm_mode !== false;
 
     const embed = {
       title: '⚙️ Settings - Toggles & Options',
@@ -1493,7 +1568,8 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
                    `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
-                   `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n\n` +
+                   `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n` +
+                   `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
@@ -1520,6 +1596,13 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
         description: 'Show active NWS weather alerts on status embeds',
         emoji: { name: '⛅' },
         default: weather
+      },
+      {
+        label: 'Storm Mode',
+        value: 'toggle_storm_mode',
+        description: 'Extra early-morning checks during storm alerts, post on change only',
+        emoji: { name: '🌨️' },
+        default: stormMode
       }
     ];
 
@@ -1533,7 +1616,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
           placeholder: 'Select which features are ON...',
           options: toggleOptions,
           min_values: 0,
-          max_values: 3
+          max_values: 4
         }]
       }
     ];
@@ -2002,6 +2085,22 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
     ? `[Jump](https://discord.com/channels/${guildId}/${lastChannelId}/${lastMessageId}) in <#${lastChannelId}>`
     : '*(no message posted yet)*';
 
+  // Storm-mode indicator from the cached weather alerts (no NWS call on panel render)
+  let stormAlertActive = false;
+  try {
+    const cachedWeather = await env.STATUS_KV.get('weather_alerts_cache');
+    if (cachedWeather) stormAlertActive = hasStormAlert(JSON.parse(cachedWeather));
+  } catch {}
+  const stormEnabled = config.toggle_storm_mode !== false;
+  const inStormWindow = isInStormWindow(getEasternTimeStr(new Date()));
+  const stormModeStr = !stormEnabled
+    ? '🔴 Disabled (Settings > Feature Toggles)'
+    : stormAlertActive
+      ? (inStormWindow
+        ? '🌨️ **ACTIVE** — checking every 15 min until 7:30 AM ET'
+        : '🟡 Armed — storm alert active, extra checks 4:30–7:30 AM ET')
+      : '⚪ Standby (no storm alerts)';
+
   const embed = {
     title: '🛠️ HCPSS Status Monitor - Control Panel',
     color: 0x9B59B6,
@@ -2014,6 +2113,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
       `• **Scraper Health**: ${scraperHealthStr}\n` +
       `• **Scraper Success Rate**: \`${successRate}%\` (\`${scrapesTotal - scrapesFailed}/${scrapesTotal}\` checks)\n` +
       `• **Active Override**: ${overrideStr}\n` +
+      `• **Storm Mode**: ${stormModeStr}\n` +
       `• **Last Posted Message**: ${lastPostStr}\n` +
       (panelMsgId ? `• **Panel Message ID**: \`${panelMsgId}\`\n` : '') +
       `\n*Use the nav dropdown to switch pages. Use the Quick Actions dropdown for diagnostics.*`,
@@ -2124,6 +2224,7 @@ async function applyConfigUpdate(body, env) {
     next.toggle_pings = selected.includes('toggle_pings');
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
     next.toggle_weather = selected.includes('toggle_weather');
+    next.toggle_storm_mode = selected.includes('toggle_storm_mode');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }

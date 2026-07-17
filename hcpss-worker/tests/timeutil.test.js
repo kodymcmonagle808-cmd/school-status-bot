@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY } from '../src/timeutil.js';
+import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot } from '../src/timeutil.js';
 
 test('matchesScheduleTime fires on time and up to 5 minutes late', () => {
   assert.equal(matchesScheduleTime('5:20', '5:20'), true);
@@ -25,6 +25,35 @@ test('clockEmojiForTime returns a clock face', () => {
   assert.equal(clockEmojiForTime('1:00'), '🕐');
   assert.equal(clockEmojiForTime('13:00'), '🕐');
   assert.equal(clockEmojiForTime('12:00'), '🕛');
+});
+
+test('isInStormWindow covers 4:30-7:30 AM ET inclusive', () => {
+  assert.equal(isInStormWindow('4:29'), false);
+  assert.equal(isInStormWindow('4:30'), true);
+  assert.equal(isInStormWindow('6:00'), true);
+  assert.equal(isInStormWindow('7:30'), true);
+  assert.equal(isInStormWindow('7:31'), false);
+  assert.equal(isInStormWindow('20:00'), false);
+});
+
+test('stormTickSlot fires on quarter hours inside the window', () => {
+  assert.equal(stormTickSlot('4:30'), '4:30');
+  assert.equal(stormTickSlot('5:15'), '5:15');
+  assert.equal(stormTickSlot('7:30'), '7:30');
+  assert.equal(stormTickSlot('5:20'), null); // not a tick minute
+});
+
+test('stormTickSlot allows up to 2 minutes of cron delay', () => {
+  assert.equal(stormTickSlot('5:16'), '5:15');
+  assert.equal(stormTickSlot('5:17'), '5:15');
+  assert.equal(stormTickSlot('5:18'), null);
+  assert.equal(stormTickSlot('7:32'), '7:30'); // delayed final tick still counts
+});
+
+test('stormTickSlot rejects quarter hours outside the window', () => {
+  assert.equal(stormTickSlot('4:15'), null);
+  assert.equal(stormTickSlot('7:45'), null);
+  assert.equal(stormTickSlot('12:00'), null);
 });
 
 test('formatYmdNY formats an Eastern calendar date', () => {

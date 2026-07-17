@@ -5,7 +5,8 @@ Monitors the [HCPSS status page](https://status.hcpss.org) and posts the current
 Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) — see its [README](hcpss-worker/README.md) for setup, features, and deployment. The Worker:
 
 - Checks the status page on each guild's configured schedule (Eastern time) and posts the status embed, replacing the previous message instead of stacking.
-- Shows active NWS weather alerts for Howard County on status embeds.
+- Shows active NWS weather alerts for Howard County on status embeds, plus a Tomorrow Outlook on evening posts.
+- Storm mode: checks every 15 minutes during the early-morning decision window when a winter storm alert is active, posting only on real status changes.
 - Falls back to the last known status (with a stale banner) if the status page is unreachable.
 - Handles slash commands (`/post-status`, `/override`, `/calendar`, `/history`, `/events`, `/stats`, `/setup`, `/announce`) and the interactive control panel.
 - Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button.

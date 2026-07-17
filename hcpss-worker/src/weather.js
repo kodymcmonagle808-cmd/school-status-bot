@@ -44,6 +44,29 @@ export function formatWeatherAlertLines(alerts) {
   }).join('\n');
 }
 
+// Alerts that justify storm-mode checking: winter-type events, or anything
+// NWS rates Severe/Extreme.
+const STORM_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold|storm/i;
+
+export function isStormAlert(alert) {
+  if (!alert) return false;
+  if (alert.severity === 'Extreme' || alert.severity === 'Severe') return true;
+  return STORM_EVENT_RE.test(alert.event || '');
+}
+
+export function hasStormAlert(alerts) {
+  return (Array.isArray(alerts) ? alerts : []).some(isStormAlert);
+}
+
+// Storm alerts likely still active tomorrow morning: no known end time, or an
+// end time far enough out (default 9h) that it reaches past the next morning's
+// decision window when evaluated during the evening.
+export function alertsLikelyTomorrowMorning(alerts, nowMs, horizonMs = 9 * 60 * 60 * 1000) {
+  return (Array.isArray(alerts) ? alerts : []).filter(a =>
+    isStormAlert(a) && (!a.endsMs || a.endsMs > nowMs + horizonMs)
+  );
+}
+
 // Returns the summarized active alerts, cached in KV for 10 minutes so
 // frequent checks and Check-again clicks don't hammer the NWS API.
 // Any failure returns [] — weather context is never allowed to break a status post.

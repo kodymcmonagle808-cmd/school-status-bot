@@ -78,3 +78,31 @@ export function formatYmdNY(date) {
 export function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// Storm mode: extra checks every 15 minutes during the 4:30-7:30 AM ET window,
+// when HCPSS typically announces weather closings and delays.
+export const STORM_WINDOW_START_MIN = 4 * 60 + 30;
+export const STORM_WINDOW_END_MIN = 7 * 60 + 30;
+export const STORM_INTERVAL_MIN = 15;
+
+export function isInStormWindow(etStr) {
+  const [h, m] = String(etStr).split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return false;
+  const mins = h * 60 + m;
+  return mins >= STORM_WINDOW_START_MIN && mins <= STORM_WINDOW_END_MIN;
+}
+
+// Returns the quarter-hour slot label (e.g. "5:15") when the given ET time is
+// on — or up to 2 minutes after — a storm-mode tick inside the window, else null.
+// The grace period covers delayed cron ticks; the slot label doubles as the
+// dedupe key so a tick never fires twice.
+export function stormTickSlot(etStr) {
+  const [h, m] = String(etStr).split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  const mins = h * 60 + m;
+  const rem = mins % STORM_INTERVAL_MIN;
+  if (rem > 2) return null;
+  const slotMin = mins - rem;
+  if (slotMin < STORM_WINDOW_START_MIN || slotMin > STORM_WINDOW_END_MIN) return null;
+  return `${Math.floor(slotMin / 60)}:${String(slotMin % 60).padStart(2, '0')}`;
+}

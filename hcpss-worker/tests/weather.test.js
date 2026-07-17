@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeWeatherAlerts, formatWeatherAlertLines, getActiveWeatherAlerts } from '../src/weather.js';
+import { summarizeWeatherAlerts, formatWeatherAlertLines, getActiveWeatherAlerts, isStormAlert, hasStormAlert, alertsLikelyTomorrowMorning } from '../src/weather.js';
 
 function feature(props) {
   return { properties: props };
@@ -36,6 +36,35 @@ test('formatWeatherAlertLines renders discord timestamps and caps at 3 lines', (
   assert.equal(rendered.length, 3);
   assert.match(rendered[0], /\*\*A\*\* — until <t:1750000000:f>/);
   assert.equal(rendered[1], '⚠️ **B**');
+});
+
+test('isStormAlert matches winter events and high severity', () => {
+  assert.equal(isStormAlert({ event: 'Winter Storm Warning', severity: 'Moderate' }), true);
+  assert.equal(isStormAlert({ event: 'Blizzard Warning', severity: 'Unknown' }), true);
+  assert.equal(isStormAlert({ event: 'Freezing Rain Advisory', severity: 'Minor' }), true);
+  assert.equal(isStormAlert({ event: 'Tornado Warning', severity: 'Extreme' }), true);
+  assert.equal(isStormAlert({ event: 'Air Quality Alert', severity: 'Minor' }), false);
+  assert.equal(isStormAlert(null), false);
+});
+
+test('hasStormAlert scans a list', () => {
+  assert.equal(hasStormAlert([{ event: 'Air Quality Alert', severity: 'Minor' }]), false);
+  assert.equal(hasStormAlert([{ event: 'Air Quality Alert', severity: 'Minor' }, { event: 'Snow Squall Warning', severity: 'Moderate' }]), true);
+  assert.equal(hasStormAlert([]), false);
+  assert.equal(hasStormAlert(null), false);
+});
+
+test('alertsLikelyTomorrowMorning keeps storm alerts reaching past the horizon', () => {
+  const now = 1_700_000_000_000;
+  const nineHours = 9 * 60 * 60 * 1000;
+  const alerts = [
+    { event: 'Winter Storm Warning', severity: 'Severe', endsMs: now + nineHours + 1 }, // reaches morning
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: now + 60_000 },      // ends tonight
+    { event: 'Ice Storm Warning', severity: 'Severe', endsMs: 0 },                      // unknown end
+    { event: 'Air Quality Alert', severity: 'Minor', endsMs: 0 }                        // not a storm
+  ];
+  const result = alertsLikelyTomorrowMorning(alerts, now);
+  assert.deepEqual(result.map(a => a.event), ['Winter Storm Warning', 'Ice Storm Warning']);
 });
 
 test('getActiveWeatherAlerts returns [] when the NWS API fails', async (t) => {
