@@ -5,6 +5,7 @@ import { MANUAL_TRIGGER_HEADER } from './constants.js';
 import { jsonResponse, verifyDiscordRequest } from './discord.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
+import { maybeSendMorningDigests } from './digest.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -79,6 +80,11 @@ export default {
         await doCheckAndPost(env, { source: 'scheduled' });
       } catch (e) {
         console.error('Scheduled run failed', e);
+      }
+      try {
+        await maybeSendMorningDigests(env);
+      } catch (e) {
+        console.error('Morning digest run failed', e);
       }
     })());
   }

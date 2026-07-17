@@ -6,6 +6,7 @@ import {
   EMBED_SAFE,
   MAX_EMBEDS,
   SCHOOL_CALENDAR_EVENTS,
+  ALL_STATUS_LABELS,
   getDefaultStatusColor,
   getStatusThumbnail
 } from './constants.js';
@@ -57,14 +58,41 @@ export function splitEmbeds(title, description, url, color, footer, checkedAt = 
   });
 }
 
-export function buildCheckAgainComponents() {
-  return [{
+export function buildCheckAgainComponents(config = null) {
+  const rows = [{
     type: 1,
     components: [
       { type: 2, style: 1, label: 'Check again', custom_id: 'check_again' },
       { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } }
     ]
   }];
+
+  // Self-service ping roles: anyone can toggle the notification role for a
+  // status right from the post (only affects their own roles).
+  const pingRoles = (config && config.status_ping_roles) || {};
+  const options = Object.entries(ALL_STATUS_LABELS)
+    .filter(([key]) => pingRoles[key])
+    .map(([key, label]) => ({
+      label: `${label} pings`,
+      value: key,
+      description: `Toggle the ping role for ${label}`,
+      emoji: { name: '🔔' }
+    }));
+  if (options.length) {
+    rows.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'role_toggle_select',
+        placeholder: '🔔 Get pinged — toggle a notification role...',
+        options,
+        min_values: 1,
+        max_values: 1
+      }]
+    });
+  }
+
+  return rows;
 }
 
 function addField(embed, name, value) {
@@ -230,7 +258,7 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
       content: '',
       embeds: buildOverrideEmbeds(activeOverride, footer, config)
     };
-    if (includeComponents) payload.components = buildCheckAgainComponents();
+    if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
   }
 
@@ -249,7 +277,7 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
       content: '',
       embeds: buildStatusErrorEmbeds(error, footer, config)
     };
-    if (includeComponents) payload.components = buildCheckAgainComponents();
+    if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: true, error, statusKey: 'unknown_alert' };
   }
 
@@ -259,14 +287,14 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
       content: '',
       embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null, guildId)
     };
-    if (includeComponents) payload.components = buildCheckAgainComponents();
+    if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: false, stale, statusKey };
   } catch (err) {
     const payload = {
       content: '',
       embeds: buildStatusErrorEmbeds(err, footer, config)
     };
-    if (includeComponents) payload.components = buildCheckAgainComponents();
+    if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: true, error: err, statusKey: 'unknown_alert' };
   }
 }

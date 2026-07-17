@@ -283,7 +283,7 @@ function handleSetupCommand(body, env, guildId, setupDone) {
   return jsonResponse({
     type: 4,
     data: {
-      content: '⚙️ **HCPSS Status Monitor Setup**\n\nWhich channel should the bot post system logs and the control panel to?',
+      content: '⚙️ **HCPSS Status Monitor Setup — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
       components: [
         {
           type: 1,
@@ -300,6 +300,72 @@ function handleSetupCommand(body, env, guildId, setupDone) {
         }
       ],
       flags: EPHEMERAL_FLAG
+    }
+  });
+}
+
+// Steps 2 and 3 of the setup wizard. Selections so far ride along in the
+// custom_id so the flow is stateless: setup_alert:<logId>, then
+// setup_staff:<logId>:<alertId> / setup_skipstaff:<logId>:<alertId>.
+function setupAlertChannelStep(logChannelId) {
+  return jsonResponse({
+    type: 7,
+    data: {
+      content: `⚙️ **HCPSS Status Monitor Setup — Step 2 of 3**\n\n` +
+               `• Log channel: <#${logChannelId}>\n\n` +
+               `Which channel should **status alerts** be posted to? (This is the channel members will see.)`,
+      components: [{
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: `setup_alert:${logChannelId}`,
+          placeholder: 'Select alerts channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      }]
+    }
+  });
+}
+
+function setupStaffRoleStep(logChannelId, alertChannelId) {
+  return jsonResponse({
+    type: 7,
+    data: {
+      content: `⚙️ **HCPSS Status Monitor Setup — Step 3 of 3**\n\n` +
+               `• Log channel: <#${logChannelId}>\n` +
+               `• Alerts channel: <#${alertChannelId}>\n\n` +
+               `Which role should count as **bot staff** (allowed to use commands and the control panel)? ` +
+               `Pick a role, or choose *Skip* below to allow Administrators only.`,
+      components: [
+        {
+          type: 1,
+          components: [{
+            type: 6,
+            custom_id: `setup_staff:${logChannelId}:${alertChannelId}`,
+            placeholder: 'Select staff role',
+            min_values: 1,
+            max_values: 1
+          }]
+        },
+        {
+          type: 1,
+          components: [{
+            type: 3,
+            custom_id: `setup_skipstaff:${logChannelId}:${alertChannelId}`,
+            placeholder: 'Or finish without a staff role...',
+            options: [{
+              label: 'Skip — Administrators only',
+              value: 'skip',
+              description: 'Finish setup without a staff role (can be set later in Settings)',
+              emoji: { name: '⏭️' }
+            }],
+            min_values: 1,
+            max_values: 1
+          }]
+        }
+      ]
     }
   });
 }
@@ -339,7 +405,7 @@ async function handlePanelComponent(body, env, ctx, guildId) {
       return deferredInteractionResponse();
     }
     if (action === 'panel_history') {
-      const payload = await runHistoryCommand(env);
+      const payload = await runHistoryCommand(env, guildId);
       return interactionResponse(payload);
     }
     if (action === 'panel_logs') {
@@ -376,7 +442,7 @@ async function handlePanelComponent(body, env, ctx, guildId) {
   }
 
   if (customId === 'panel_history') {
-    const payload = await runHistoryCommand(env);
+    const payload = await runHistoryCommand(env, guildId);
     return interactionResponse(payload);
   }
 
@@ -822,15 +888,7 @@ function handleTestAlert(body, env, ctx, guildId) {
   return deferredInteractionResponse();
 }
 
-function handleSetupChannelSelect(body, env, ctx, guildId) {
-  const selectedChannelId = body.data.values && body.data.values[0];
-  if (!selectedChannelId) {
-    return interactionResponse({
-      content: '❌ No channel was selected.',
-      flags: EPHEMERAL_FLAG
-    });
-  }
-
+function handleSetupFinalize(body, env, ctx, guildId, selectedChannelId, alertChannelId, staffRoleId) {
   const setupDoneKey = `setup_done:${guildId}`;
 
   ctx.waitUntil((async () => {
@@ -853,6 +911,10 @@ function handleSetupChannelSelect(body, env, ctx, guildId) {
       const stored = await getConfig(env, guildId);
       const config = { ...stored };
       config.log_channel_id = selectedChannelId;
+      if (alertChannelId) config.alert_channel_id = alertChannelId;
+      if (staffRoleId) config.staff_role_id = staffRoleId;
+      // First-setup timestamp: per-server stats and history start here.
+      if (!config.created_at) config.created_at = Date.now();
       if (!config.status_ping_roles) config.status_ping_roles = {};
 
       // Fetch guild roles to check if they already exist in the server
@@ -906,7 +968,9 @@ function handleSetupChannelSelect(body, env, ctx, guildId) {
       const roleList = createdRoles.map(r => `• **${r.name}**: <@&${r.id}>`).join('\n');
       await updateInteractionOriginal(env, body.token, {
         content: `✅ **Setup Complete!**\n\n` +
-                 `• Log channel set to <#${selectedChannelId}>\n` +
+                 `• Log channel: <#${selectedChannelId}>\n` +
+                 (alertChannelId ? `• Alerts channel: <#${alertChannelId}>\n` : '') +
+                 `• Staff role: ${staffRoleId ? `<@&${staffRoleId}>` : '*Administrators only (set one later in Settings)*'}\n` +
                  `• Created and configured notification roles:\n${roleList}\n\n` +
                  `The Control Panel has been published to <#${selectedChannelId}>.`,
         components: []
@@ -961,12 +1025,12 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 2 && body.data && body.data.name === 'calendar') {
-    const payload = runCalendarCommand();
+    const payload = await runCalendarCommand(env, guildId);
     return interactionResponse(payload);
   }
 
   if (body.type === 2 && body.data && body.data.name === 'history') {
-    const payload = await runHistoryCommand(env);
+    const payload = await runHistoryCommand(env, guildId);
     return interactionResponse(payload);
   }
 
@@ -984,7 +1048,7 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 2 && body.data && body.data.name === 'stats') {
-    const payload = await runStatsCommand(env);
+    const payload = await runStatsCommand(env, guildId);
     return interactionResponse(payload);
   }
 
@@ -1063,6 +1127,48 @@ export async function handleInteraction(body, env, ctx) {
     return handleTestAlert(body, env, ctx, guildId);
   }
 
+  if (body.type === 3 && body.data && body.data.custom_id === 'role_toggle_select') {
+    // Open to everyone — toggling only affects the user's own roles.
+    const userId = getInvokerId(body);
+    const statusKey = Array.isArray(body.data.values) && body.data.values[0];
+    if (!userId || !statusKey) {
+      return interactionResponse({ content: '❌ Could not determine your selection.', flags: EPHEMERAL_FLAG });
+    }
+
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    const roleId = cfg.status_ping_roles && cfg.status_ping_roles[statusKey];
+    if (!roleId) {
+      return interactionResponse({
+        content: '❌ No notification role is configured for that status anymore.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const hasRole = body.member && Array.isArray(body.member.roles) && body.member.roles.includes(roleId);
+    const resp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+      method: hasRole ? 'DELETE' : 'PUT',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'X-Audit-Log-Reason': 'Self-service HCPSS notification role toggle'
+      }
+    });
+    if (!resp.ok) {
+      return interactionResponse({
+        content: `❌ Couldn't update your roles (Discord error ${resp.status}). ` +
+                 `The bot needs the **Manage Roles** permission, and its role must be above the notification roles in the role list.`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const label = ALL_STATUS_LABELS[statusKey] || statusKey;
+    return interactionResponse({
+      content: hasRole
+        ? `🔕 Removed <@&${roleId}> — you'll no longer be pinged for **${label}**.`
+        : `🔔 Added <@&${roleId}> — you'll be pinged when **${label}** is announced.`,
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (body.type === 3 && body.data && body.data.custom_id === 'dm_subscribe') {
     // Open to everyone — subscribing only affects the user's own DMs.
     const userId = getInvokerId(body);
@@ -1116,7 +1222,7 @@ export async function handleInteraction(body, env, ctx) {
     return jsonResponse({
       type: 7,
       data: {
-        content: '⚙️ **HCPSS Status Monitor Setup (Force Rerun)**\n\nWhich channel should the bot post system logs and the control panel to?',
+        content: '⚙️ **HCPSS Status Monitor Setup (Force Rerun) — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
         components: [
           {
             type: 1,
@@ -1136,7 +1242,11 @@ export async function handleInteraction(body, env, ctx) {
     });
   }
 
-  if (body.type === 3 && body.data && (body.data.custom_id === 'setup_select_log_channel' || body.data.custom_id === 'setup_select_log_channel_force')) {
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' &&
+      (body.data.custom_id.startsWith('setup_select_log_channel') ||
+       body.data.custom_id.startsWith('setup_alert:') ||
+       body.data.custom_id.startsWith('setup_staff:') ||
+       body.data.custom_id.startsWith('setup_skipstaff:'))) {
     if (!memberIsAdmin(body.member)) {
       return interactionResponse({
         content: '❌ Only users with Administrator permissions can complete the setup.',
@@ -1144,18 +1254,44 @@ export async function handleInteraction(body, env, ctx) {
       });
     }
 
-    const isForce = body.data.custom_id === 'setup_select_log_channel_force';
-    if (!isForce) {
-      const setupDone = await env.STATUS_KV.get(`setup_done:${guildId}`);
-      if (setupDone === 'true') {
-        return interactionResponse({
-          content: '❌ The `/setup` command has already been run in this server.',
-          flags: EPHEMERAL_FLAG
-        });
+    const setupId = body.data.custom_id;
+    const selected = Array.isArray(body.data.values) && body.data.values[0];
+
+    // Step 1 → 2: log channel chosen, ask for the alerts channel.
+    if (setupId === 'setup_select_log_channel' || setupId === 'setup_select_log_channel_force') {
+      if (setupId === 'setup_select_log_channel') {
+        const setupDone = await env.STATUS_KV.get(`setup_done:${guildId}`);
+        if (setupDone === 'true') {
+          return interactionResponse({
+            content: '❌ The `/setup` command has already been run in this server.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
       }
+      if (!selected) {
+        return interactionResponse({ content: '❌ No channel was selected.', flags: EPHEMERAL_FLAG });
+      }
+      return setupAlertChannelStep(selected);
     }
 
-    return handleSetupChannelSelect(body, env, ctx, guildId);
+    // Step 2 → 3: alerts channel chosen, ask for the staff role.
+    if (setupId.startsWith('setup_alert:')) {
+      const logChannelId = setupId.slice('setup_alert:'.length);
+      if (!selected) {
+        return interactionResponse({ content: '❌ No channel was selected.', flags: EPHEMERAL_FLAG });
+      }
+      return setupStaffRoleStep(logChannelId, selected);
+    }
+
+    // Step 3: staff role chosen (or skipped) — finalize.
+    const bits = setupId.split(':');
+    const logChannelId = bits[1];
+    const alertChannelId = bits[2];
+    const staffRoleId = setupId.startsWith('setup_staff:') ? (selected || null) : null;
+    if (!logChannelId || !alertChannelId) {
+      return interactionResponse({ content: '❌ Setup state was lost — please run `/setup` again.', flags: EPHEMERAL_FLAG });
+    }
+    return handleSetupFinalize(body, env, ctx, guildId, logChannelId, alertChannelId, staffRoleId);
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'cfg_general_action_select') {

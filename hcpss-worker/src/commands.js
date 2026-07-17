@@ -12,14 +12,22 @@ import { doCheckAndPost } from './check.js';
 import { footerWithCheckedAt } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
 
-export function runCalendarCommand() {
+export async function runCalendarCommand(env, guildId = '') {
   const checkedAt = new Date();
   const events = [];
+
+  // This server's dynamic events overlay the built-in school calendar.
+  const dynamicByDate = {};
+  if (env && env.STATUS_KV) {
+    try {
+      for (const e of await listCalendarEvents(env, guildId)) dynamicByDate[e.dateStr] = e.eventStr;
+    } catch {}
+  }
 
   for (let i = 0; i < 7; i++) {
     const d = new Date(checkedAt.getTime() + i * 24 * 60 * 60 * 1000);
     const ymd = formatYmdNY(d);
-    const event = SCHOOL_CALENDAR_EVENTS[ymd];
+    const event = dynamicByDate[ymd] || SCHOOL_CALENDAR_EVENTS[ymd];
     if (event) {
       events.push({ ymd, dateStr: formatStatusDate(d), event });
     }
@@ -44,15 +52,25 @@ export function runCalendarCommand() {
   };
 }
 
-export async function runHistoryCommand(env) {
+// History entries recorded before this guild was set up are hidden, so each
+// server's history starts at its own setup. Guilds without a created_at
+// (configured before the field existed) see the full district history.
+async function getGuildJoinedAt(env, guildId) {
+  if (!guildId) return 0;
+  const stored = await getConfig(env, guildId);
+  return Number(stored.created_at) || 0;
+}
+
+export async function runHistoryCommand(env, guildId = '') {
   const checkedAt = new Date();
-  const history = await getStatusHistory(env);
+  const joinedAt = await getGuildJoinedAt(env, guildId);
+  const history = (await getStatusHistory(env)).filter(h => h.timestamp >= joinedAt);
 
   const embed = {
     title: '📜 HCPSS Recent Status History',
     color: 3066993,
     timestamp: checkedAt.toISOString(),
-    footer: { text: `HCPSS Status Monitor · ${history.length} change(s) recorded` }
+    footer: { text: `HCPSS Status Monitor · ${history.length} change(s) recorded${joinedAt ? ' since this server was set up' : ''}` }
   };
 
   if (history.length === 0) {
@@ -125,8 +143,9 @@ export async function runLogsCommand(env, guildId = '') {
   };
 }
 
-export async function runStatsCommand(env) {
+export async function runStatsCommand(env, guildId = '') {
   const checkedAt = new Date();
+  const joinedAt = await getGuildJoinedAt(env, guildId);
   let stats = {};
   try {
     const rawStats = await env.STATUS_KV.get('status_stats');
@@ -144,12 +163,19 @@ export async function runStatsCommand(env) {
 
   const incidentLabels = Object.fromEntries(INCIDENT_KEYS.map(k => [k, ALL_STATUS_LABELS[k]]));
 
+  const fullHistory = await getStatusHistory(env);
+  const history = fullHistory.filter(h => h.timestamp >= joinedAt);
+
+  // All-time counts: servers set up after tracking began only count changes
+  // they were around for; the original deployment keeps the global counters
+  // (which include entries that have rolled off the capped history).
   const countsDisplay = Object.entries(incidentLabels).map(([key, label]) => {
-    const count = stats[key] || 0;
+    const count = joinedAt
+      ? history.filter(h => h.status_key === key).length
+      : (stats[key] || 0);
     return `• **${label}**: ${count}`;
   }).join('\n');
 
-  const history = await getStatusHistory(env);
   const yearStats = computeIncidentStats(history, checkedAt);
   const yearCountsDisplay = Object.entries(incidentLabels).map(([key, label]) => {
     return `• **${label}**: ${yearStats.year[key] || 0}`;
@@ -159,8 +185,8 @@ export async function runStatsCommand(env) {
     : '*None recorded*';
 
   // Previous school years from the persistent archive (current year excluded —
-  // it's already shown above). Newest first, capped at 3.
-  const yearly = await getYearlyStats(env, history);
+  // it's already shown above). District-wide, so it uses the unfiltered history.
+  const yearly = await getYearlyStats(env, fullHistory);
   const currentLabel = schoolYearLabel(checkedAt);
   const pastYearLines = Object.keys(yearly)
     .filter(label => label !== currentLabel)
@@ -175,13 +201,13 @@ export async function runStatsCommand(env) {
       return `• **${label}**: ❄️ ${closures} closure(s) · 🕑 ${delays} delay(s) · 🏃 ${early} early closing(s)`;
     });
   const pastYearsSection = pastYearLines.length
-    ? `\n\n**Previous School Years:**\n${pastYearLines.join('\n')}`
+    ? `\n\n**Previous School Years (district-wide):**\n${pastYearLines.join('\n')}`
     : '';
 
   const embed = {
     title: '📊 HCPSS Status Monitor - Statistics',
     color: 0x34495E,
-    description: `**Scraper Diagnostics:**\n` +
+    description: `**Scraper Diagnostics (all servers):**\n` +
                  `• Total Checks: \`${scrapesTotal}\`\n` +
                  `• Scraper Success Rate: \`${uptimePct}%\` (\`${scrapesSuccess}/${scrapesTotal}\` successful)\n\n` +
                  `**This School Year (${currentLabel}):**\n` +
@@ -192,7 +218,7 @@ export async function runStatsCommand(env) {
                  pastYearsSection + `\n\n` +
                  `**Status Changes (This School Year):**\n` +
                  `${yearCountsDisplay}\n\n` +
-                 `**Status Changes (All-Time):**\n` +
+                 `**Status Changes (${joinedAt ? 'Since Server Setup' : 'All-Time'}):**\n` +
                  `${countsDisplay}`,
     timestamp: checkedAt.toISOString(),
     footer: { text: 'HCPSS Status Monitor' }

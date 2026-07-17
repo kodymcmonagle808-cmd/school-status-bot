@@ -13,7 +13,7 @@ import {
 import { hasStormAlert } from './weather.js';
 import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
-import { getCalendarEvent } from './calendar.js';
+import { listCalendarEvents } from './calendar.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -257,6 +257,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const districts = config.toggle_districts !== false;
     const outlook = config.toggle_outlook !== false;
     const crosscheck = config.toggle_crosscheck !== false;
+    const digest = config.toggle_digest === true; // opt-in, off by default
 
     const embed = {
       title: '🔔 Control Panel — Feature Toggles',
@@ -269,7 +270,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n` +
                    `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n` +
                    `• ${outlook ? '🟢' : '🔴'} **Closure Outlook** — estimate closing/delay likelihood during storm alerts\n` +
-                   `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n\n` +
+                   `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n` +
+                   `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
@@ -323,6 +325,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Warn when the HCPSS News feed disagrees with the status page',
         emoji: { name: '🔎' },
         default: crosscheck
+      },
+      {
+        label: 'Morning Digest',
+        value: 'toggle_digest',
+        description: 'Post a daily 6:00 AM ET summary (status, calendar, weather)',
+        emoji: { name: '🌅' },
+        default: digest
       }
     ];
 
@@ -502,25 +511,40 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const checkedAt = new Date();
     const events = [];
 
+    let dynamicEvents = [];
+    try { dynamicEvents = await listCalendarEvents(env, guildId); } catch {}
+    const dynamicByDate = {};
+    for (const e of dynamicEvents) dynamicByDate[e.dateStr] = e.eventStr;
+
     for (let i = 0; i < 7; i++) {
       const d = new Date(checkedAt.getTime() + i * 24 * 60 * 60 * 1000);
       const ymd = formatYmdNY(d);
-      let event = await getCalendarEvent(env, guildId, ymd);
-      if (!event) {
-        event = SCHOOL_CALENDAR_EVENTS[ymd];
-      }
+      const event = dynamicByDate[ymd] || SCHOOL_CALENDAR_EVENTS[ymd];
       if (event) {
         events.push(`• **${formatStatusDate(d)}** (${ymd}): *${event}*`);
       }
     }
     const calendarList = events.length ? events.join('\n') : '*No scheduled closures or events in the next 7 days.*';
 
+    // All of this server's custom events that haven't passed yet, beyond the
+    // 7-day window above.
+    const todayYmd = formatYmdNY(checkedAt);
+    const upcomingCustom = dynamicEvents.filter(e => e.dateStr >= todayYmd);
+    const shownCustom = upcomingCustom.slice(0, 10)
+      .map(e => `• **${e.dateStr}**: *${e.eventStr}*`)
+      .join('\n');
+    const customSection = upcomingCustom.length
+      ? `\n\n### 📌 Custom Events (This Server)\n${shownCustom}` +
+        (upcomingCustom.length > 10 ? `\n*…and ${upcomingCustom.length - 10} more — see \`/events list\`.*` : '')
+      : '';
+
     const embed = {
       title: '📅 Control Panel — Calendar',
       color: 0xE67E22,
       description: `### 🗓️ Upcoming Closures (Next 7 Days)\n` +
-                   `${calendarList}\n\n` +
-                   `*Use the actions dropdown below to manage dynamic calendar overrides (e.g. adding closures or custom events).*`,
+                   `${calendarList}` +
+                   customSection + `\n\n` +
+                   `*Use the actions dropdown below to add or remove this server's custom events.*`,
       timestamp: new Date().toISOString()
     };
 
@@ -579,7 +603,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100).toFixed(2)
       : '100.00';
 
-    const history = await getStatusHistory(env);
+    // Servers set up after tracking began only see history from their own
+    // setup onward (created_at is stamped by /setup).
+    const joinedAt = Number(stored.created_at) || 0;
+    const history = (await getStatusHistory(env)).filter(h => h.timestamp >= joinedAt);
     const msInStatus = {};
     let lastTs = Date.now();
     for (const h of history) {
@@ -631,11 +658,11 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const embed = {
       title: '📈 Control Panel — Stats & Override',
       color: 0x9B59B6,
-      description: `### 📊 Scraper Diagnostics\n` +
+      description: `### 📊 Scraper Diagnostics (all servers)\n` +
                    `• **Total Scrapes**: \`${scrapesTotal}\` checks\n` +
                    `• **Failed Scrapes**: \`${scrapesFailed}\` errors\n` +
                    `• **Success Rate**: \`${successRate}%\`\n\n` +
-                   `### 📋 Incident Statistics (All-Time)\n` +
+                   `### 📋 Time in Status (${joinedAt ? 'since server setup' : 'all-time'})\n` +
                    `${incidentList}\n\n` +
                    `### 🛠️ Status Override Configuration\n` +
                    `${overrideInfo}`,
@@ -976,6 +1003,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_districts = selected.includes('toggle_districts');
     next.toggle_outlook = selected.includes('toggle_outlook');
     next.toggle_crosscheck = selected.includes('toggle_crosscheck');
+    next.toggle_digest = selected.includes('toggle_digest');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }

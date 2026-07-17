@@ -12,7 +12,9 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Falls back to the last known status (with a stale banner) if the status page is unreachable, and alerts staff on repeated scraper failures (with a recovery notice).
 - Tracks per-school-year closure stats so `/stats` can compare this year against previous years.
 - Handles slash commands (`/post-status`, `/override`, `/calendar`, `/history`, `/events`, `/stats`, `/setup`, `/announce`) and the interactive control panel.
-- Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button.
+- Fully multi-server: per-guild config, schedules, calendar events, and stats/history (each server's numbers start at its own `/setup`).
+- Optional Morning Digest: a daily 6:00 AM ET summary post (status, calendar, weather) per opted-in server.
+- Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button, or self-assign a status ping role from the dropdown on status posts.
 
 ## Repo layout
 
