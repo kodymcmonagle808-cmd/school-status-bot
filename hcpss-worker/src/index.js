@@ -1932,9 +1932,28 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
       unknown_alert: 'Other/Unknown Alert'
     };
 
+    const history = await getStatusHistory(env);
+    const msInStatus = {};
+    let lastTs = Date.now();
+    for (const h of history) {
+      // Fallback for old entries without status_key
+      let key = h.status_key;
+      if (!key) {
+        if (h.status && h.status.toLowerCase().includes('normal operations')) {
+          key = 'normal_operations';
+        } else {
+          key = 'unknown_alert';
+        }
+      }
+      const ms = lastTs - h.timestamp;
+      msInStatus[key] = (msInStatus[key] || 0) + ms;
+      lastTs = h.timestamp;
+    }
+
     const incidentList = Object.entries(STATUS_LABELS).map(([key, label]) => {
-      const count = stats[key] || 0;
-      return `• **${label}**: \`${count}\` occurrences`;
+      const ms = msInStatus[key] || 0;
+      const days = Math.round(ms / (1000 * 60 * 60 * 24));
+      return `• **${label}**: \`${days}\` days`;
     }).join('\n');
 
     const activeOverride = await getActiveOverride(env, guildId);
