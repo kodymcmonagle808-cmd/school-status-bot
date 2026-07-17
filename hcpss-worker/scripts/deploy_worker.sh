@@ -140,6 +140,12 @@ payload=$(jq -n '[
     dm_permission: false
   },
   {
+    name: "districts",
+    description: "Show the operating status of neighboring school districts.",
+    type: 1,
+    dm_permission: false
+  },
+  {
     name: "events",
     description: "Manage dynamic calendar events.",
     type: 1,

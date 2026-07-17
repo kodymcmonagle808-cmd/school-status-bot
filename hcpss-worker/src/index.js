@@ -21,6 +21,7 @@ import {
 } from './scraper.js';
 import { getActiveWeatherAlerts, formatWeatherAlertLines, hasStormAlert, alertsLikelyTomorrowMorning } from './weather.js';
 import { trackStatusHistory, getStatusHistory, computeIncidentStats } from './history.js';
+import { getDistrictStatuses, formatDistrictLines } from './districts.js';
 import { toggleSubscriber, notifySubscribers } from './subscriptions.js';
 
 const EMBED_LIMIT = 4096;
@@ -276,6 +277,20 @@ async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = n
       embeds[0].fields = [
         ...(embeds[0].fields || []),
         { name: '⛅ Active Weather Alerts — Howard County', value: alertLines }
+      ];
+    }
+  }
+
+  // While a storm alert is active, show what the neighboring districts have
+  // announced — surrounding counties' calls are the strongest signal for HCPSS.
+  const districtsEnabled = !config || config.toggle_districts !== false;
+  if (districtsEnabled && weatherEnabled && hasStormAlert(alerts) && embeds[0]) {
+    const districts = await getDistrictStatuses(env);
+    const districtLines = formatDistrictLines(districts);
+    if (districtLines) {
+      embeds[0].fields = [
+        ...(embeds[0].fields || []),
+        { name: '🏫 Nearby Districts', value: districtLines }
       ];
     }
   }
@@ -653,6 +668,23 @@ async function runHistoryCommand(env) {
 
   return {
     embeds: [embed],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+async function runDistrictsCommand(env) {
+  const checkedAt = new Date();
+  const districts = await getDistrictStatuses(env);
+
+  return {
+    embeds: [{
+      title: '🏫 Nearby School Districts — Operating Status',
+      color: 3447003,
+      description: formatDistrictLines(districts, { includeDetail: true }) ||
+        'No district information available right now.',
+      timestamp: checkedAt.toISOString(),
+      footer: { text: footerWithCheckedAt('HCPSS Status Monitor · Cached up to 10 min', checkedAt) }
+    }],
     flags: EPHEMERAL_FLAG
   };
 }
@@ -1094,6 +1126,7 @@ function getEffectiveConfig(stored) {
   if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
   if (typeof next.toggle_weather !== 'boolean') next.toggle_weather = true;
   if (typeof next.toggle_storm_mode !== 'boolean') next.toggle_storm_mode = true;
+  if (typeof next.toggle_districts !== 'boolean') next.toggle_districts = true;
   return next;
 }
 
@@ -1560,6 +1593,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
     const errorAlerts = config.toggle_error_alerts !== false;
     const weather = config.toggle_weather !== false;
     const stormMode = config.toggle_storm_mode !== false;
+    const districts = config.toggle_districts !== false;
 
     const embed = {
       title: '⚙️ Settings - Toggles & Options',
@@ -1569,7 +1603,8 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
                    `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n` +
-                   `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n\n` +
+                   `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n` +
+                   `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
@@ -1603,6 +1638,13 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
         description: 'Extra early-morning checks during storm alerts, post on change only',
         emoji: { name: '🌨️' },
         default: stormMode
+      },
+      {
+        label: 'Nearby Districts',
+        value: 'toggle_districts',
+        description: "Show neighboring districts' status during storm alerts",
+        emoji: { name: '🏫' },
+        default: districts
       }
     ];
 
@@ -1616,7 +1658,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
           placeholder: 'Select which features are ON...',
           options: toggleOptions,
           min_values: 0,
-          max_values: 4
+          max_values: 5
         }]
       }
     ];
@@ -1847,6 +1889,7 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
                    `• **\`/override clear\`**: Disable the active override immediately.\n` +
                    `• **\`/calendar\`**: Show scheduled closures or events in the next 7 days.\n` +
                    `• **\`/history\`**: Show the last 10 operating status changes.\n` +
+                   `• **\`/districts\`**: Show neighboring school districts' operating status.\n` +
                    `• **\`/events list\`**: List all dynamic calendar events.\n` +
                    `• **\`/events add\`**: Add a dynamic calendar event (YYYY-MM-DD).\n` +
                    `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
@@ -2226,6 +2269,7 @@ async function applyConfigUpdate(body, env) {
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
     next.toggle_weather = selected.includes('toggle_weather');
     next.toggle_storm_mode = selected.includes('toggle_storm_mode');
+    next.toggle_districts = selected.includes('toggle_districts');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }
@@ -2759,6 +2803,14 @@ export default {
       if (body.type === 2 && body.data && body.data.name === 'history') {
         const payload = await runHistoryCommand(env);
         return interactionResponse(payload);
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'districts') {
+        ctx.waitUntil((async () => {
+          const payload = await runDistrictsCommand(env);
+          await updateInteractionOriginal(env, body.token, payload);
+        })());
+        return deferredInteractionResponse();
       }
 
       if (body.type === 2 && body.data && body.data.name === 'events') {
