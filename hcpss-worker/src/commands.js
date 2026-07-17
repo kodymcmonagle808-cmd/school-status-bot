@@ -10,6 +10,7 @@ import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './con
 import { postLog } from './panel.js';
 import { doCheckAndPost } from './check.js';
 import { footerWithCheckedAt } from './embeds.js';
+import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
 
 export function runCalendarCommand() {
   const checkedAt = new Date();
@@ -226,7 +227,7 @@ export async function runEventsCommand(body, env) {
       return;
     }
 
-    await env.STATUS_KV.put(`calendar_event:${dateStr}`, eventStr);
+    await putCalendarEvent(env, guildId, dateStr, eventStr);
 
     const cfg = getEffectiveConfig(await getConfig(env, guildId));
     await postLog(env, cfg.log_channel_id, `Calendar event added: **${dateStr}** - *${eventStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
@@ -250,7 +251,7 @@ export async function runEventsCommand(body, env) {
       return;
     }
 
-    const existing = await env.STATUS_KV.get(`calendar_event:${dateStr}`);
+    const existing = await getCalendarEvent(env, guildId, dateStr);
     if (!existing) {
       await updateInteractionOriginal(env, body.token, {
         content: `⚠️ No dynamic calendar event found for date **${dateStr}**.`,
@@ -259,7 +260,7 @@ export async function runEventsCommand(body, env) {
       return;
     }
 
-    await env.STATUS_KV.delete(`calendar_event:${dateStr}`);
+    await deleteCalendarEvent(env, guildId, dateStr);
 
     const cfg = getEffectiveConfig(await getConfig(env, guildId));
     await postLog(env, cfg.log_channel_id, `Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
@@ -272,9 +273,9 @@ export async function runEventsCommand(body, env) {
   }
 
   if (subName === 'list') {
-    let listResult;
+    let events;
     try {
-      listResult = await env.STATUS_KV.list({ prefix: 'calendar_event:' });
+      events = await listCalendarEvents(env, guildId);
     } catch (e) {
       await updateInteractionOriginal(env, body.token, {
         content: `❌ Failed to list calendar events: ${e.message}`,
@@ -282,17 +283,6 @@ export async function runEventsCommand(body, env) {
       });
       return;
     }
-
-    const events = [];
-    for (const key of listResult.keys) {
-      const dateStr = key.name.replace(/^calendar_event:/, '');
-      const eventStr = await env.STATUS_KV.get(key.name);
-      if (eventStr) {
-        events.push({ dateStr, eventStr });
-      }
-    }
-
-    events.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
 
     const embed = {
       title: '🗓️ Dynamic School Calendar Events',

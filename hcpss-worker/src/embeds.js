@@ -16,6 +16,7 @@ import { getDistrictStatuses, formatDistrictLines } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines } from './outlook.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
+import { getCalendarEvent } from './calendar.js';
 
 export function footerWithCheckedAt(label, checkedAt) {
   return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
@@ -70,7 +71,7 @@ function addField(embed, name, value) {
   embed.fields = [...(embed.fields || []), { name, value }];
 }
 
-export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null, staleInfo = null) {
+export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null, staleInfo = null, guildId = '') {
   const checkedAt = new Date();
   if (!cards) {
     const html = await fetchHtml(HCPSS_URL);
@@ -158,7 +159,7 @@ export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', ca
     const tomorrowYmd = formatYmdNY(tomorrow);
     let calEvent = null;
     if (env && env.STATUS_KV) {
-      try { calEvent = await env.STATUS_KV.get(`calendar_event:${tomorrowYmd}`); } catch {}
+      try { calEvent = await getCalendarEvent(env, guildId, tomorrowYmd); } catch {}
     }
     if (!calEvent) calEvent = SCHOOL_CALENDAR_EVENTS[tomorrowYmd] || null;
     if (calEvent) {
@@ -256,7 +257,7 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
     const statusKey = determineStatusKey(cards);
     const payload = {
       content: '',
-      embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null)
+      embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null, guildId)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents();
     return { payload, isError: false, stale, statusKey };

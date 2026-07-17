@@ -13,6 +13,7 @@ import {
 import { hasStormAlert } from './weather.js';
 import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
+import { getCalendarEvent } from './calendar.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -504,7 +505,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     for (let i = 0; i < 7; i++) {
       const d = new Date(checkedAt.getTime() + i * 24 * 60 * 60 * 1000);
       const ymd = formatYmdNY(d);
-      let event = await env.STATUS_KV.get(`calendar_event:${ymd}`);
+      let event = await getCalendarEvent(env, guildId, ymd);
       if (!event) {
         event = SCHOOL_CALENDAR_EVENTS[ymd];
       }

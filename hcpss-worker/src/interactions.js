@@ -44,6 +44,7 @@ import {
   postLog
 } from './panel.js';
 import { doCheckAndPost } from './check.js';
+import { putCalendarEvent, deleteCalendarEvent } from './calendar.js';
 import {
   runCalendarCommand,
   runHistoryCommand,
@@ -176,7 +177,7 @@ async function handleModalSubmit(body, env, ctx, guildId) {
     const dateStr = getModalInputValue(body, 'input_event_date').trim();
     const descStr = getModalInputValue(body, 'input_event_desc').trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      await env.STATUS_KV.put(`calendar_event:${dateStr}`, descStr);
+      await putCalendarEvent(env, guildId, dateStr, descStr);
       const invokerId = getInvokerId(body);
       await postLog(env, config.log_channel_id, `📅 Calendar event added: **${dateStr}** - *${descStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
       updated = true;
@@ -191,7 +192,7 @@ async function handleModalSubmit(body, env, ctx, guildId) {
   if (modalId === 'modal_remove_event') {
     const dateStr = getModalInputValue(body, 'input_event_date').trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      await env.STATUS_KV.delete(`calendar_event:${dateStr}`);
+      await deleteCalendarEvent(env, guildId, dateStr);
       const invokerId = getInvokerId(body);
       await postLog(env, config.log_channel_id, `📅 Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
       updated = true;
