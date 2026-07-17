@@ -11,13 +11,6 @@ const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 const ANNOUNCE_COMMAND = 'announce';
 
-const SCHEDULE_OPTIONS = [
-  { label: '5:20 AM', value: '5:20' },
-  { label: '7:20 AM', value: '7:20' },
-  { label: '10:00 AM', value: '10:00' },
-  { label: '8:00 PM', value: '20:00' }
-];
-
 function getEasternTimeStr(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
@@ -47,6 +40,12 @@ function matchesScheduleTime(currentEtStr, scheduledTimeStr) {
   // Never fire early; allow up to 5 minutes late in case a cron tick is delayed.
   // Duplicate firings within the window are skipped via the last_sched_slot dedupe key.
   return diff >= 0 && diff <= 5;
+}
+
+function clockEmojiForTime(timeStr) {
+  const [h] = String(timeStr).split(':').map(Number);
+  const h12 = ((isNaN(h) ? 12 : h) % 12) || 12;
+  return String.fromCodePoint(0x1F550 + h12 - 1);
 }
 
 function formatScheduleTimeLabel(timeStr) {
@@ -1634,8 +1633,11 @@ async function buildBotStatusPayload(env, guildId, fraction = 1) {
 
   return { embeds: [embed], components };
 }
-async function buildControlPanelPayload(env, guildId) {
-  const stored = await getConfig(env, guildId);
+async function buildControlPanelPayload(env, guildId, configOverride = null) {
+  // configOverride lets callers that just wrote the config render with the fresh
+  // value — KV does not guarantee read-your-own-writes, so re-reading here right
+  // after a save can return the stale cached config for up to 60 seconds.
+  const stored = configOverride || await getConfig(env, guildId);
   const config = getEffectiveConfig(stored);
   const page = await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
 
@@ -1845,16 +1847,19 @@ async function buildControlPanelPayload(env, guildId) {
   }
 
   if (page === 'config_schedule') {
-    const currentSchedule = config.check_schedule || [];
-    const formattedTimes = currentSchedule.map(formatScheduleTimeLabel).join(', ');
+    const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
+    const scheduleLines = currentSchedule
+      .map(t => `> ### ${clockEmojiForTime(t)}  ${formatScheduleTimeLabel(t)}`)
+      .join('\n');
 
     const embed = {
       title: '🗓️ HCPSS Status Monitor - Schedule Config',
       color: 0x2ECC71,
-      description: `### ⏱️ Automated Check Times\n` +
-                   `Configure when the bot automatically scrapes the HCPSS status website.\n\n` +
-                   `• **Current Schedule**: ${formattedTimes || '(none)'}\n\n` +
-                   `*Pick preset times from the dropdown, or use **Set Custom Times** to enter any times you want (Eastern, max 4).*`,
+      description: `### ⏱️ Daily Check Times (Eastern)\n` +
+                   `The bot checks the HCPSS status website at these times every day:\n\n` +
+                   `${scheduleLines || '> *(no check times set)*'}\n\n` +
+                   `**⏰ Set Custom Times** — enter any times you want, up to 4 (e.g. \`5:21 AM, 7:28 AM, 8:00 PM\`)\n` +
+                   `**🔄 Reset Defaults** — restore 5:20 AM, 7:20 AM, 10:00 AM & 8:00 PM`,
       timestamp: new Date().toISOString()
     };
 
@@ -1862,23 +1867,9 @@ async function buildControlPanelPayload(env, guildId) {
       await getNavBarRow(env, guildId, 'config_schedule'),
       {
         type: 1,
-        components: [{
-          type: 3,
-          custom_id: 'cfg_schedule_select',
-          placeholder: 'Select preset check times (max 4)',
-          options: SCHEDULE_OPTIONS.map(opt => ({
-            label: opt.label,
-            value: opt.value,
-            default: currentSchedule.includes(opt.value)
-          })),
-          min_values: 1,
-          max_values: 4
-        }]
-      },
-      {
-        type: 1,
         components: [
           { type: 2, style: 1, label: 'Set Custom Times', custom_id: 'panel_btn_set_schedule', emoji: { name: '⏰' } },
+          { type: 2, style: 2, label: 'Reset Defaults', custom_id: 'panel_btn_reset_schedule', emoji: { name: '🔄' } },
           { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
         ]
       }
@@ -2274,8 +2265,6 @@ async function applyConfigUpdate(body, env) {
     } else {
       next.status_ping_roles[editingKey] = null;
     }
-  } else if (customId === 'cfg_schedule_select' && Array.isArray(values)) {
-    next.check_schedule = values.slice(0, 4);
   } else if (customId === 'cfg_toggle_select') {
     // Multi-select: selected values = ON, absent values = OFF
     const selected = Array.isArray(values) ? values : [];
@@ -2701,6 +2690,12 @@ export default {
             if (!parsedTimes.includes(normalized)) parsedTimes.push(normalized);
           }
 
+          parsedTimes.sort((a, b) => {
+            const [ah, am] = a.split(':').map(Number);
+            const [bh, bm] = b.split(':').map(Number);
+            return (ah * 60 + am) - (bh * 60 + bm);
+          });
+
           config.check_schedule = parsedTimes;
           const invokerId = body.member && body.member.user && body.member.user.id;
           await postLog(env, getEffectiveConfig(config).log_channel_id, `🗓️ Check schedule updated to: **${parsedTimes.map(formatScheduleTimeLabel).join(', ')}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
@@ -2754,7 +2749,7 @@ export default {
           await setConfig(env, guildId, config);
         }
 
-        const payload = await buildControlPanelPayload(env, guildId);
+        const payload = await buildControlPanelPayload(env, guildId, updated ? config : null);
         return jsonResponse({
           type: 7,
           data: payload
@@ -3080,6 +3075,22 @@ export default {
           ctx.waitUntil(doCheckAndPost(env, { source: 'override-clear', invokerId, guildId }));
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
           const payload = await buildControlPanelPayload(env, guildId);
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_btn_reset_schedule') {
+          if (!(await canConfigure(body.member, env, guildId))) {
+            return interactionResponse({
+              content: 'You do not have permission to configure this bot.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+          const storedCfg = await getConfig(env, guildId);
+          storedCfg.check_schedule = ['5:20', '7:20', '10:00', '20:00'];
+          await setConfig(env, guildId, storedCfg);
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          await postLog(env, getEffectiveConfig(storedCfg).log_channel_id, `🗓️ Check schedule reset to defaults${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+          const payload = await buildControlPanelPayload(env, guildId, storedCfg);
           return jsonResponse({ type: 7, data: payload });
         }
 
@@ -3698,8 +3709,8 @@ export default {
           });
         }
 
-        await applyConfigUpdate(body, env);
-        const payload = await buildControlPanelPayload(env, guildId);
+        const freshConfig = await applyConfigUpdate(body, env);
+        const payload = await buildControlPanelPayload(env, guildId, freshConfig);
         return jsonResponse({
           type: 7,
           data: payload
