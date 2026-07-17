@@ -30,19 +30,26 @@ function barFromFilled(filled, segments = BAR_SEGMENTS) {
 }
 
 export const PANEL_NAV_TABS = [
-  { label: 'Dashboard', value: 'dashboard', emoji: '📊', description: 'System status, logs, and quick actions' },
-  { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, schedule, and toggles' },
+  { label: 'Dashboard', value: 'dashboard', emoji: '🏠', description: 'System status overview and quick actions' },
+  { label: 'Recent Logs', value: 'dashboard_logs', emoji: '📋', description: 'Recent bot activity logs' },
+  { label: 'Bot Health', value: 'dashboard_bot_status', emoji: '📡', description: 'Ping, uptime, and health metric bars' },
+  { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, and embed footer' },
+  { label: 'Check Schedule', value: 'config_schedule', emoji: '🗓️', description: 'Daily status check times' },
+  { label: 'Feature Toggles', value: 'config_toggles', emoji: '🔔', description: 'Turn bot features on or off' },
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
-  { label: 'Stats', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
-  { label: 'Command Menu', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
+  { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
+  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
 ];
 
 function getNavTabForPage(page) {
-  if (['config_general', 'config_schedule', 'config_toggles'].includes(page)) return 'config_general';
-  if (['config_stats', 'config_override_select'].includes(page)) return 'config_stats';
-  if (page === 'dashboard_logs' || page === 'dashboard_bot_status') return 'dashboard';
+  if (page === 'config_override_select') return 'config_stats';
+  if (page === 'config_schedule_add') return 'config_schedule';
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
+}
+
+function homeButton(style = 2) {
+  return { type: 2, style, label: 'Home', custom_id: 'panel_to_dashboard', emoji: { name: '🏠' } };
 }
 
 function getNavBarRow(activeTab) {
@@ -122,7 +129,7 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   const refreshHint = isFinal ? '' : '⏳ *Refreshing…*\n\n';
 
   const embed = {
-    title: '📡 HCPSS Status Monitor — Bot Status',
+    title: '📡 Control Panel — Bot Health',
     color: 0x5865F2,
     description:
       `${refreshHint}### 📡 Live Bot Health Metrics\n\n` +
@@ -149,26 +156,13 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   };
 
   const components = [
-    getNavBarRow('dashboard'),
-    {
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'panel_view_select',
-        placeholder: '📂 Switch view...',
-        options: [
-          { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' } },
-          { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' }, default: true }
-        ],
-        min_values: 1,
-        max_values: 1
-      }]
-    },
+    getNavBarRow('dashboard_bot_status'),
     {
       type: 1,
       components: [
-        { type: 2, style: 2, label: 'System Status', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
-        { type: 2, style: 1, label: 'Refresh Metrics', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '🔄' }, disabled: !isFinal }
+        homeButton(),
+        { type: 2, style: 1, label: 'Refresh Metrics', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '🔄' }, disabled: !isFinal },
+        { type: 2, style: 2, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } }
       ]
     }
   ];
@@ -191,14 +185,15 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const embedFooter = config.alert_embed_footer || '(default)';
 
     const embed = {
-      title: '⚙️ HCPSS Status Monitor - General Config',
+      title: '⚙️ Control Panel — Settings',
       color: 0x3498DB,
       description: `### 🔧 Server Settings\n` +
                    `• **Alerts Destination**: ${channel}\n` +
                    `• **System Logs Destination**: ${logChannel}\n` +
                    `• **Moderator Staff Role**: ${staffRole}\n` +
                    `• **Alert Embed Footer**: \`${embedFooter}\`\n\n` +
-                   `*Modify settings using the dropdowns and text buttons below.*`,
+                   `*Pick a channel or role below to change it — saves instantly.*\n` +
+                   `*Check times and feature toggles have their own pages in the 🧭 navigation menu.*`,
       timestamp: new Date().toISOString()
     };
 
@@ -238,18 +233,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       },
       {
         type: 1,
-        components: [{
-          type: 3,
-          custom_id: 'cfg_general_action_select',
-          placeholder: '🔧 More actions...',
-          options: [
-            { label: 'Set Embed Footer Text', value: 'set_footer', description: 'Customize the footer shown on status embeds', emoji: { name: '✍️' } },
-            { label: 'Manage Check Schedule', value: 'to_schedule', description: 'Configure what times the bot checks for status updates', emoji: { name: '🗓️' } },
-            { label: 'Manage Feature Toggles', value: 'to_toggles', description: 'Enable or disable pings, always-post, and error alerts', emoji: { name: '⚙️' } }
-          ],
-          min_values: 1,
-          max_values: 1
-        }]
+        components: [
+          { type: 2, style: 1, label: 'Set Embed Footer', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
+          homeButton()
+        ]
       }
     ];
 
@@ -266,7 +253,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const crosscheck = config.toggle_crosscheck !== false;
 
     const embed = {
-      title: '⚙️ Settings - Toggles & Options',
+      title: '🔔 Control Panel — Feature Toggles',
       color: 0x3498DB,
       description: `### 🚨 Feature Toggles\n` +
                    `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
@@ -345,7 +332,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           min_values: 0,
           max_values: toggleOptions.length
         }]
-      }
+      },
+      { type: 1, components: [homeButton()] }
     ];
 
     return { embeds: [embed], components };
@@ -368,7 +356,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }).join('\n');
 
     const embed = {
-      title: '🎨 HCPSS Status Monitor - Status & Theme Config',
+      title: '🎨 Control Panel — Status Theme',
       color: 0xE74C3C,
       description: `### 🔔 Roles & Embed Themes\n` +
                    `Select a status from the dropdown to edit its **mention role** and **embed color**.\n\n` +
@@ -407,7 +395,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       {
         type: 1,
         components: [
-          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } }
+          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } },
+          homeButton()
         ]
       }
     ];
@@ -422,7 +411,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       .join('\n');
 
     const embed = {
-      title: '🗓️ HCPSS Status Monitor - Schedule Config',
+      title: '🗓️ Control Panel — Check Schedule',
       color: 0x2ECC71,
       description: `### ⏱️ Daily Check Times (Eastern)\n` +
                    `The bot checks the HCPSS status website at these times every day:\n\n` +
@@ -455,7 +444,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         components: [
           { type: 2, style: 3, label: 'Add Time', custom_id: 'panel_btn_add_time', emoji: { name: '➕' } },
           { type: 2, style: 2, label: 'Reset Defaults', custom_id: 'panel_btn_reset_schedule', emoji: { name: '🔄' } },
-          { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
+          homeButton()
         ]
       }
     ];
@@ -472,7 +461,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const pickedLabel = formatScheduleTimeLabel(pickedTime);
 
     const embed = {
-      title: '🗓️ HCPSS Status Monitor - Add Check Time',
+      title: '🗓️ Control Panel — Add Check Time',
       color: 0x2ECC71,
       description: `## ${clockEmojiForTime(pickedTime)}  ${pickedLabel}\n\n` +
                    `Dial in a time with the three pickers below, then press **Add**.\n` +
@@ -507,7 +496,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         type: 1,
         components: [
           { type: 2, style: 3, label: `Add ${pickedLabel}`, custom_id: `panel_btn_confirm_add_time:${h}:${mt}${mo}`, emoji: { name: '✅' } },
-          { type: 2, style: 2, label: 'Cancel', custom_id: 'panel_to_config_schedule', emoji: { name: '⬅️' } }
+          { type: 2, style: 2, label: 'Back to Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '⬅️' } }
         ]
       }
     ];
@@ -533,7 +522,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const calendarList = events.length ? events.join('\n') : '*No scheduled closures or events in the next 7 days.*';
 
     const embed = {
-      title: '📅 HCPSS Status Monitor - School Calendar',
+      title: '📅 Control Panel — Calendar',
       color: 0xE67E22,
       description: `### 🗓️ Upcoming Closures (Next 7 Days)\n` +
                    `${calendarList}\n\n` +
@@ -547,7 +536,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         type: 1,
         components: [
           { type: 2, style: 3, label: 'Add Event', custom_id: 'panel_btn_add_event', emoji: { name: '➕' } },
-          { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } }
+          { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } },
+          homeButton()
         ]
       }
     ];
@@ -557,7 +547,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
   if (page === 'config_commands') {
     const embed = {
-      title: '📜 HCPSS Status Monitor - Command Menu',
+      title: '📜 Control Panel — Command List',
       color: 0x1ABC9C,
       description: `### 🤖 Available Slash Commands\n\n` +
                    `• **\`/post-status\`**: Post the latest HCPSS status now.\n` +
@@ -580,7 +570,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_commands')
+      getNavBarRow('config_commands'),
+      { type: 1, components: [homeButton()] }
     ];
 
     return { embeds: [embed], components };
@@ -641,7 +632,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       components.push({
         type: 1,
         components: [
-          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🛑' } }
+          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🛑' } },
+          homeButton()
         ]
       });
     } else {
@@ -649,13 +641,14 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       components.push({
         type: 1,
         components: [
-          { type: 2, style: 1, label: 'Set Status Override', custom_id: 'panel_to_config_override_select', emoji: { name: '🛠️' } }
+          { type: 2, style: 1, label: 'Set Status Override', custom_id: 'panel_to_config_override_select', emoji: { name: '🛠️' } },
+          homeButton()
         ]
       });
     }
 
     const embed = {
-      title: '📈 HCPSS Status Monitor - Diagnostics & Stats',
+      title: '📈 Control Panel — Stats & Override',
       color: 0x9B59B6,
       description: `### 📊 Scraper Diagnostics\n` +
                    `• **Total Scrapes**: \`${scrapesTotal}\` checks\n` +
@@ -676,7 +669,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
 
     const embed = {
-      title: '🛠️ Configure Status Override',
+      title: '🛠️ Control Panel — Set Status Override',
       color: 0xF1C40F,
       description: `### ⚠️ Select Status to Override\n` +
                    `Choose the status you want to force from the select menu below, then click **Set Duration & Details** to enter how long the override should last.\n\n` +
@@ -705,7 +698,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         type: 1,
         components: [
           { type: 2, style: 3, label: 'Set Duration & Details...', custom_id: 'panel_btn_override_details', emoji: { name: '✍️' } },
-          { type: 2, style: 2, label: 'Cancel', custom_id: 'panel_to_config_stats', emoji: { name: '⬅️' } }
+          { type: 2, style: 2, label: 'Back to Stats', custom_id: 'panel_to_config_stats', emoji: { name: '⬅️' } }
         ]
       }
     ];
@@ -729,35 +722,21 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }).join('\n') : '*No logs yet.*';
 
     const embed = {
-      title: '📋 HCPSS Status Monitor - Recent Logs',
+      title: '📋 Control Panel — Recent Logs',
       color: 0x9B59B6,
       description:
         `### 📋 Recent Logs (last 25)\n` +
-        `${logsContent}\n\n` +
-        `*Use the view dropdown or buttons below to switch views or manage logs.*`,
+        `${logsContent}`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
-      getNavBarRow('dashboard'),
-      {
-        type: 1,
-        components: [{
-          type: 3,
-          custom_id: 'panel_view_select',
-          placeholder: '📂 Switch view...',
-          options: [
-            { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' }, default: true },
-            { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' } }
-          ],
-          min_values: 1,
-          max_values: 1
-        }]
-      },
+      getNavBarRow('dashboard_logs'),
       {
         type: 1,
         components: [
-          { type: 2, style: 2, label: 'System Status', custom_id: 'panel_to_dashboard', emoji: { name: '📊' } },
+          homeButton(),
+          { type: 2, style: 2, label: 'Bot Health', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '📡' } },
           { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
         ]
       }
@@ -824,7 +803,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : '⚪ Standby (no storm alerts)';
 
   const embed = {
-    title: '🛠️ HCPSS Status Monitor - Control Panel',
+    title: '🏠 Control Panel — Dashboard',
     color: 0x9B59B6,
     description:
       `### 📊 System Status\n` +
@@ -838,7 +817,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       `• **Storm Mode**: ${stormModeStr}\n` +
       `• **Last Posted Message**: ${lastPostStr}\n` +
       (panelMsgId ? `• **Panel Message ID**: \`${panelMsgId}\`\n` : '') +
-      `\n*Use the nav dropdown to switch pages. Use the Quick Actions dropdown for diagnostics.*`,
+      `\n🧭 *Every panel page is in the navigation dropdown below — pick one to jump straight to it.*`,
     timestamp: new Date().toISOString()
   };
 
@@ -846,28 +825,21 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     getNavBarRow('dashboard'),
     {
       type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'panel_view_select',
-        placeholder: '📂 Switch view...',
-        options: [
-          { label: 'Logging', value: 'dashboard_logs', description: 'View recent bot activity logs', emoji: { name: '📋' } },
-          { label: 'Bot Status', value: 'dashboard_bot_status', description: 'View ping, latency bars, and bot health metrics', emoji: { name: '📡' } }
-        ],
-        min_values: 1,
-        max_values: 1
-      }]
+      components: [
+        { type: 2, style: 1, label: 'Check Now', custom_id: 'panel_check', emoji: { name: '🔍' } },
+        { type: 2, style: 2, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } },
+        { type: 2, style: 2, label: 'Bot Health', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '📡' } },
+        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
+      ]
     },
     {
       type: 1,
       components: [{
         type: 3,
         custom_id: 'panel_action_select',
-        placeholder: '⚡ Quick Actions...',
+        placeholder: '🧰 Diagnostics & tools...',
         options: [
-          { label: 'Run Status Check', value: 'panel_check', description: 'Fetch HCPSS status and post to alert channel', emoji: { name: '🔍' } },
           { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
-          { label: 'Refresh Panel', value: 'panel_refresh', description: 'Refresh the control panel embed in the log channel', emoji: { name: '🔄' } },
           { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
           { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📋' } },
           { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
