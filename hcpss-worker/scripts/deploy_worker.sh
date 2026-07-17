@@ -52,12 +52,29 @@ fi
 echo "Patched $toml_file"
 
 echo "Uploading Discord secrets to Wrangler (non-interactive)..."
-printf '%s' "$DISCORD_BOT_TOKEN" | wrangler secret put DISCORD_BOT_TOKEN
-printf '%s' "$DISCORD_CHANNEL_ID" | wrangler secret put DISCORD_CHANNEL_ID
+# Upload all secrets in one bulk call (a single new worker version) instead of
+# sequential `secret put` calls, which each create a version and intermittently
+# fail with Cloudflare API error 10013.
+secrets_json=$(jq -n --arg bot "$DISCORD_BOT_TOKEN" --arg chan "$DISCORD_CHANNEL_ID" \
+  '{DISCORD_BOT_TOKEN: $bot, DISCORD_CHANNEL_ID: $chan}')
 if [ -n "${MANUAL_TRIGGER_TOKEN:-}" ]; then
-  printf '%s' "$MANUAL_TRIGGER_TOKEN" | wrangler secret put MANUAL_TRIGGER_TOKEN
+  secrets_json=$(printf '%s' "$secrets_json" | jq --arg t "$MANUAL_TRIGGER_TOKEN" '. + {MANUAL_TRIGGER_TOKEN: $t}')
 else
   echo "MANUAL_TRIGGER_TOKEN not set; manual public POST trigger will remain disabled."
+fi
+
+secrets_uploaded=0
+for attempt in 1 2 3; do
+  if printf '%s' "$secrets_json" | wrangler secret bulk; then
+    secrets_uploaded=1
+    break
+  fi
+  echo "Secret bulk upload failed (attempt $attempt); retrying in 10s..." >&2
+  sleep 10
+done
+if [ "$secrets_uploaded" != "1" ]; then
+  echo "Failed to upload secrets after 3 attempts." >&2
+  exit 1
 fi
 
 echo "Registering Discord slash commands..."
