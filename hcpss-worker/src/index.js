@@ -1852,7 +1852,8 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
                    `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
                    `• **\`/stats\`**: Show status check and operating status statistics.\n` +
                    `• **\`/setup\`**: Initial one-time setup for the status monitor.\n` +
-                   `• **\`/announce\`**: Post a custom embed announcement in the current channel.\n\n` +
+                   `• **\`/announce\`**: Post a custom embed announcement in the current channel.\n` +
+                   `• **\`/refresh-panel\`**: Refresh the control panel embed in the log channel.\n\n` +
                    `### 🔔 DM Notifications\n` +
                    `Anyone can click the **Notify Me** button on a status message to get a DM when the operating status changes. Click again to unsubscribe.\n\n` +
                    `*Use these commands in any channel where the bot has permission to read and send messages.*`,
@@ -2768,6 +2769,11 @@ export default {
       if (body.type === 2 && body.data && body.data.name === 'stats') {
         const payload = await runStatsCommand(env);
         return interactionResponse(payload);
+      }
+
+      if (body.type === 2 && body.data && body.data.name === 'refresh-panel') {
+        ctx.waitUntil(handlePanelRefresh(body, env));
+        return deferredInteractionResponse();
       }
 
       if (body.type === 2 && body.data && body.data.name === ANNOUNCE_COMMAND) {

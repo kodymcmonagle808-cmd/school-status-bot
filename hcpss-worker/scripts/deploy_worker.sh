@@ -187,6 +187,12 @@ payload=$(jq -n '[
     description: "Post a custom embed announcement in this channel.",
     type: 1,
     dm_permission: false
+  },
+  {
+    name: "refresh-panel",
+    description: "Refresh the control panel embed in the log channel.",
+    type: 1,
+    dm_permission: false
   }
 ]')
 
