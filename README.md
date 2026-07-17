@@ -1,21 +1,24 @@
 # hcpss-status-monitor
 
-## Discord webhook status behavior
+Monitors the [HCPSS status page](https://status.hcpss.org) and posts the current operating status to Discord.
 
-When a status update is sent, the monitor now uses a **delete-previous-then-post-new** flow:
+Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) — see its [README](hcpss-worker/README.md) for setup, features, and deployment. The Worker:
 
-1. Read the previously sent Discord webhook message ID from local state.
-2. Attempt to delete that previous message.
-3. Post the new status message (`wait=true`) and store the new message ID.
+- Checks the status page on each guild's configured schedule (Eastern time) and posts the status embed, replacing the previous message instead of stacking.
+- Shows active NWS weather alerts for Howard County on status embeds.
+- Falls back to the last known status (with a stale banner) if the status page is unreachable.
+- Handles slash commands (`/post-status`, `/override`, `/calendar`, `/history`, `/events`, `/stats`, `/setup`, `/announce`) and the interactive control panel.
+- Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button.
 
-If no previous ID exists, it simply posts a new message.  
-If deletion fails (for example not found or permission-related responses), the monitor logs a warning and continues.  
-If posting fails, the stored previous message ID is left unchanged.
+## Repo layout
 
-Both the scheduled workflow and the on-demand workflow use the same persisted webhook state (`last_message_state.json`) so each new alert replaces the last posted status message instead of stacking.
+- `hcpss-worker/` — the Cloudflare Worker (source, tests, deploy script).
+- `.github/workflows/deploy_worker.yml` — runs the worker tests and deploys on push to `main`.
+- `.github/workflows/current_status.yml` — manual workflow that triggers an on-demand status post via the Worker (requires the `MANUAL_TRIGGER_TOKEN` secret).
 
-## Environment variables
+## Tests
 
-- `DISCORD_WEBHOOK_URL` (required for posting to Discord)
-- `DISCORD_WEBHOOK_STATE_FILE` (optional): path to the JSON state file used to persist the last webhook message ID.  
-  Default: `last_message_state.json`
+```bash
+cd hcpss-worker
+node --test
+```
