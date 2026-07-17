@@ -1633,13 +1633,13 @@ async function buildBotStatusPayload(env, guildId, fraction = 1) {
 
   return { embeds: [embed], components };
 }
-async function buildControlPanelPayload(env, guildId, configOverride = null) {
-  // configOverride lets callers that just wrote the config render with the fresh
-  // value — KV does not guarantee read-your-own-writes, so re-reading here right
-  // after a save can return the stale cached config for up to 60 seconds.
+async function buildControlPanelPayload(env, guildId, configOverride = null, pageOverride = null) {
+  // configOverride/pageOverride let callers that just wrote to KV render with the
+  // fresh values — KV does not guarantee read-your-own-writes, so re-reading here
+  // right after a save can return stale cached data for up to 60 seconds.
   const stored = configOverride || await getConfig(env, guildId);
   const config = getEffectiveConfig(stored);
-  const page = await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
+  const page = pageOverride || await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
 
   if (page === 'config_general') {
     const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
@@ -1858,19 +1858,87 @@ async function buildControlPanelPayload(env, guildId, configOverride = null) {
       description: `### ⏱️ Daily Check Times (Eastern)\n` +
                    `The bot checks the HCPSS status website at these times every day:\n\n` +
                    `${scheduleLines || '> *(no check times set)*'}\n\n` +
-                   `**⏰ Set Custom Times** — enter any times you want, up to 4 (e.g. \`5:21 AM, 7:28 AM, 8:00 PM\`)\n` +
-                   `**🔄 Reset Defaults** — restore 5:20 AM, 7:20 AM, 10:00 AM & 8:00 PM`,
+                   `➕ **Add Time** — pick a new check time (up to 4)\n` +
+                   `🗑️ Use the dropdown below to remove a time\n` +
+                   `🔄 **Reset Defaults** — restore 5:20 AM, 7:20 AM, 10:00 AM & 8:00 PM`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
       await getNavBarRow(env, guildId, 'config_schedule'),
+      ...(currentSchedule.length ? [{
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_schedremove_select',
+          placeholder: '🗑️ Remove a check time...',
+          options: currentSchedule.map(t => ({
+            label: formatScheduleTimeLabel(t),
+            value: t,
+            emoji: { name: clockEmojiForTime(t) }
+          })),
+          min_values: 1,
+          max_values: 1
+        }]
+      }] : []),
       {
         type: 1,
         components: [
-          { type: 2, style: 1, label: 'Set Custom Times', custom_id: 'panel_btn_set_schedule', emoji: { name: '⏰' } },
+          { type: 2, style: 3, label: 'Add Time', custom_id: 'panel_btn_add_time', emoji: { name: '➕' } },
           { type: 2, style: 2, label: 'Reset Defaults', custom_id: 'panel_btn_reset_schedule', emoji: { name: '🔄' } },
           { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
+        ]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_schedule_add') {
+    const pick = config.schedule_pick || {};
+    const h = Number.isInteger(pick.h) ? pick.h : 7;
+    const mt = Number.isInteger(pick.mt) ? pick.mt : 0;
+    const mo = Number.isInteger(pick.mo) ? pick.mo : 0;
+    const pickedTime = `${h}:${mt}${mo}`;
+    const pickedLabel = formatScheduleTimeLabel(pickedTime);
+
+    const embed = {
+      title: '🗓️ HCPSS Status Monitor - Add Check Time',
+      color: 0x2ECC71,
+      description: `## ${clockEmojiForTime(pickedTime)}  ${pickedLabel}\n\n` +
+                   `Dial in a time with the three pickers below, then press **Add**.\n` +
+                   `*All times are Eastern.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const hourOptions = Array.from({ length: 24 }, (_, i) => ({
+      label: `${(i % 12) || 12} ${i < 12 ? 'AM' : 'PM'}`,
+      value: String(i),
+      emoji: { name: clockEmojiForTime(`${i}:00`) },
+      default: i === h
+    }));
+
+    const minTenOptions = Array.from({ length: 6 }, (_, t) => ({
+      label: `:${t}0 - :${t}9`,
+      value: String(t),
+      default: t === mt
+    }));
+
+    const minOneOptions = Array.from({ length: 10 }, (_, o) => ({
+      label: `:${mt}${o}`,
+      value: String(o),
+      default: o === mo
+    }));
+
+    const components = [
+      { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_hour', placeholder: '🕐 Hour...', options: hourOptions, min_values: 1, max_values: 1 }] },
+      { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_minten', placeholder: 'Minutes (choose the range)...', options: minTenOptions, min_values: 1, max_values: 1 }] },
+      { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_minone', placeholder: 'Minutes (exact)...', options: minOneOptions, min_values: 1, max_values: 1 }] },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 3, label: `Add ${pickedLabel}`, custom_id: `panel_btn_confirm_add_time:${h}:${mt}${mo}`, emoji: { name: '✅' } },
+          { type: 2, style: 2, label: 'Cancel', custom_id: 'panel_to_config_schedule', emoji: { name: '⬅️' } }
         ]
       }
     ];
@@ -2265,6 +2333,21 @@ async function applyConfigUpdate(body, env) {
     } else {
       next.status_ping_roles[editingKey] = null;
     }
+  } else if (customId === 'cfg_schedpick_hour' && Array.isArray(values) && values[0] !== undefined) {
+    const pick = next.schedule_pick || {};
+    pick.h = parseInt(values[0], 10);
+    next.schedule_pick = pick;
+  } else if (customId === 'cfg_schedpick_minten' && Array.isArray(values) && values[0] !== undefined) {
+    const pick = next.schedule_pick || {};
+    pick.mt = parseInt(values[0], 10);
+    next.schedule_pick = pick;
+  } else if (customId === 'cfg_schedpick_minone' && Array.isArray(values) && values[0] !== undefined) {
+    const pick = next.schedule_pick || {};
+    pick.mo = parseInt(values[0], 10);
+    next.schedule_pick = pick;
+  } else if (customId === 'cfg_schedremove_select' && Array.isArray(values) && values[0]) {
+    const cur = Array.isArray(next.check_schedule) ? next.check_schedule : ['5:20', '7:20', '10:00', '20:00'];
+    next.check_schedule = cur.filter(t => t !== values[0]);
   } else if (customId === 'cfg_toggle_select') {
     // Multi-select: selected values = ON, absent values = OFF
     const selected = Array.isArray(values) ? values : [];
@@ -2646,60 +2729,6 @@ export default {
               flags: EPHEMERAL_FLAG
             });
           }
-        }
-
-        if (modalId === 'modal_set_schedule') {
-          const raw = getModalInputValue(body, 'input_schedule_times').trim();
-          const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
-          if (parts.length < 1 || parts.length > 4) {
-            return interactionResponse({
-              content: '❌ Please provide between 1 and 4 times, separated by commas (e.g. `5:21 AM, 7:28 AM, 8:00 PM`).',
-              flags: EPHEMERAL_FLAG
-            });
-          }
-
-          const parsedTimes = [];
-          for (const part of parts) {
-            const m = part.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
-            if (!m) {
-              return interactionResponse({
-                content: `❌ Could not parse time \`${part}\`. Use formats like \`5:21 AM\`, \`7:28 PM\`, or 24-hour \`20:15\`.`,
-                flags: EPHEMERAL_FLAG
-              });
-            }
-            let hours = parseInt(m[1], 10);
-            const minutes = parseInt(m[2], 10);
-            const meridiem = m[3] ? m[3].toLowerCase() : null;
-            if (meridiem) {
-              if (hours < 1 || hours > 12) {
-                return interactionResponse({
-                  content: `❌ Invalid time \`${part}\`. With AM/PM, the hour must be between 1 and 12.`,
-                  flags: EPHEMERAL_FLAG
-                });
-              }
-              if (meridiem === 'pm' && hours !== 12) hours += 12;
-              if (meridiem === 'am' && hours === 12) hours = 0;
-            }
-            if (hours > 23 || minutes > 59) {
-              return interactionResponse({
-                content: `❌ Invalid time \`${part}\`. Hours must be 0-23 and minutes 0-59.`,
-                flags: EPHEMERAL_FLAG
-              });
-            }
-            const normalized = `${hours}:${String(minutes).padStart(2, '0')}`;
-            if (!parsedTimes.includes(normalized)) parsedTimes.push(normalized);
-          }
-
-          parsedTimes.sort((a, b) => {
-            const [ah, am] = a.split(':').map(Number);
-            const [bh, bm] = b.split(':').map(Number);
-            return (ah * 60 + am) - (bh * 60 + bm);
-          });
-
-          config.check_schedule = parsedTimes;
-          const invokerId = body.member && body.member.user && body.member.user.id;
-          await postLog(env, getEffectiveConfig(config).log_channel_id, `🗓️ Check schedule updated to: **${parsedTimes.map(formatScheduleTimeLabel).join(', ')}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
-          updated = true;
         }
 
         if (modalId === 'modal_set_override') {
@@ -3094,30 +3123,66 @@ export default {
           return jsonResponse({ type: 7, data: payload });
         }
 
-        if (customId === 'panel_btn_set_schedule') {
+        if (customId === 'panel_btn_add_time') {
           const storedCfg = await getConfig(env, guildId);
           const effectiveCfg = getEffectiveConfig(storedCfg);
-          const currentTimes = (effectiveCfg.check_schedule || []).map(formatScheduleTimeLabel).join(', ');
-          return jsonResponse({
-            type: 9,
-            data: {
-              title: 'Set Check Times (Eastern)',
-              custom_id: 'modal_set_schedule',
-              components: [{
-                type: 1,
-                components: [{
-                  type: 4,
-                  custom_id: 'input_schedule_times',
-                  style: 1,
-                  label: 'Times, comma-separated (max 4)',
-                  placeholder: '5:21 AM, 7:28 AM, 10:00 AM, 8:00 PM',
-                  value: currentTimes || undefined,
-                  max_length: 100,
-                  required: true
-                }]
-              }]
-            }
+          if ((effectiveCfg.check_schedule || []).length >= 4) {
+            return interactionResponse({
+              content: '❌ You already have 4 check times. Remove one first.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule_add');
+          const payload = await buildControlPanelPayload(env, guildId, storedCfg, 'config_schedule_add');
+          return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId.startsWith('panel_btn_confirm_add_time')) {
+          if (!(await canConfigure(body.member, env, guildId))) {
+            return interactionResponse({
+              content: 'You do not have permission to configure this bot.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          // The picked time is encoded in the button's custom_id so the add is
+          // always exactly what the panel displayed, independent of KV staleness.
+          const bits = customId.split(':');
+          const hours = parseInt(bits[1], 10);
+          const mm = bits[2] || '';
+          if (isNaN(hours) || hours > 23 || !/^\d{2}$/.test(mm) || parseInt(mm, 10) > 59) {
+            return interactionResponse({
+              content: '❌ Could not read the picked time. Please try again.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+          const newTime = `${hours}:${mm}`;
+
+          const storedCfg = await getConfig(env, guildId);
+          const current = getEffectiveConfig(storedCfg).check_schedule || [];
+          if (current.length >= 4 && !current.includes(newTime)) {
+            return interactionResponse({
+              content: '❌ You already have 4 check times. Remove one first.',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const merged = current.includes(newTime) ? current.slice() : [...current, newTime];
+          merged.sort((a, b) => {
+            const [ah, am] = a.split(':').map(Number);
+            const [bh, bm] = b.split(':').map(Number);
+            return (ah * 60 + am) - (bh * 60 + bm);
           });
+          storedCfg.check_schedule = merged;
+          delete storedCfg.schedule_pick;
+          await setConfig(env, guildId, storedCfg);
+
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          await postLog(env, getEffectiveConfig(storedCfg).log_channel_id, `🗓️ Check time added: **${formatScheduleTimeLabel(newTime)}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+
+          await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
+          const payload = await buildControlPanelPayload(env, guildId, storedCfg, 'config_schedule');
+          return jsonResponse({ type: 7, data: payload });
         }
 
         if (customId === 'panel_btn_add_event') {
@@ -3710,7 +3775,11 @@ export default {
         }
 
         const freshConfig = await applyConfigUpdate(body, env);
-        const payload = await buildControlPanelPayload(env, guildId, freshConfig);
+        const cfgCustomId = body.data.custom_id;
+        let pageHint = null;
+        if (cfgCustomId.startsWith('cfg_schedpick_')) pageHint = 'config_schedule_add';
+        else if (cfgCustomId === 'cfg_schedremove_select') pageHint = 'config_schedule';
+        const payload = await buildControlPanelPayload(env, guildId, freshConfig, pageHint);
         return jsonResponse({
           type: 7,
           data: payload
