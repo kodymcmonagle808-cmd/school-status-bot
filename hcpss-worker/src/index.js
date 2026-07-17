@@ -620,7 +620,6 @@ async function handlePanelKvDebug(body, env) {
     `last_check_time:${guildId}`,
     `last_message_id:${guildId}`,
     `last_channel_id:${guildId}`,
-    `last_posted_text:${guildId}`,
     `override:${guildId || env.DISCORD_GUILD_ID}`,
     `status_stats`,
     `status_history`,
@@ -1126,16 +1125,10 @@ async function doCheckAndPost(env, options = {}) {
       __channelId: channelId
     };
 
-    const firstEmbed = builtStatus.payload.embeds && builtStatus.payload.embeds[0];
-    // Include the title (which carries the status date) so scheduled checks post a fresh
-    // status when the site rolls over to a new day, not only when the body text changes.
-    const liveStatusText = firstEmbed ? `${firstEmbed.title || ''}\n${firstEmbed.description || ''}` : '';
-    
-    const lastPostedText = await env.STATUS_KV.get(`last_posted_text:${guildId}`);
-    const statusChanged = lastPostedText !== liveStatusText;
-
-    const alwaysPost = config.toggle_always_post === true;
-    const shouldPostAlert = !isScheduled || alwaysPost || (statusChanged && !builtStatus.isError);
+    // Every check posts the latest status, changed or not (the previous status
+    // message is deleted after the new one goes out). The only exception is a
+    // scraper error during a scheduled run — the failure alert system covers that.
+    const shouldPostAlert = !isScheduled || !builtStatus.isError;
 
     let postedMessageId = null;
     if (shouldPostAlert) {
@@ -1161,7 +1154,6 @@ async function doCheckAndPost(env, options = {}) {
       
       await env.STATUS_KV.put(`last_message_id:${guildId}`, postedMessageId);
       await env.STATUS_KV.put(`last_channel_id:${guildId}`, channelId);
-      await env.STATUS_KV.put(`last_posted_text:${guildId}`, liveStatusText);
 
       if (previousMessageId && previousMessageId !== postedMessageId) {
         const deleteChannelId = previousChannelId || channelId;
@@ -1180,11 +1172,11 @@ async function doCheckAndPost(env, options = {}) {
       );
       results.push({ guildId, ok: true, id: postedMessageId });
     } else {
-      // Scheduled check with no status change: log the check so every run shows in System Logs
+      // Scheduled check hit a scraper error: don't post the error embed on a schedule.
       await postLog(
         env,
         logChannelId,
-        `🔎 HCPSS status checked (source: ${options.source || 'unknown'}) — no change, nothing posted.`,
+        `⚠️ HCPSS status check errored (source: ${options.source || 'unknown'}) — error status not posted.`,
         { latency },
         guildId
       );
@@ -1250,7 +1242,6 @@ function getEffectiveConfig(stored) {
     next.check_schedule = ["5:20", "7:20", "10:00", "20:00"];
   }
   if (typeof next.toggle_pings !== 'boolean') next.toggle_pings = true;
-  if (typeof next.toggle_always_post !== 'boolean') next.toggle_always_post = false;
   if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
   return next;
 }
@@ -1715,7 +1706,6 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
 
   if (page === 'config_toggles') {
     const pings = config.toggle_pings !== false;
-    const alwaysPost = config.toggle_always_post === true;
     const errorAlerts = config.toggle_error_alerts !== false;
 
     const embed = {
@@ -1724,7 +1714,6 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
       description: `### 🚨 Feature Toggles\n` +
                    `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
-                   `• ${alwaysPost ? '🟢' : '🔴'} **Always Post Status** — post even if status hasn't changed\n` +
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -1738,13 +1727,6 @@ async function buildControlPanelPayload(env, guildId, configOverride = null, pag
         description: 'Ping configured roles when a status change occurs',
         emoji: { name: '🔔' },
         default: pings
-      },
-      {
-        label: 'Always Post Status',
-        value: 'toggle_always_post',
-        description: 'Post status on every scheduled check, even if unchanged',
-        emoji: { name: '📝' },
-        default: alwaysPost
       },
       {
         label: 'Scraper Failure Alerts',
@@ -2352,7 +2334,6 @@ async function applyConfigUpdate(body, env) {
     // Multi-select: selected values = ON, absent values = OFF
     const selected = Array.isArray(values) ? values : [];
     next.toggle_pings = selected.includes('toggle_pings');
-    next.toggle_always_post = selected.includes('toggle_always_post');
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
