@@ -7,7 +7,10 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Checks the status page on each guild's configured schedule (Eastern time) and posts the status embed, replacing the previous message instead of stacking.
 - Shows active NWS weather alerts for Howard County on status embeds, plus a Tomorrow Outlook on evening posts.
 - Storm mode: checks every 15 minutes during the early-morning decision window when a winter storm alert is active, posting only on real status changes.
-- Falls back to the last known status (with a stale banner) if the status page is unreachable.
+- Closure Outlook: during storm alerts, estimates the chance of a closing/delay from NWS alerts and nearby districts' announcements.
+- Cross-checks the HCPSS News feed and flags when it disagrees with the (sometimes lagging) status page.
+- Falls back to the last known status (with a stale banner) if the status page is unreachable, and alerts staff on repeated scraper failures (with a recovery notice).
+- Tracks per-school-year closure stats so `/stats` can compare this year against previous years.
 - Handles slash commands (`/post-status`, `/override`, `/calendar`, `/history`, `/events`, `/stats`, `/setup`, `/announce`) and the interactive control panel.
 - Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button.
 

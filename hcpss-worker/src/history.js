@@ -12,7 +12,7 @@ export const INCIDENT_KEYS = [
 ];
 
 // School years run Aug 1 → Jul 31 (Eastern calendar).
-export function schoolYearStartMs(now = new Date()) {
+function schoolYearStartYear(now) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric',
@@ -21,8 +21,17 @@ export function schoolYearStartMs(now = new Date()) {
   const get = t => Number((parts.find(p => p.type === t) || {}).value);
   const y = get('year');
   const m = get('month');
-  const startYear = m >= 8 ? y : y - 1;
-  return Date.UTC(startYear, 7, 1);
+  return m >= 8 ? y : y - 1;
+}
+
+export function schoolYearStartMs(now = new Date()) {
+  return Date.UTC(schoolYearStartYear(now), 7, 1);
+}
+
+// Label for the school year containing the given moment, e.g. "2026-27".
+export function schoolYearLabel(now = new Date()) {
+  const start = schoolYearStartYear(now);
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
 // Computes per-status incident counts for the current school year from history
@@ -50,6 +59,68 @@ export function computeIncidentStats(history, now = new Date()) {
   };
 }
 
+// Per-school-year incident counts derived from whatever history entries are
+// still retained, keyed by school-year label.
+export function computeYearlyIncidents(history) {
+  const yearly = {};
+  for (const h of Array.isArray(history) ? history : []) {
+    const key = h && h.status_key;
+    if (!key || key === 'normal_operations' || !INCIDENT_KEYS.includes(key)) continue;
+    const label = schoolYearLabel(new Date(h.timestamp));
+    if (!yearly[label]) yearly[label] = {};
+    yearly[label][key] = (yearly[label][key] || 0) + 1;
+  }
+  return yearly;
+}
+
+// Persistent per-year archive under `yearly_stats`, shaped
+// { "<label>": { <status_key>: count } }. History entries are capped at
+// HISTORY_LIMIT, so this archive is what preserves old school years.
+async function getYearlyStatsArchive(env) {
+  const raw = await env.STATUS_KV.get('yearly_stats');
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function bumpYearlyStats(env, statusKey, now = new Date()) {
+  try {
+    const yearly = await getYearlyStatsArchive(env);
+    const label = schoolYearLabel(now);
+    if (!yearly[label]) yearly[label] = {};
+    yearly[label][statusKey] = (yearly[label][statusKey] || 0) + 1;
+    await env.STATUS_KV.put('yearly_stats', JSON.stringify(yearly));
+  } catch (e) {
+    console.error('Failed to update yearly stats:', e);
+  }
+}
+
+// Merges the persistent archive with counts derived from retained history,
+// taking the max per status key. The archive only started accruing when this
+// feature shipped, so history-derived counts backfill years it missed; once
+// history rolls off, the archive keeps the year alive.
+export async function getYearlyStats(env, history = null) {
+  const [archive, hist] = await Promise.all([
+    getYearlyStatsArchive(env),
+    history ? Promise.resolve(history) : getStatusHistory(env)
+  ]);
+  const derived = computeYearlyIncidents(hist);
+
+  const merged = {};
+  for (const label of new Set([...Object.keys(archive), ...Object.keys(derived)])) {
+    merged[label] = {};
+    for (const key of INCIDENT_KEYS) {
+      const count = Math.max((archive[label] || {})[key] || 0, (derived[label] || {})[key] || 0);
+      if (count > 0) merged[label][key] = count;
+    }
+  }
+  return merged;
+}
+
 export async function getStatusHistory(env) {
   const rawHistory = await env.STATUS_KV.get('status_history');
   if (!rawHistory) return [];
@@ -75,7 +146,7 @@ export async function trackStatusHistory(env, currentStatus, primaryDate, status
 
   await env.STATUS_KV.put('status_history', JSON.stringify(history.slice(0, HISTORY_LIMIT)));
 
-  // Increment the all-time operating status counters
+  // Increment the all-time and per-school-year operating status counters
   if (statusKey && statusKey !== 'normal_operations') {
     try {
       let stats = {};
@@ -88,5 +159,6 @@ export async function trackStatusHistory(env, currentStatus, primaryDate, status
     } catch (e) {
       console.error('Failed to increment operating status stats:', e);
     }
+    await bumpYearlyStats(env, statusKey);
   }
 }

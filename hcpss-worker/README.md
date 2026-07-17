@@ -12,9 +12,12 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Storm mode: while a winter storm alert is active, checks every 15 minutes during the 4:30–7:30 AM ET decision window and posts (with pings) only if the status changed.
 - Evening posts (5 PM ET onward) include a Tomorrow Outlook: the next day's calendar event and storm alerts likely to still be active by morning.
 - Nearby Districts: while a storm alert is active, status embeds show what the six neighboring districts (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) have announced; `/districts` shows the same list on demand (toggleable in Settings > Feature Toggles).
+- Closure Outlook: while a storm alert is active (and HCPSS still shows Normal Operations), embeds include a Low/Moderate/High/Very High estimate of a closing or delay, scored from the strongest NWS alert plus nearby districts' calls (toggleable).
+- Source Cross-Check: scans the [HCPSS News](https://news.hcpss.org) RSS feed and warns on the embed when a recent news post reads as a closing/delay but the status page still shows Normal Operations (toggleable).
 - Retries failed scrapes once, then falls back to the last known status (up to 24h old) with a stale-data banner instead of going dark.
+- Alerts staff after 3 consecutive scraper failures, and posts a recovery notice when the scraper starts working again.
 - Offers a `🔔 Notify Me` button — anyone can opt into a DM when the operating status actually changes; click again to unsubscribe.
-- Records up to 200 status changes and reports school-year stats (closure days, delays, early closings) in `/stats`.
+- Records up to 200 status changes and reports school-year stats (closure days, delays, early closings) in `/stats`, including a per-school-year archive so past years stay comparable ("3 closures this year vs. 5 in 2025-26").
 - Adds staff-only `/post-status` to publish a fresh public status from Discord.
 - Adds staff-only `/config` to set the alert channel, log channel, staff role, and emergency ping roles.
 - Logs scheduled checks, manual triggers, and `/post-status` runs to the configured log channel.
@@ -85,11 +88,21 @@ The health check returns JSON with the Worker name, timestamp, and whether the m
 
 ## Worker Source Layout
 
-- `src/index.js` — Discord interaction routing, control panel, and check/post pipeline.
+- `src/index.js` — entry point: HTTP routing, manual trigger, and the cron handler.
+- `src/interactions.js` — Discord interaction routing (slash commands, panel components, modals, setup).
+- `src/commands.js` — slash command runners and panel quick-action handlers.
+- `src/panel.js` — control panel pages, the persistent log-channel panel message, and panel-driven config updates.
+- `src/check.js` — the check-and-post loop and scraper health tracking (failure alerts + recovery notice).
+- `src/embeds.js` — status/override/error embed building.
+- `src/config.js` — per-guild config and status overrides in KV.
+- `src/discord.js` — Discord API helpers and request signature verification.
+- `src/constants.js` — status labels, colors, defaults, and the school calendar.
 - `src/scraper.js` — status page fetching/parsing, retry, and last-good-scrape fallback cache.
 - `src/weather.js` — NWS active alerts for Howard County (zone MDC027) with a 10-minute KV cache.
 - `src/districts.js` — neighboring districts' operating status (per-platform fetchers, keyword classifier, 10-minute KV cache).
-- `src/history.js` — status change history (200 entries) and school-year incident stats.
+- `src/outlook.js` — Closure Outlook scoring from weather alerts + district statuses.
+- `src/crosscheck.js` — HCPSS News RSS second-source signal and mismatch detection.
+- `src/history.js` — status change history (200 entries), school-year incident stats, and the per-year archive.
 - `src/subscriptions.js` — DM notify-on-change subscriber list and delivery.
 - `src/timeutil.js` — Eastern-time and schedule formatting helpers.
 
