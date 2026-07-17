@@ -671,6 +671,8 @@ async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   if (message) {
     const timeStr = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
+      month: 'short',
+      day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
@@ -1139,11 +1141,11 @@ async function doCheckAndPost(env, options = {}) {
       );
       results.push({ guildId, ok: true, id: postedMessageId });
     } else {
-      // Scheduled check with no status change: just update stats & timestamp, no new log message
+      // Scheduled check with no status change: log the check so every run shows in System Logs
       await postLog(
         env,
         logChannelId,
-        null,
+        `🔎 HCPSS status checked (source: ${options.source || 'unknown'}) — no change, nothing posted.`,
         { latency },
         guildId
       );
