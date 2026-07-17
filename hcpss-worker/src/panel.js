@@ -48,8 +48,21 @@ function getNavTabForPage(page) {
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
 
-function homeButton(style = 2) {
-  return { type: 2, style, label: 'Home', custom_id: 'panel_to_dashboard', emoji: { name: '🏠' } };
+// Per-page actions dropdown. Option values are dispatched by the
+// panel_action_select handler as if a component with that custom_id was used.
+function actionSelectRow(options, placeholder = '⚡ Actions...', disabled = false) {
+  return {
+    type: 1,
+    components: [{
+      type: 3,
+      custom_id: 'panel_action_select',
+      placeholder,
+      options,
+      min_values: 1,
+      max_values: 1,
+      ...(disabled ? { disabled: true } : {})
+    }]
+  };
 }
 
 function getNavBarRow(activeTab) {
@@ -157,14 +170,10 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
 
   const components = [
     getNavBarRow('dashboard_bot_status'),
-    {
-      type: 1,
-      components: [
-        homeButton(),
-        { type: 2, style: 1, label: 'Refresh Metrics', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '🔄' }, disabled: !isFinal },
-        { type: 2, style: 2, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } }
-      ]
-    }
+    actionSelectRow([
+      { label: 'Refresh Metrics', value: 'panel_to_dashboard_bot_status', description: 'Re-measure and animate the health bars', emoji: { name: '🔄' } },
+      { label: 'View Recent Logs', value: 'panel_to_dashboard_logs', description: 'Switch to the recent activity logs page', emoji: { name: '📋' } }
+    ], '⚡ Actions...', !isFinal)
   ];
 
   return { embeds: [embed], components };
@@ -231,13 +240,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           max_values: 1
         }]
       },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 1, label: 'Set Embed Footer', custom_id: 'panel_btn_set_footer', emoji: { name: '✍️' } },
-          homeButton()
-        ]
-      }
+      actionSelectRow([
+        { label: 'Set Embed Footer Text', value: 'panel_btn_set_footer', description: 'Customize the footer shown on status embeds', emoji: { name: '✍️' } }
+      ])
     ];
 
     return { embeds: [embed], components };
@@ -332,8 +337,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           min_values: 0,
           max_values: toggleOptions.length
         }]
-      },
-      { type: 1, components: [homeButton()] }
+      }
     ];
 
     return { embeds: [embed], components };
@@ -392,13 +396,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           max_values: 1
         }]
       },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 1, label: `Set Color for ${editingLabel.split(' ')[0]}...`, custom_id: 'panel_btn_set_color', emoji: { name: '🎨' } },
-          homeButton()
-        ]
-      }
+      actionSelectRow([
+        { label: `Set Color for ${editingLabel}`, value: 'panel_btn_set_color', description: 'Enter a HEX embed color for this status', emoji: { name: '🎨' } }
+      ])
     ];
 
     return { embeds: [embed], components };
@@ -417,7 +417,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `The bot checks the HCPSS status website at these times every day:\n\n` +
                    `${scheduleLines || '> *(no check times set)*'}\n\n` +
                    `➕ **Add Time** — pick a new check time (up to 4)\n` +
-                   `🗑️ Use the dropdown below to remove a time\n` +
+                   `🗑️ **Remove a check time** — pick it from the remove dropdown\n` +
                    `🔄 **Reset Defaults** — restore 5:20 AM, 7:20 AM, 10:00 AM & 8:00 PM`,
       timestamp: new Date().toISOString()
     };
@@ -439,14 +439,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           max_values: 1
         }]
       }] : []),
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 3, label: 'Add Time', custom_id: 'panel_btn_add_time', emoji: { name: '➕' } },
-          { type: 2, style: 2, label: 'Reset Defaults', custom_id: 'panel_btn_reset_schedule', emoji: { name: '🔄' } },
-          homeButton()
-        ]
-      }
+      actionSelectRow([
+        { label: 'Add Time', value: 'panel_btn_add_time', description: 'Pick a new daily check time (up to 4)', emoji: { name: '➕' } },
+        { label: 'Reset Defaults', value: 'panel_btn_reset_schedule', description: 'Restore 5:20 AM, 7:20 AM, 10:00 AM & 8:00 PM', emoji: { name: '🔄' } }
+      ])
     ];
 
     return { embeds: [embed], components };
@@ -464,7 +460,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       title: '🗓️ Control Panel — Add Check Time',
       color: 0x2ECC71,
       description: `## ${clockEmojiForTime(pickedTime)}  ${pickedLabel}\n\n` +
-                   `Dial in a time with the three pickers below, then press **Add**.\n` +
+                   `Dial in a time with the three pickers below, then confirm with **Add** in the bottom dropdown.\n` +
                    `*All times are Eastern.*`,
       timestamp: new Date().toISOString()
     };
@@ -492,13 +488,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_hour', placeholder: '🕐 Hour...', options: hourOptions, min_values: 1, max_values: 1 }] },
       { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_minten', placeholder: 'Minutes (choose the range)...', options: minTenOptions, min_values: 1, max_values: 1 }] },
       { type: 1, components: [{ type: 3, custom_id: 'cfg_schedpick_minone', placeholder: 'Minutes (exact)...', options: minOneOptions, min_values: 1, max_values: 1 }] },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 3, label: `Add ${pickedLabel}`, custom_id: `panel_btn_confirm_add_time:${h}:${mt}${mo}`, emoji: { name: '✅' } },
-          { type: 2, style: 2, label: 'Back to Schedule', custom_id: 'panel_to_config_schedule', emoji: { name: '⬅️' } }
-        ]
-      }
+      actionSelectRow([
+        { label: `Add ${pickedLabel}`, value: `panel_btn_confirm_add_time:${h}:${mt}${mo}`, description: 'Save this check time to the schedule', emoji: { name: '✅' } },
+        { label: 'Back to Schedule', value: 'panel_to_config_schedule', description: 'Cancel and return to the schedule page', emoji: { name: '⬅️' } }
+      ], '✅ Confirm or cancel...')
     ];
 
     return { embeds: [embed], components };
@@ -526,20 +519,16 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       color: 0xE67E22,
       description: `### 🗓️ Upcoming Closures (Next 7 Days)\n` +
                    `${calendarList}\n\n` +
-                   `*Use the buttons below to manage dynamic calendar overrides (e.g. adding closures or custom events).*`,
+                   `*Use the actions dropdown below to manage dynamic calendar overrides (e.g. adding closures or custom events).*`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
       getNavBarRow('config_calendar'),
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 3, label: 'Add Event', custom_id: 'panel_btn_add_event', emoji: { name: '➕' } },
-          { type: 2, style: 4, label: 'Remove Event', custom_id: 'panel_btn_remove_event', emoji: { name: '➖' } },
-          homeButton()
-        ]
-      }
+      actionSelectRow([
+        { label: 'Add Event', value: 'panel_btn_add_event', description: 'Add a closure or custom event for a date', emoji: { name: '➕' } },
+        { label: 'Remove Event', value: 'panel_btn_remove_event', description: 'Remove a custom event by date', emoji: { name: '➖' } }
+      ])
     ];
 
     return { embeds: [embed], components };
@@ -570,8 +559,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_commands'),
-      { type: 1, components: [homeButton()] }
+      getNavBarRow('config_commands')
     ];
 
     return { embeds: [embed], components };
@@ -629,22 +617,14 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                      `• **Details**: *${activeOverride.details || 'None provided.'}*\n` +
                      `• **Custom Title**: *${activeOverride.title || 'None.'}*`;
 
-      components.push({
-        type: 1,
-        components: [
-          { type: 2, style: 4, label: 'Disable Override', custom_id: 'panel_btn_clear_override', emoji: { name: '🛑' } },
-          homeButton()
-        ]
-      });
+      components.push(actionSelectRow([
+        { label: 'Disable Override', value: 'panel_btn_clear_override', description: 'Return to live scraper mode immediately', emoji: { name: '🛑' } }
+      ]));
     } else {
       overrideInfo = `✅ **No Active Override**\n*The bot is currently running in Live Scraper Mode, showing the actual status posted on the HCPSS website.*`;
-      components.push({
-        type: 1,
-        components: [
-          { type: 2, style: 1, label: 'Set Status Override', custom_id: 'panel_to_config_override_select', emoji: { name: '🛠️' } },
-          homeButton()
-        ]
-      });
+      components.push(actionSelectRow([
+        { label: 'Set Status Override', value: 'panel_to_config_override_select', description: 'Force a specific status for 1-30 days', emoji: { name: '🛠️' } }
+      ]));
     }
 
     const embed = {
@@ -672,7 +652,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       title: '🛠️ Control Panel — Set Status Override',
       color: 0xF1C40F,
       description: `### ⚠️ Select Status to Override\n` +
-                   `Choose the status you want to force from the select menu below, then click **Set Duration & Details** to enter how long the override should last.\n\n` +
+                   `Choose the status you want to force from the select menu below, then pick **Set Duration & Details** in the actions dropdown to enter how long the override should last.\n\n` +
                    `👉 *Selected status: **${editingLabel}***`,
       timestamp: new Date().toISOString()
     };
@@ -694,13 +674,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           max_values: 1
         }]
       },
-      {
-        type: 1,
-        components: [
-          { type: 2, style: 3, label: 'Set Duration & Details...', custom_id: 'panel_btn_override_details', emoji: { name: '✍️' } },
-          { type: 2, style: 2, label: 'Back to Stats', custom_id: 'panel_to_config_stats', emoji: { name: '⬅️' } }
-        ]
-      }
+      actionSelectRow([
+        { label: 'Set Duration & Details...', value: 'panel_btn_override_details', description: 'Enter the override duration, title, and reason', emoji: { name: '✍️' } },
+        { label: 'Back to Stats', value: 'panel_to_config_stats', description: 'Cancel and return to the stats page', emoji: { name: '⬅️' } }
+      ], '✍️ Confirm or cancel...')
     ];
 
     return { embeds: [embed], components };
@@ -732,14 +709,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
     const components = [
       getNavBarRow('dashboard_logs'),
-      {
-        type: 1,
-        components: [
-          homeButton(),
-          { type: 2, style: 2, label: 'Bot Health', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '📡' } },
-          { type: 2, style: 4, label: 'Clear Logs', custom_id: 'panel_clear_logs', emoji: { name: '🗑️' } }
-        ]
-      }
+      actionSelectRow([
+        { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📜' } },
+        { label: 'Clear Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
+      ])
     ];
 
     return { embeds: [embed], components };
@@ -823,32 +796,15 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
   const components = [
     getNavBarRow('dashboard'),
-    {
-      type: 1,
-      components: [
-        { type: 2, style: 1, label: 'Check Now', custom_id: 'panel_check', emoji: { name: '🔍' } },
-        { type: 2, style: 2, label: 'Recent Logs', custom_id: 'panel_to_dashboard_logs', emoji: { name: '📋' } },
-        { type: 2, style: 2, label: 'Bot Health', custom_id: 'panel_to_dashboard_bot_status', emoji: { name: '📡' } },
-        { type: 2, style: 2, label: 'Refresh', custom_id: 'panel_refresh', emoji: { name: '🔄' } }
-      ]
-    },
-    {
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'panel_action_select',
-        placeholder: '🧰 Diagnostics & tools...',
-        options: [
-          { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
-          { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
-          { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📋' } },
-          { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
-          { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
-        ],
-        min_values: 1,
-        max_values: 1
-      }]
-    },
+    actionSelectRow([
+      { label: 'Run Status Check', value: 'panel_check', description: 'Fetch HCPSS status and post to alert channel', emoji: { name: '🔍' } },
+      { label: 'Refresh Panel', value: 'panel_refresh', description: 'Refresh the control panel embed in the log channel', emoji: { name: '🔄' } },
+      { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
+      { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
+      { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📋' } },
+      { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
+      { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
+    ], '⚡ Quick Actions...'),
     {
       type: 1,
       components: [{

@@ -353,6 +353,13 @@ async function handlePanelComponent(body, env, ctx, guildId) {
       ctx.waitUntil(handlePanelClearLogs(body, env));
       return deferredInteractionResponse();
     }
+    // Any other option value is dispatched as if a component with that
+    // custom_id was used, so page action dropdowns can reuse the existing
+    // navigation/modal handlers below.
+    if (typeof action === 'string' && action.startsWith('panel_') && action !== 'panel_action_select') {
+      const forwarded = { ...body, data: { ...body.data, custom_id: action, values: [] } };
+      return await handlePanelComponent(forwarded, env, ctx, guildId);
+    }
     return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
   }
 
