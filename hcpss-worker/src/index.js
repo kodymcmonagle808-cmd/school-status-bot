@@ -44,7 +44,17 @@ function matchesScheduleTime(currentEtStr, scheduledTimeStr) {
     diff += 1440;
   }
 
-  return diff >= -2 && diff <= 5;
+  // Never fire early; allow up to 5 minutes late in case a cron tick is delayed.
+  // Duplicate firings within the window are skipped via the last_sched_slot dedupe key.
+  return diff >= 0 && diff <= 5;
+}
+
+function formatScheduleTimeLabel(timeStr) {
+  const [h, m] = String(timeStr).split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return timeStr;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 
@@ -943,41 +953,71 @@ async function handleScraperSuccess(env) {
 
 async function doCheckAndPost(env, options = {}) {
   const start = Date.now();
+  const isScheduled = options.source === 'scheduled';
 
   // Determine target guilds to post/check for.
   let targetGuildIds = [];
   if (options.guildId) {
     targetGuildIds = [options.guildId];
   } else {
-    // Collect all guilds from KV keys starting with 'config:'
-    try {
-      const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
-      targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
-    } catch (e) {
-      console.error('Failed to list configs in KV:', e);
+    // Scheduled runs fire every minute, so read the cached guild index instead of
+    // doing a KV list operation (list ops are limited to 1,000/day on the free plan).
+    let haveIndex = false;
+    if (isScheduled) {
+      const rawIndex = await env.STATUS_KV.get('guild_index');
+      if (rawIndex) {
+        try {
+          const parsedIndex = JSON.parse(rawIndex);
+          if (Array.isArray(parsedIndex)) {
+            targetGuildIds = parsedIndex.filter(Boolean);
+            haveIndex = true;
+          }
+        } catch {}
+      }
     }
-    
+
+    if (!haveIndex) {
+      // Collect all guilds from KV keys starting with 'config:'
+      try {
+        const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
+        targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
+        if (isScheduled) {
+          await env.STATUS_KV.put('guild_index', JSON.stringify(targetGuildIds));
+        }
+      } catch (e) {
+        console.error('Failed to list configs in KV:', e);
+      }
+    }
+
     // Ensure default guild from environment is included if configured
     if (env.DISCORD_GUILD_ID && !targetGuildIds.includes(env.DISCORD_GUILD_ID)) {
       targetGuildIds.push(env.DISCORD_GUILD_ID);
     }
   }
 
-  const isScheduled = options.source === 'scheduled';
   let activeGuildIds = [...targetGuildIds];
 
   if (isScheduled) {
-    const currentEtStr = getEasternTimeStr(new Date());
+    const now = new Date();
+    const currentEtStr = getEasternTimeStr(now);
+    const todayYmd = formatYmdNY(now);
     const matchedGuilds = [];
     for (const guildId of targetGuildIds) {
       const stored = await getConfig(env, guildId);
       const config = getEffectiveConfig(stored);
-      const hasMatch = Array.isArray(config.check_schedule) && config.check_schedule.some(schedTime => 
-        matchesScheduleTime(currentEtStr, schedTime)
-      );
-      if (hasMatch) {
-        matchedGuilds.push(guildId);
-      }
+      const schedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
+      const matchedTime = schedule.find(schedTime => matchesScheduleTime(currentEtStr, schedTime));
+      if (!matchedTime) continue;
+
+      // Dedupe: the cron fires every minute and the match window is 5 minutes
+      // wide, so skip guilds whose matched slot already ran today.
+      const slotKey = `last_sched_slot:${guildId}`;
+      const slotVal = `${todayYmd} ${matchedTime}`;
+      const lastSlot = await env.STATUS_KV.get(slotKey);
+      if (lastSlot === slotVal) continue;
+      await env.STATUS_KV.put(slotKey, slotVal);
+
+      matchedGuilds.push(guildId);
     }
     activeGuildIds = matchedGuilds;
   }
@@ -1414,8 +1454,28 @@ async function getConfig(env, guildId = '') {
 }
 
 async function setConfig(env, guildId, next) {
-  const key = configKey(guildId || env.DISCORD_GUILD_ID);
+  const effectiveGuildId = guildId || env.DISCORD_GUILD_ID;
+  const key = configKey(effectiveGuildId);
   await env.STATUS_KV.put(key, JSON.stringify(next));
+
+  // Keep the cached guild index in sync so per-minute scheduled runs can
+  // avoid KV list operations.
+  if (effectiveGuildId) {
+    try {
+      let index = [];
+      const rawIndex = await env.STATUS_KV.get('guild_index');
+      if (rawIndex) {
+        try { index = JSON.parse(rawIndex); } catch {}
+      }
+      if (!Array.isArray(index)) index = [];
+      if (!index.includes(effectiveGuildId)) {
+        index.push(effectiveGuildId);
+        await env.STATUS_KV.put('guild_index', JSON.stringify(index));
+      }
+    } catch (e) {
+      console.error('Failed to update guild index:', e);
+    }
+  }
 }
 
 function getModalInputValue(body, customId) {
@@ -1786,10 +1846,7 @@ async function buildControlPanelPayload(env, guildId) {
 
   if (page === 'config_schedule') {
     const currentSchedule = config.check_schedule || [];
-    const formattedTimes = currentSchedule.map(timeStr => {
-      const option = SCHEDULE_OPTIONS.find(o => o.value === timeStr);
-      return option ? option.label : timeStr;
-    }).join(', ');
+    const formattedTimes = currentSchedule.map(formatScheduleTimeLabel).join(', ');
 
     const embed = {
       title: '🗓️ HCPSS Status Monitor - Schedule Config',
@@ -1797,7 +1854,7 @@ async function buildControlPanelPayload(env, guildId) {
       description: `### ⏱️ Automated Check Times\n` +
                    `Configure when the bot automatically scrapes the HCPSS status website.\n\n` +
                    `• **Current Schedule**: ${formattedTimes || '(none)'}\n\n` +
-                   `*Select between 1 and 4 check times from the dropdown below.*`,
+                   `*Pick preset times from the dropdown, or use **Set Custom Times** to enter any times you want (Eastern, max 4).*`,
       timestamp: new Date().toISOString()
     };
 
@@ -1808,7 +1865,7 @@ async function buildControlPanelPayload(env, guildId) {
         components: [{
           type: 3,
           custom_id: 'cfg_schedule_select',
-          placeholder: 'Select check times (max 4)',
+          placeholder: 'Select preset check times (max 4)',
           options: SCHEDULE_OPTIONS.map(opt => ({
             label: opt.label,
             value: opt.value,
@@ -1821,6 +1878,7 @@ async function buildControlPanelPayload(env, guildId) {
       {
         type: 1,
         components: [
+          { type: 2, style: 1, label: 'Set Custom Times', custom_id: 'panel_btn_set_schedule', emoji: { name: '⏰' } },
           { type: 2, style: 2, label: 'Back to Settings', custom_id: 'panel_to_config_general', emoji: { name: '⬅️' } }
         ]
       }
@@ -2601,6 +2659,54 @@ export default {
           }
         }
 
+        if (modalId === 'modal_set_schedule') {
+          const raw = getModalInputValue(body, 'input_schedule_times').trim();
+          const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length < 1 || parts.length > 4) {
+            return interactionResponse({
+              content: '❌ Please provide between 1 and 4 times, separated by commas (e.g. `5:21 AM, 7:28 AM, 8:00 PM`).',
+              flags: EPHEMERAL_FLAG
+            });
+          }
+
+          const parsedTimes = [];
+          for (const part of parts) {
+            const m = part.match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+            if (!m) {
+              return interactionResponse({
+                content: `❌ Could not parse time \`${part}\`. Use formats like \`5:21 AM\`, \`7:28 PM\`, or 24-hour \`20:15\`.`,
+                flags: EPHEMERAL_FLAG
+              });
+            }
+            let hours = parseInt(m[1], 10);
+            const minutes = parseInt(m[2], 10);
+            const meridiem = m[3] ? m[3].toLowerCase() : null;
+            if (meridiem) {
+              if (hours < 1 || hours > 12) {
+                return interactionResponse({
+                  content: `❌ Invalid time \`${part}\`. With AM/PM, the hour must be between 1 and 12.`,
+                  flags: EPHEMERAL_FLAG
+                });
+              }
+              if (meridiem === 'pm' && hours !== 12) hours += 12;
+              if (meridiem === 'am' && hours === 12) hours = 0;
+            }
+            if (hours > 23 || minutes > 59) {
+              return interactionResponse({
+                content: `❌ Invalid time \`${part}\`. Hours must be 0-23 and minutes 0-59.`,
+                flags: EPHEMERAL_FLAG
+              });
+            }
+            const normalized = `${hours}:${String(minutes).padStart(2, '0')}`;
+            if (!parsedTimes.includes(normalized)) parsedTimes.push(normalized);
+          }
+
+          config.check_schedule = parsedTimes;
+          const invokerId = body.member && body.member.user && body.member.user.id;
+          await postLog(env, getEffectiveConfig(config).log_channel_id, `🗓️ Check schedule updated to: **${parsedTimes.map(formatScheduleTimeLabel).join(', ')}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+          updated = true;
+        }
+
         if (modalId === 'modal_set_override') {
           const daysRaw = getModalInputValue(body, 'input_override_days').trim();
           const titleRaw = getModalInputValue(body, 'input_override_title').trim();
@@ -2975,6 +3081,32 @@ export default {
           await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
           const payload = await buildControlPanelPayload(env, guildId);
           return jsonResponse({ type: 7, data: payload });
+        }
+
+        if (customId === 'panel_btn_set_schedule') {
+          const storedCfg = await getConfig(env, guildId);
+          const effectiveCfg = getEffectiveConfig(storedCfg);
+          const currentTimes = (effectiveCfg.check_schedule || []).map(formatScheduleTimeLabel).join(', ');
+          return jsonResponse({
+            type: 9,
+            data: {
+              title: 'Set Check Times (Eastern)',
+              custom_id: 'modal_set_schedule',
+              components: [{
+                type: 1,
+                components: [{
+                  type: 4,
+                  custom_id: 'input_schedule_times',
+                  style: 1,
+                  label: 'Times, comma-separated (max 4)',
+                  placeholder: '5:21 AM, 7:28 AM, 10:00 AM, 8:00 PM',
+                  value: currentTimes || undefined,
+                  max_length: 100,
+                  required: true
+                }]
+              }]
+            }
+          });
         }
 
         if (customId === 'panel_btn_add_event') {

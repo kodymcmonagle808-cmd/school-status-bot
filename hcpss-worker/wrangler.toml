@@ -26,11 +26,7 @@ DISCORD_GUILD_ID = ""
 binding = "STATUS_KV"
 id = "f0ecd441d95a4cbca41035b619a94705"
 
-# Cron trigger: check at 5:20 AM, 7:20 AM, 10:00 AM, and 8:00 PM Eastern (EDT: UTC-4, EST: UTC-5)
+# Cron fires every minute; the worker matches each guild's configured check
+# times (Eastern, any minute of the day) and dedupes so each slot runs once.
 [triggers]
-crons = [
-  "20 9,10 * * *",   # 5:20 AM EDT/EST
-  "20 11,12 * * *",  # 7:20 AM EDT/EST
-  "0 14,15 * * *",   # 10:00 AM EDT/EST
-  "0 0,1 * * *"      # 8:00 PM EDT/EST
-]
+crons = ["* * * * *"]
