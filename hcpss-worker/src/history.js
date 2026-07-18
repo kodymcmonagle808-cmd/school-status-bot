@@ -73,11 +73,21 @@ export function computeYearlyIncidents(history) {
   return yearly;
 }
 
+// HCPSS history lives under the legacy unsuffixed keys; guilds following a
+// neighboring district get their own parallel keys per district id.
+function historyKey(districtId) {
+  return districtId && districtId !== 'hcpss' ? `status_history:${districtId}` : 'status_history';
+}
+
+function yearlyStatsKey(districtId) {
+  return districtId && districtId !== 'hcpss' ? `yearly_stats:${districtId}` : 'yearly_stats';
+}
+
 // Persistent per-year archive under `yearly_stats`, shaped
 // { "<label>": { <status_key>: count } }. History entries are capped at
 // HISTORY_LIMIT, so this archive is what preserves old school years.
-async function getYearlyStatsArchive(env) {
-  const raw = await env.STATUS_KV.get('yearly_stats');
+async function getYearlyStatsArchive(env, districtId = '') {
+  const raw = await env.STATUS_KV.get(yearlyStatsKey(districtId));
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
@@ -87,13 +97,13 @@ async function getYearlyStatsArchive(env) {
   }
 }
 
-async function bumpYearlyStats(env, statusKey, now = new Date()) {
+async function bumpYearlyStats(env, statusKey, districtId = '', now = new Date()) {
   try {
-    const yearly = await getYearlyStatsArchive(env);
+    const yearly = await getYearlyStatsArchive(env, districtId);
     const label = schoolYearLabel(now);
     if (!yearly[label]) yearly[label] = {};
     yearly[label][statusKey] = (yearly[label][statusKey] || 0) + 1;
-    await env.STATUS_KV.put('yearly_stats', JSON.stringify(yearly));
+    await env.STATUS_KV.put(yearlyStatsKey(districtId), JSON.stringify(yearly));
   } catch (e) {
     console.error('Failed to update yearly stats:', e);
   }
@@ -103,10 +113,10 @@ async function bumpYearlyStats(env, statusKey, now = new Date()) {
 // taking the max per status key. The archive only started accruing when this
 // feature shipped, so history-derived counts backfill years it missed; once
 // history rolls off, the archive keeps the year alive.
-export async function getYearlyStats(env, history = null) {
+export async function getYearlyStats(env, history = null, districtId = '') {
   const [archive, hist] = await Promise.all([
-    getYearlyStatsArchive(env),
-    history ? Promise.resolve(history) : getStatusHistory(env)
+    getYearlyStatsArchive(env, districtId),
+    history ? Promise.resolve(history) : getStatusHistory(env, districtId)
   ]);
   const derived = computeYearlyIncidents(hist);
 
@@ -121,8 +131,8 @@ export async function getYearlyStats(env, history = null) {
   return merged;
 }
 
-export async function getStatusHistory(env) {
-  const rawHistory = await env.STATUS_KV.get('status_history');
+export async function getStatusHistory(env, districtId = '') {
+  const rawHistory = await env.STATUS_KV.get(historyKey(districtId));
   if (!rawHistory) return [];
   try {
     const parsed = JSON.parse(rawHistory);
@@ -134,8 +144,10 @@ export async function getStatusHistory(env) {
 
 // Records a status change. Callers are responsible for only invoking this when
 // the status actually changed (they own the `last_known_status` comparison).
-export async function trackStatusHistory(env, currentStatus, primaryDate, statusKey = '') {
-  const history = await getStatusHistory(env);
+// Pass a districtId to record into that district's own history instead of the
+// HCPSS one (district history skips the global all-time `status_stats` counters).
+export async function trackStatusHistory(env, currentStatus, primaryDate, statusKey = '', districtId = '') {
+  const history = await getStatusHistory(env, districtId);
 
   history.unshift({
     timestamp: Date.now(),
@@ -144,21 +156,23 @@ export async function trackStatusHistory(env, currentStatus, primaryDate, status
     status_key: statusKey || ''
   });
 
-  await env.STATUS_KV.put('status_history', JSON.stringify(history.slice(0, HISTORY_LIMIT)));
+  await env.STATUS_KV.put(historyKey(districtId), JSON.stringify(history.slice(0, HISTORY_LIMIT)));
 
   // Increment the all-time and per-school-year operating status counters
   if (statusKey && statusKey !== 'normal_operations') {
-    try {
-      let stats = {};
-      const rawStats = await env.STATUS_KV.get('status_stats');
-      if (rawStats) {
-        stats = JSON.parse(rawStats) || {};
+    if (!districtId || districtId === 'hcpss') {
+      try {
+        let stats = {};
+        const rawStats = await env.STATUS_KV.get('status_stats');
+        if (rawStats) {
+          stats = JSON.parse(rawStats) || {};
+        }
+        stats[statusKey] = (stats[statusKey] || 0) + 1;
+        await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
+      } catch (e) {
+        console.error('Failed to increment operating status stats:', e);
       }
-      stats[statusKey] = (stats[statusKey] || 0) + 1;
-      await env.STATUS_KV.put('status_stats', JSON.stringify(stats));
-    } catch (e) {
-      console.error('Failed to increment operating status stats:', e);
     }
-    await bumpYearlyStats(env, statusKey);
+    await bumpYearlyStats(env, statusKey, districtId);
   }
 }

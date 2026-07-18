@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeClosureOutlook, formatOutlookLines } from '../src/outlook.js';
+import { computeClosureOutlook, formatOutlookLines, closureOutlookTitle } from '../src/outlook.js';
 
 function district(name, status) {
   return { id: name.toLowerCase(), name, status, detail: '' };
@@ -83,6 +83,25 @@ test('formatOutlookLines includes the disclaimer and reasons', () => {
   assert.ok(text.includes('Moderate'));
   assert.ok(text.includes('Winter Storm Warning'));
   assert.ok(text.includes('HCPSS makes the final call'));
+});
+
+test('heat warnings score like other warnings', () => {
+  const out = computeClosureOutlook([{ event: 'Excessive Heat Warning', severity: 'Severe', endsMs: 0 }], []);
+  assert.equal(out.score, 3);
+  assert.ok(out.reasons[0].includes('Excessive Heat Warning'));
+});
+
+test('closureOutlookTitle picks a seasonal emoji', () => {
+  assert.equal(closureOutlookTitle([{ event: 'Winter Storm Warning', severity: 'Severe' }]), '❄️ Closure Outlook');
+  assert.equal(closureOutlookTitle([{ event: 'Excessive Heat Warning', severity: 'Severe' }]), '🌡️ Closure Outlook');
+  assert.equal(closureOutlookTitle([{ event: 'Heat Advisory', severity: 'Minor' }]), '🌡️ Closure Outlook');
+  // Winter wins when both are somehow active, and non-storm alerts are ignored.
+  assert.equal(closureOutlookTitle([
+    { event: 'Heat Advisory', severity: 'Minor' },
+    { event: 'Winter Storm Warning', severity: 'Severe' }
+  ]), '❄️ Closure Outlook');
+  assert.equal(closureOutlookTitle([{ event: 'Severe Thunderstorm Warning', severity: 'Severe' }]), '⚠️ Closure Outlook');
+  assert.equal(closureOutlookTitle([]), '⚠️ Closure Outlook');
 });
 
 test('widespread power outages raise the outlook', () => {

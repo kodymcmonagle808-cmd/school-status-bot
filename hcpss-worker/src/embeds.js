@@ -22,7 +22,7 @@ import {
   statusKeyToDistrictStatus,
   HCPSS_COUNTY
 } from './districts.js';
-import { computeClosureOutlook, formatOutlookLines } from './outlook.js';
+import { computeClosureOutlook, formatOutlookLines, closureOutlookTitle } from './outlook.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from './outages.js';
 import { getChartIncidents, formatRoadLines } from './roads.js';
@@ -206,7 +206,7 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
     const pct = outagePercent(getCountyOutage(outageSummary, HCPSS_COUNTY));
     const outlookText = formatOutlookLines(computeClosureOutlook(alerts, districts || [], { outagePercent: pct }));
     if (outlookText) {
-      addField(embeds[0], '❄️ Closure Outlook', outlookText);
+      addField(embeds[0], closureOutlookTitle(alerts), outlookText);
     }
   }
 
@@ -382,7 +382,7 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     const pct = outagePercent(getCountyOutage(outageSummary, meta.county));
     const outlookText = formatOutlookLines(computeClosureOutlook(alerts, neighborList || [], { outagePercent: pct }));
     if (outlookText) {
-      addField(embeds[0], '❄️ Closure Outlook', outlookText);
+      addField(embeds[0], closureOutlookTitle(alerts), outlookText);
     }
   }
 

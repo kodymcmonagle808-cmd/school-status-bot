@@ -104,6 +104,51 @@ test('advisory-level winter alerts do not trigger the refresh', async (t) => {
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
+test('a power threat in a primary district\'s own zone triggers the refresh', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false }); // Howard zone is quiet
+  seedGuild(kv.store, 'g1');
+  kv.store.set('config:g1', JSON.stringify({ alert_channel_id: 'chan-g1', primary_district: 'fcps' }));
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+  // Frederick's zone cache has a warning-level power threat.
+  kv.store.set('weather_alerts_cache:MDC021', JSON.stringify([
+    { event: 'Ice Storm Warning', severity: 'Severe', endsMs: 0 }
+  ]));
+  // District guild payloads read the district status cache, not the scraper.
+  kv.store.set('district_status_cache', JSON.stringify({
+    at: Date.now(),
+    districts: [{ id: 'fcps', name: 'Frederick Co.', status: 'none', detail: '' }]
+  }));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env);
+  assert.equal(result.updated, 1);
+  assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
+});
+
+test('the district-zone probe runs at most once per 15-minute slot', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  await maybeRefreshStormEmbeds(env);
+  assert.ok(kv.store.has('last_storm_probe_slot'));
+  // Second quiet tick in the same slot bails before any config reads.
+  const reads = [];
+  const origGet = kv.get.bind(kv);
+  kv.get = async (key) => { reads.push(key); return origGet(key); };
+  await maybeRefreshStormEmbeds(env);
+  assert.equal(reads.includes('config:g1'), false);
+});
+
 test('guilds with all storm sections disabled are skipped', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store);

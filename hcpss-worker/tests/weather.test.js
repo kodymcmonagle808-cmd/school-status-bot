@@ -47,6 +47,12 @@ test('isStormAlert matches winter events and high severity', () => {
   assert.equal(isStormAlert(null), false);
 });
 
+test('isStormAlert matches heat events (heat closures are real)', () => {
+  assert.equal(isStormAlert({ event: 'Excessive Heat Warning', severity: 'Severe' }), true);
+  assert.equal(isStormAlert({ event: 'Extreme Heat Watch', severity: 'Moderate' }), true);
+  assert.equal(isStormAlert({ event: 'Heat Advisory', severity: 'Minor' }), true);
+});
+
 test('hasStormAlert scans a list', () => {
   assert.equal(hasStormAlert([{ event: 'Air Quality Alert', severity: 'Minor' }]), false);
   assert.equal(hasStormAlert([{ event: 'Air Quality Alert', severity: 'Minor' }, { event: 'Snow Squall Warning', severity: 'Moderate' }]), true);

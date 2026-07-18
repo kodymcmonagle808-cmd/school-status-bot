@@ -46,9 +46,14 @@ export function formatWeatherAlertLines(alerts) {
   }).join('\n');
 }
 
-// Alerts that justify storm-mode checking: winter-type events, or anything
+// Alerts that justify storm-mode checking: winter-type events, heat events
+// (schools without AC close or dismiss early for extreme heat), or anything
 // NWS rates Severe/Extreme.
-const STORM_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold|storm/i;
+const STORM_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold|storm|heat/i;
+
+// Winter vs heat classification, used to pick seasonal emoji for the outlook.
+export const WINTER_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold/i;
+export const HEAT_EVENT_RE = /heat/i;
 
 export function isStormAlert(alert) {
   if (!alert) return false;

@@ -4,7 +4,7 @@ import { EPHEMERAL_FLAG, ALL_STATUS_LABELS, STATUS_LABELS, SCHOOL_CALENDAR_EVENT
 import { formatCheckedAt, formatStatusDate, formatYmdNY } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
 import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel, INCIDENT_KEYS } from './history.js';
-import { getDistrictStatuses, formatDistrictLines, HCPSS_COUNTY } from './districts.js';
+import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, HCPSS_COUNTY } from './districts.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
 import { postLog } from './panel.js';
@@ -15,6 +15,7 @@ import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
 import { getBgeOutages, getCountyOutage, outagePercent } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { getOutlookPredictions, summarizeOutlookAccuracy, formatOutlookAccuracyLines } from './outlookaccuracy.js';
 import { toggleSubscriber, getSubscribers } from './subscriptions.js';
 import { getGreetedUserIds } from './greeter.js';
 import { TERMS_MD, PRIVACY_MD } from './legal.js';
@@ -268,13 +269,23 @@ async function getGuildJoinedAt(env, guildId) {
   return Number(stored.created_at) || 0;
 }
 
+// Guilds following a neighboring district read that district's own history and
+// yearly stats; everyone else gets the HCPSS ones. Returns '' for HCPSS.
+async function getGuildHistoryDistrict(env, guildId) {
+  if (!guildId) return '';
+  const cfg = getEffectiveConfig(await getConfig(env, guildId));
+  return cfg.primary_district && cfg.primary_district !== 'hcpss' ? cfg.primary_district : '';
+}
+
 export async function runHistoryCommand(env, guildId = '') {
   const checkedAt = new Date();
   const joinedAt = await getGuildJoinedAt(env, guildId);
-  const history = (await getStatusHistory(env)).filter(h => h.timestamp >= joinedAt);
+  const districtId = await getGuildHistoryDistrict(env, guildId);
+  const meta = districtId ? getDistrictMeta(districtId) : null;
+  const history = (await getStatusHistory(env, districtId)).filter(h => h.timestamp >= joinedAt);
 
   const embed = {
-    title: '📜 HCPSS Recent Status History',
+    title: meta ? `📜 ${meta.name} Schools — Recent Status History` : '📜 HCPSS Recent Status History',
     color: 3066993,
     timestamp: checkedAt.toISOString(),
     footer: { text: `School Status · ${history.length} change(s) recorded${joinedAt ? ' since this server was set up' : ''}` }
@@ -353,6 +364,8 @@ export async function runLogsCommand(env, guildId = '') {
 export async function runStatsCommand(env, guildId = '') {
   const checkedAt = new Date();
   const joinedAt = await getGuildJoinedAt(env, guildId);
+  const districtId = await getGuildHistoryDistrict(env, guildId);
+  const meta = districtId ? getDistrictMeta(districtId) : null;
   let stats = {};
   try {
     const rawStats = await env.STATUS_KV.get('status_stats');
@@ -370,14 +383,15 @@ export async function runStatsCommand(env, guildId = '') {
 
   const incidentLabels = Object.fromEntries(INCIDENT_KEYS.map(k => [k, ALL_STATUS_LABELS[k]]));
 
-  const fullHistory = await getStatusHistory(env);
+  const fullHistory = await getStatusHistory(env, districtId);
   const history = fullHistory.filter(h => h.timestamp >= joinedAt);
 
   // All-time counts: servers set up after tracking began only count changes
   // they were around for; the original deployment keeps the global counters
-  // (which include entries that have rolled off the capped history).
+  // (which include entries that have rolled off the capped history). District
+  // guilds always count from their district's history.
   const countsDisplay = Object.entries(incidentLabels).map(([key, label]) => {
-    const count = joinedAt
+    const count = (joinedAt || districtId)
       ? history.filter(h => h.status_key === key).length
       : (stats[key] || 0);
     return `• **${label}**: ${count}`;
@@ -393,7 +407,7 @@ export async function runStatsCommand(env, guildId = '') {
 
   // Previous school years from the persistent archive (current year excluded —
   // it's already shown above). District-wide, so it uses the unfiltered history.
-  const yearly = await getYearlyStats(env, fullHistory);
+  const yearly = await getYearlyStats(env, fullHistory, districtId);
   const currentLabel = schoolYearLabel(checkedAt);
   const pastYearLines = Object.keys(yearly)
     .filter(label => label !== currentLabel)
@@ -411,8 +425,18 @@ export async function runStatsCommand(env, guildId = '') {
     ? `\n\n**Previous School Years (district-wide):**\n${pastYearLines.join('\n')}`
     : '';
 
+  // Closure Outlook track record (HCPSS-based; graded the day after each
+  // storm-evening prediction). Only shown once at least one night is graded.
+  let outlookSection = '';
+  try {
+    const accuracyLines = formatOutlookAccuracyLines(summarizeOutlookAccuracy(await getOutlookPredictions(env)));
+    if (accuracyLines) {
+      outlookSection = `\n\n**🔮 Closure Outlook Track Record:**\n${accuracyLines}`;
+    }
+  } catch {}
+
   const embed = {
-    title: '📊 School Status - Statistics',
+    title: meta ? `📊 School Status — ${meta.name} Statistics` : '📊 School Status - Statistics',
     color: 0x34495E,
     description: `**Scraper Diagnostics (all servers):**\n` +
                  `• Total Checks: \`${scrapesTotal}\`\n` +
@@ -422,7 +446,7 @@ export async function runStatsCommand(env, guildId = '') {
                  `• 🕑 **2-Hour Delays**: \`${yearStats.delays}\`\n` +
                  `• 🏃 **Early Closings**: \`${yearStats.earlyCloses}\`\n` +
                  `• 📌 **Last Incident**: ${lastIncidentStr}` +
-                 pastYearsSection + `\n\n` +
+                 pastYearsSection + outlookSection + `\n\n` +
                  `**Status Changes (This School Year):**\n` +
                  `${yearCountsDisplay}\n\n` +
                  `**Status Changes (${joinedAt ? 'Since Server Setup' : 'All-Time'}):**\n` +
@@ -672,7 +696,8 @@ export async function handlePanelKvDebug(body, env) {
     `scraper_failures_count`,
     `scraper_failure_alerted`,
     `log_panel_message_id:${guildId}`,
-    `setup_done:${guildId}`
+    `setup_done:${guildId}`,
+    `outlook_predictions`
   ];
 
   for (const key of kvKeys) {

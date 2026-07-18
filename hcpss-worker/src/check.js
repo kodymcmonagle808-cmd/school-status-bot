@@ -1,10 +1,10 @@
 // The core check-and-post loop plus scraper health tracking (consecutive
 // failure alerts and recovery notices).
 
-import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, stormTickSlot } from './timeutil.js';
+import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, formatStatusDate, stormTickSlot, middayTickSlot } from './timeutil.js';
 import { getStatusCards } from './scraper.js';
 import { getActiveWeatherAlerts, hasStormAlert } from './weather.js';
-import { getDistrictStatuses } from './districts.js';
+import { getDistrictStatuses, getDistrictMeta, DISTRICT_STATUS_TO_KEY, DISTRICT_STATUS_LABELS } from './districts.js';
 import { trackStatusHistory } from './history.js';
 import { notifySubscribers } from './subscriptions.js';
 import { getConfig, getEffectiveConfig } from './config.js';
@@ -211,15 +211,32 @@ export async function doCheckAndPost(env, options = {}) {
     activeGuildIds = matchedGuilds;
 
     // Storm mode: when no regular check matched, run extra checks every 15
-    // minutes during the 4:30-7:30 AM ET decision window while a winter storm
-    // alert is active. Storm checks only post (and ping) if the status changed.
+    // minutes while a storm/heat alert is active — during the 4:30-7:30 AM ET
+    // decision window (closings/delays) and the 10 AM-2 PM ET midday window
+    // (early dismissals). Storm checks only post (and ping) if the status changed.
     if (activeGuildIds.length === 0) {
-      const stormSlot = stormTickSlot(currentEtStr);
+      const stormSlot = stormTickSlot(currentEtStr) || middayTickSlot(currentEtStr);
       if (!stormSlot) {
         return { ok: true, skipped: true, message: 'No guilds scheduled for this time.' };
       }
-      const alerts = await getActiveWeatherAlerts(env);
-      if (!hasStormAlert(alerts)) {
+      // An alert in the default (Howard) zone or in any guild's primary
+      // district's zone opens the window — a guild following Frederick still
+      // gets storm checks when only Frederick is under a warning.
+      let stormZoneAlert = hasStormAlert(await getActiveWeatherAlerts(env));
+      if (!stormZoneAlert) {
+        const zones = new Set();
+        for (const gid of targetGuildIds) {
+          const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+          if (meta && meta.nwsZone) zones.add(meta.nwsZone);
+        }
+        for (const zone of zones) {
+          if (hasStormAlert(await getActiveWeatherAlerts(env, zone))) {
+            stormZoneAlert = true;
+            break;
+          }
+        }
+      }
+      if (!stormZoneAlert) {
         return { ok: true, skipped: true, message: 'Storm window, but no storm alert active.' };
       }
       const slotVal = `${todayYmd} ${stormSlot}`;
@@ -309,7 +326,14 @@ export async function doCheckAndPost(env, options = {}) {
         const prev = await env.STATUS_KV.get(key);
         if (prev !== sig) {
           // First observation is a baseline, not a change.
-          if (prev !== null) changedDistricts.add(id);
+          if (prev !== null) {
+            changedDistricts.add(id);
+            // District guilds get their own /history and /stats, so record the
+            // change into that district's history like HCPSS changes are.
+            const label = DISTRICT_STATUS_LABELS[d.status] || 'Announcement';
+            const statusText = d.detail && d.status !== 'none' ? `**${label}**\n${d.detail}` : `**${label}**`;
+            await trackStatusHistory(env, statusText, formatStatusDate(new Date()), DISTRICT_STATUS_TO_KEY[d.status] || 'unknown_alert', id);
+          }
           await env.STATUS_KV.put(key, sig);
         }
       }

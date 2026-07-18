@@ -11,18 +11,19 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Verifies Discord interaction signatures before handling button clicks.
 - Responds to `Check again` with a private ephemeral embed.
 - Shows active NWS weather alerts for Howard County on status embeds (toggleable in Settings > Feature Toggles).
-- Storm mode: while a winter storm alert is active, checks every 15 minutes during the 4:30–7:30 AM ET decision window and posts (with pings) only if the status changed.
+- Storm mode: while a storm or heat alert is active, checks every 15 minutes during the 4:30–7:30 AM ET decision window (closings/delays) and the 10 AM–2 PM ET midday window (early dismissals), posting (with pings) only if the status changed. An alert in any followed district's NWS zone opens the window, not just Howard County's.
 - Evening posts (5 PM ET onward) include a Tomorrow Outlook: the next day's calendar event and storm alerts likely to still be active by morning.
 - Nearby Districts: while a storm alert is active, status embeds show what the six neighboring districts (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) have announced; `/districts` shows the same list on demand (toggleable in Settings > Feature Toggles).
-- Closure Outlook: while a storm alert is active (and HCPSS still shows Normal Operations), embeds include a Low/Moderate/High/Very High estimate of a closing or delay, scored from the strongest NWS alert plus nearby districts' calls (toggleable).
+- Closure Outlook: while a storm or heat alert is active (and HCPSS still shows Normal Operations), embeds include a Low/Moderate/High/Very High estimate of a closing or delay, scored from the strongest NWS alert plus nearby districts' calls (toggleable). Winter events get a ❄️ title, heat events a 🌡️ one.
+- Outlook Track Record: every storm evening's 7 PM outlook is recorded as a prediction and graded the next day against what HCPSS actually did; `/stats` shows the per-level hit rate ("High evenings: 5/6 followed by a closing or delay").
 - Snowfall Forecast: during a storm alert, embeds show the NWS forecast's expected snow/ice accumulations ("New snow accumulation of 4 to 8 inches possible") for the next few forecast periods.
-- Night-Before Heads-Up: a 7:00 PM ET alert (with pings) when the Closure Outlook reaches High/Very High while HCPSS still shows Normal Operations — includes the snowfall forecast, active alerts, and nearby districts (toggleable, on by default).
+- Night-Before Heads-Up: a 7:00 PM ET alert (with pings) when the Closure Outlook reaches High/Very High while the district still shows Normal Operations — includes the snowfall forecast, active alerts, and nearby districts (toggleable, on by default). Servers following a neighboring district get a heads-up built from that district's own weather zone, county, and announcements.
 - Bus & Transportation Alerts: watches the HCPSS News feed for transportation service posts (route suspensions, systemwide delays, restorations) and posts new ones to the alert channel between 5 AM–10 PM ET (toggleable, on by default).
 - School-Specific Notices: single-building announcements from HCPSS News ("X Elementary closed for a water main break") post as low-key notices without pings (toggleable, on by default).
 - Power Outages: during storm alerts, embeds show BGE customers without power in the county (from BGE's own public county feed); widespread outages (5%+/20%+ of the county) raise the Closure Outlook score (toggleable).
-- Storm Live Refresh: while a power-threatening storm warning is active (ice storm, blizzard, winter storm, high wind, severe thunderstorm, or anything NWS rates Extreme), the posted status message is edited in place every 15 minutes so outages, road conditions, nearby districts, and weather alerts stay current — no new posts, no pings. Watches and advisory-level events don't trigger it.
+- Storm Live Refresh: while a power-threatening storm warning is active (ice storm, blizzard, winter storm, high wind, severe thunderstorm, or anything NWS rates Extreme), the posted status message is edited in place every 15 minutes so outages, road conditions, nearby districts, and weather alerts stay current — no new posts, no pings. Watches and advisory-level events don't trigger it. A qualifying warning in a followed district's own zone triggers it too (probed at most once per 15 minutes).
 - Road Conditions: during storm alerts, embeds show active MD CHART road incidents in the county — crashes, closures, ice/flooding — with traffic alerts first (toggleable).
-- Primary District: each server can follow a neighboring district (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) instead of HCPSS — status posts, weather alerts (that county's NWS zone), storm-mode change detection, ping roles, and DM notifications all follow the chosen district, with HCPSS shown in its Nearby Districts list. Set it in Settings > Feature Toggles.
+- Primary District: each server can follow a neighboring district (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) instead of HCPSS — status posts, weather alerts (that county's NWS zone), storm-mode change detection, the night-before heads-up, `/history`/`/stats` (each district keeps its own status history and per-year archive), ping roles, and DM notifications all follow the chosen district, with HCPSS shown in its Nearby Districts list. Set it in Settings > Feature Toggles.
 - Source Cross-Check: scans the [HCPSS News](https://news.hcpss.org) RSS feed and warns on the embed when a recent news post reads as a closing/delay but the status page still shows Normal Operations (toggleable).
 - Retries failed scrapes once, then falls back to the last known status (up to 24h old) with a stale-data banner instead of going dark.
 - Alerts staff after 3 consecutive scraper failures, and posts a recovery notice when the scraper starts working again.
@@ -41,7 +42,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Serves the Terms and Privacy Policy as web pages at `GET /terms` and `GET /privacy` (public URLs for bot directory listings), from the same text as the `/terms` and `/privacy` commands.
 - Caches status scrapes for 60 seconds, so member-triggered `/status` checks can't hammer the HCPSS site.
 - Warns the log channel and DMs the server owner after 3 consecutive failed posts to the alert channel (deleted channel, missing permissions), and resets the streak on the next successful post.
-- Exposes `GET /health` for a lightweight health check.
+- Exposes `GET /health` for a lightweight health check, including the served-guild count, current scraper failure streak, and the last status-change timestamp.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 
 ## GitHub Actions Deploy
@@ -102,7 +103,7 @@ Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.de
 GET https://hcpss-worker.kodymcmonagle808.workers.dev/health
 ```
 
-The health check returns JSON with the Worker name, timestamp, and whether the manual trigger token is configured.
+The health check returns JSON with the Worker name, timestamp, whether the manual trigger token is configured, the number of served guilds, the current scraper failure streak, and the last status-change timestamp.
 
 ## Worker Source Layout
 
@@ -124,6 +125,7 @@ The health check returns JSON with the Worker name, timestamp, and whether the m
 - `src/roads.js` — MD CHART road incident feed with a 10-minute KV cache.
 - `src/districts.js` — neighboring districts' operating status (per-platform fetchers, keyword classifier, 10-minute KV cache).
 - `src/outlook.js` — Closure Outlook scoring from weather alerts + district statuses.
+- `src/outlookaccuracy.js` — nightly outlook predictions and next-day grading for the /stats track record.
 - `src/crosscheck.js` — HCPSS News RSS second-source signal and mismatch detection.
 - `src/history.js` — status change history (200 entries), school-year incident stats, and the per-year archive.
 - `src/subscriptions.js` — DM notify-on-change subscriber list and delivery.

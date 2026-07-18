@@ -12,6 +12,7 @@ import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
+import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 
 function getManualTriggerToken(request) {
@@ -49,11 +50,36 @@ export default {
         return legalPageResponse('Privacy Policy', PRIVACY_MD);
       }
       if (url.pathname === '/health') {
+        // Operational snapshot on top of the liveness check: how many servers
+        // are being served and whether the scraper is currently struggling.
+        let guilds = null;
+        let scraperFailureStreak = null;
+        let lastStatusChangeAt = null;
+        if (env.STATUS_KV) {
+          try {
+            const rawIndex = await env.STATUS_KV.get('guild_index');
+            if (rawIndex) {
+              const parsed = JSON.parse(rawIndex);
+              if (Array.isArray(parsed)) guilds = parsed.filter(Boolean).length;
+            }
+            scraperFailureStreak = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+            const rawHistory = await env.STATUS_KV.get('status_history');
+            if (rawHistory) {
+              const hist = JSON.parse(rawHistory);
+              if (Array.isArray(hist) && hist[0] && hist[0].timestamp) {
+                lastStatusChangeAt = new Date(hist[0].timestamp).toISOString();
+              }
+            }
+          } catch {}
+        }
         return jsonResponse({
           ok: true,
           worker: 'hcpss-worker',
           timestamp: new Date().toISOString(),
-          manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN
+          manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN,
+          guilds,
+          scraperFailureStreak,
+          lastStatusChangeAt
         });
       }
       return new Response('HCPSS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
@@ -118,6 +144,11 @@ export default {
         await maybeRefreshStormEmbeds(env);
       } catch (e) {
         console.error('Storm refresh run failed', e);
+      }
+      try {
+        await maybeTrackOutlookAccuracy(env);
+      } catch (e) {
+        console.error('Outlook accuracy run failed', e);
       }
       try {
         await maybeSendYearRecap(env);

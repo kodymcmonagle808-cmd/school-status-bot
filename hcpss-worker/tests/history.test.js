@@ -83,6 +83,30 @@ test('schoolYearLabel formats the Aug-Jul school year', () => {
   assert.equal(schoolYearLabel(new Date('2026-07-17T12:00:00Z')), '2025-26');
 });
 
+test('school year rolls over exactly at Aug 1 Eastern', () => {
+  // 2026-08-01T03:59Z is still July 31 in New York; 04:00Z is Aug 1 midnight ET.
+  assert.equal(schoolYearLabel(new Date('2026-08-01T03:59:00Z')), '2025-26');
+  assert.equal(schoolYearLabel(new Date('2026-08-01T04:00:00Z')), '2026-27');
+  assert.equal(schoolYearStartMs(new Date('2026-08-01T03:59:00Z')), Date.UTC(2025, 7, 1));
+  assert.equal(schoolYearStartMs(new Date('2026-08-01T04:00:00Z')), Date.UTC(2026, 7, 1));
+});
+
+test('trackStatusHistory with a districtId uses district-scoped keys', async () => {
+  const kv = makeKv();
+  await trackStatusHistory({ STATUS_KV: kv }, '**Schools closed**', 'Jan 5, 2027', 'schools_closed', 'ccps');
+
+  const history = JSON.parse(kv.store.get('status_history:ccps'));
+  assert.equal(history[0].status_key, 'schools_closed');
+  // District entries never touch the HCPSS history or all-time counters.
+  assert.equal(kv.store.get('status_history'), undefined);
+  assert.equal(kv.store.get('status_stats'), undefined);
+
+  const yearly = JSON.parse(kv.store.get('yearly_stats:ccps'));
+  const label = schoolYearLabel(new Date());
+  assert.equal(yearly[label].schools_closed, 1);
+  assert.equal(kv.store.get('yearly_stats'), undefined);
+});
+
 test('computeYearlyIncidents groups incidents by school year', () => {
   const history = [
     { timestamp: Date.UTC(2026, 10, 15), status: 'Closed', date: '', status_key: 'schools_closed' },

@@ -6,11 +6,28 @@
 // don't trigger it.
 
 import { getActiveWeatherAlerts, hasPowerThreatAlert } from './weather.js';
+import { getDistrictMeta } from './districts.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
+const PROBE_SLOT_KEY = 'last_storm_probe_slot';
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+async function readGuildIds(env) {
+  let guildIds = [];
+  const rawIndex = await env.STATUS_KV.get('guild_index');
+  if (rawIndex) {
+    try {
+      const parsed = JSON.parse(rawIndex);
+      if (Array.isArray(parsed)) guildIds = parsed.filter(Boolean);
+    } catch {}
+  }
+  if (env.DISCORD_GUILD_ID && !guildIds.includes(env.DISCORD_GUILD_ID)) {
+    guildIds.push(env.DISCORD_GUILD_ID);
+  }
+  return guildIds;
+}
 
 // Runs from the per-minute cron; the first tick of each 15-minute bucket does
 // the refresh, so cron drift can't cause skips or doubles. Never throws.
@@ -23,20 +40,33 @@ export async function maybeRefreshStormEmbeds(env) {
   // Weather is checked before claiming the slot so quiet days cost one cached
   // read, and the first storm-time tick still runs the refresh.
   const alerts = await getActiveWeatherAlerts(env);
-  if (!hasPowerThreatAlert(alerts)) return { updated: 0 };
+  let threat = hasPowerThreatAlert(alerts);
+
+  let guildIds = null;
+  if (!threat) {
+    // No threat in the default (Howard) zone: probe the zones of guilds whose
+    // primary district is a neighboring county. This costs config reads, so it
+    // runs at most once per 15-minute bucket via its own slot key.
+    if (await env.STATUS_KV.get(PROBE_SLOT_KEY) === slot) return { updated: 0 };
+    await env.STATUS_KV.put(PROBE_SLOT_KEY, slot);
+
+    guildIds = await readGuildIds(env);
+    const zones = new Set();
+    for (const gid of guildIds) {
+      const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+      if (meta && meta.nwsZone) zones.add(meta.nwsZone);
+    }
+    for (const zone of zones) {
+      if (hasPowerThreatAlert(await getActiveWeatherAlerts(env, zone))) {
+        threat = true;
+        break;
+      }
+    }
+    if (!threat) return { updated: 0 };
+  }
   await env.STATUS_KV.put(SLOT_KEY, slot);
 
-  let guildIds = [];
-  const rawIndex = await env.STATUS_KV.get('guild_index');
-  if (rawIndex) {
-    try {
-      const parsed = JSON.parse(rawIndex);
-      if (Array.isArray(parsed)) guildIds = parsed.filter(Boolean);
-    } catch {}
-  }
-  if (env.DISCORD_GUILD_ID && !guildIds.includes(env.DISCORD_GUILD_ID)) {
-    guildIds.push(env.DISCORD_GUILD_ID);
-  }
+  if (!guildIds) guildIds = await readGuildIds(env);
 
   let updated = 0;
   const token = env.DISCORD_BOT_TOKEN;

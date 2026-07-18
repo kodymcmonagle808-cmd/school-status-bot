@@ -3,7 +3,7 @@
 // active NWS storm alerts and what the neighboring districts have announced.
 // This is an informal estimate for context, never a prediction of HCPSS's call.
 
-import { isStormAlert } from './weather.js';
+import { isStormAlert, WINTER_EVENT_RE, HEAT_EVENT_RE } from './weather.js';
 
 export const OUTLOOK_LEVELS = {
   none: { label: 'None', emoji: '⚪' },
@@ -77,6 +77,16 @@ export function computeClosureOutlook(alerts, districts, extras = {}) {
   else if (score >= 1) level = 'low';
 
   return { level, score, reasons };
+}
+
+// Field title for the Closure Outlook, with a seasonal emoji: snowflake for
+// winter events, thermometer for heat-only events (heat closures are a real
+// thing in buildings without AC), generic warning sign otherwise.
+export function closureOutlookTitle(alerts) {
+  const storm = (Array.isArray(alerts) ? alerts : []).filter(isStormAlert);
+  if (storm.some(a => WINTER_EVENT_RE.test(a.event || ''))) return '❄️ Closure Outlook';
+  if (storm.some(a => HEAT_EVENT_RE.test(a.event || ''))) return '🌡️ Closure Outlook';
+  return '⚠️ Closure Outlook';
 }
 
 export function formatOutlookLines(outlook) {

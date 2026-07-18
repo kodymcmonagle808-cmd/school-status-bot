@@ -85,6 +85,11 @@ export const STORM_WINDOW_START_MIN = 4 * 60 + 30;
 export const STORM_WINDOW_END_MIN = 7 * 60 + 30;
 export const STORM_INTERVAL_MIN = 15;
 
+// Midday watch: same 15-minute cadence during the 10 AM-2 PM ET window, when
+// early dismissals get announced as weather deteriorates during the school day.
+export const MIDDAY_WINDOW_START_MIN = 10 * 60;
+export const MIDDAY_WINDOW_END_MIN = 14 * 60;
+
 export function isInStormWindow(etStr) {
   const [h, m] = String(etStr).split(':').map(Number);
   if (isNaN(h) || isNaN(m)) return false;
@@ -93,16 +98,24 @@ export function isInStormWindow(etStr) {
 }
 
 // Returns the quarter-hour slot label (e.g. "5:15") when the given ET time is
-// on — or up to 2 minutes after — a storm-mode tick inside the window, else null.
+// on — or up to 2 minutes after — a 15-minute tick inside the window, else null.
 // The grace period covers delayed cron ticks; the slot label doubles as the
 // dedupe key so a tick never fires twice.
-export function stormTickSlot(etStr) {
+function tickSlotInWindow(etStr, startMin, endMin) {
   const [h, m] = String(etStr).split(':').map(Number);
   if (isNaN(h) || isNaN(m)) return null;
   const mins = h * 60 + m;
   const rem = mins % STORM_INTERVAL_MIN;
   if (rem > 2) return null;
   const slotMin = mins - rem;
-  if (slotMin < STORM_WINDOW_START_MIN || slotMin > STORM_WINDOW_END_MIN) return null;
+  if (slotMin < startMin || slotMin > endMin) return null;
   return `${Math.floor(slotMin / 60)}:${String(slotMin % 60).padStart(2, '0')}`;
+}
+
+export function stormTickSlot(etStr) {
+  return tickSlotInWindow(etStr, STORM_WINDOW_START_MIN, STORM_WINDOW_END_MIN);
+}
+
+export function middayTickSlot(etStr) {
+  return tickSlotInWindow(etStr, MIDDAY_WINDOW_START_MIN, MIDDAY_WINDOW_END_MIN);
 }
