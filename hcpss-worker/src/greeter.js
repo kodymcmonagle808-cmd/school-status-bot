@@ -5,7 +5,31 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { jsonResponse } from './discord.js';
 
 /**
- * Checks for new members in all configured guilds and DMs them.
+ * Helper to fetch all greeted user IDs for a guild from KV to optimize reads.
+ */
+async function getGreetedUserIds(env, guildId) {
+  const userIds = new Set();
+  let cursor = undefined;
+  
+  do {
+    const listResult = await env.STATUS_KV.list({
+      prefix: `greeted:${guildId}:`,
+      cursor
+    });
+    for (const key of listResult.keys) {
+      const parts = key.name.split(':');
+      if (parts[2]) {
+        userIds.add(parts[2]);
+      }
+    }
+    cursor = listResult.list_complete ? undefined : listResult.cursor;
+  } while (cursor);
+  
+  return userIds;
+}
+
+/**
+ * Checks for members in all configured guilds who don't have status roles and haven't been greeted.
  */
 export async function checkNewMembersAndDM(env) {
   const token = env.DISCORD_BOT_TOKEN;
@@ -21,22 +45,20 @@ export async function checkNewMembersAndDM(env) {
     return;
   }
 
-  const nowMs = Date.now();
+  const MAX_DMS_PER_RUN = 5; // Safe rate limit to avoid Discord spam/rate limit blocks
 
   for (const guildId of guildIds) {
     try {
-      // 1. Get last check timestamp
-      const lastCheckKey = `greeter_last_check:${guildId}`;
-      const lastCheckRaw = await env.STATUS_KV.get(lastCheckKey);
-      
-      // If we've never run the greeter before, initialize it to now and skip welcoming existing members
-      if (!lastCheckRaw) {
-        await env.STATUS_KV.put(lastCheckKey, new Date(nowMs).toISOString());
-        console.log(`Greeter initialized for guild ${guildId}`);
+      // 1. Fetch guild config to know what status roles are configured
+      const storedConfig = await getConfig(env, guildId);
+      const config = getEffectiveConfig(storedConfig);
+      const roleMappings = config.status_ping_roles || {};
+      const statusRoleIds = Object.values(roleMappings).filter(id => !!id);
+
+      // If no status roles are set up yet, we can't welcome them to select roles
+      if (statusRoleIds.length === 0) {
         continue;
       }
-
-      const lastCheckTime = new Date(lastCheckRaw).getTime();
 
       // 2. Fetch guild details to get server name
       const guildResp = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
@@ -63,32 +85,42 @@ export async function checkNewMembersAndDM(env) {
         continue;
       }
 
-      // 4. Find members who joined after our last check
+      // 4. Get all previously greeted users to avoid individual KV gets
+      const greetedUserIds = await getGreetedUserIds(env, guildId);
+
+      let dmsSentThisRun = 0;
+
+      // 5. Check each member
       for (const member of members) {
         if (!member.user || member.user.bot) continue;
 
-        const joinedTime = new Date(member.joined_at).getTime();
-        if (joinedTime > lastCheckTime) {
-          const userId = member.user.id;
-          const greetedKey = `greeted:${guildId}:${userId}`;
-          
-          // Deduplicate to prevent double-greeting
-          const alreadyGreeted = await env.STATUS_KV.get(greetedKey);
-          if (alreadyGreeted) continue;
+        const userId = member.user.id;
 
-          // Send the welcome DM
-          const sent = await sendWelcomeDM(env, userId, guildId, guildName);
-          if (sent) {
-            // Set greeted in KV with a 24-hour TTL (86400 seconds) to save space,
-            // since they will not fall within the joinedTime > lastCheckTime window again.
-            await env.STATUS_KV.put(greetedKey, 'true', { expirationTtl: 86400 });
-            console.log(`Greeter: Welcomed user ${member.user.username} (${userId}) for guild ${guildId}`);
-          }
+        // Skip if already greeted
+        if (greetedUserIds.has(userId)) continue;
+
+        // Skip if they already have one or more status notification roles
+        const hasStatusRole = member.roles && member.roles.some(roleId => statusRoleIds.includes(roleId));
+        if (hasStatusRole) continue;
+
+        // If we hit the rate limit for this cron run, stop DMs for this guild
+        if (dmsSentThisRun >= MAX_DMS_PER_RUN) {
+          console.log(`Greeter: Hit max DMs limit (${MAX_DMS_PER_RUN}) for guild ${guildId} this run. Remaining users will be processed next minute.`);
+          break;
+        }
+
+        // Send the welcome DM
+        const sent = await sendWelcomeDM(env, userId, guildId, guildName);
+        
+        // Mark them as greeted (even if it failed, to avoid retrying DMs if they blocked DMs)
+        const greetedKey = `greeted:${guildId}:${userId}`;
+        await env.STATUS_KV.put(greetedKey, sent ? 'true' : 'failed');
+        
+        if (sent) {
+          dmsSentThisRun++;
+          console.log(`Greeter: Welcomed user ${member.user.username} (${userId}) for guild ${guildId}`);
         }
       }
-
-      // Update last check time to now
-      await env.STATUS_KV.put(lastCheckKey, new Date(nowMs).toISOString());
 
     } catch (e) {
       console.error(`Greeter error for guild ${guildId}:`, e);
