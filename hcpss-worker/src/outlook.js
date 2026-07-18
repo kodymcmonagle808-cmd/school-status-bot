@@ -25,9 +25,15 @@ function weatherPoints(alert) {
   return 1; // advisories and anything else storm-like
 }
 
-// Computes { level, score, reasons } from summarized weather alerts and
-// district statuses. Returns level 'none' when there is no storm signal at all.
-export function computeClosureOutlook(alerts, districts) {
+// Widespread power outages add to the outlook: schools without power can't
+// open even in fine weather.
+export const OUTAGE_MODERATE_PERCENT = 5;
+export const OUTAGE_SEVERE_PERCENT = 20;
+
+// Computes { level, score, reasons } from summarized weather alerts, district
+// statuses, and optional extras ({ outagePercent }). Returns level 'none'
+// when there is no storm signal at all.
+export function computeClosureOutlook(alerts, districts, extras = {}) {
   const stormAlerts = (Array.isArray(alerts) ? alerts : []).filter(isStormAlert);
   const reasons = [];
   let score = 0;
@@ -53,6 +59,15 @@ export function computeClosureOutlook(alerts, districts) {
   }
   if (delayed.length) {
     reasons.push(`${delayed.length} nearby district${delayed.length === 1 ? '' : 's'} opening late (${delayed.join(', ')})`);
+  }
+
+  const pct = Number(extras && extras.outagePercent) || 0;
+  if (pct >= OUTAGE_SEVERE_PERCENT) {
+    score += 2;
+    reasons.push(`${pct.toFixed(0)}% of the county without power`);
+  } else if (pct >= OUTAGE_MODERATE_PERCENT) {
+    score += 1;
+    reasons.push(`${pct.toFixed(0)}% of the county without power`);
   }
 
   let level = 'none';

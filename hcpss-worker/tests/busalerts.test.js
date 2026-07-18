@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyBusAlert, isWithinBusAlertHours } from '../src/busalerts.js';
+import { classifyBusAlert, classifySchoolNotice, isWithinBusAlertHours } from '../src/busalerts.js';
 
 test('classifyBusAlert flags service-impact transportation posts', () => {
   assert.equal(classifyBusAlert('HCPSS Transportation Update: several bus routes suspended Monday'), true);
@@ -15,6 +15,21 @@ test('classifyBusAlert ignores newsletters and non-transportation posts', () => 
   assert.equal(classifyBusAlert('Board of Education meeting delayed'), false);
   assert.equal(classifyBusAlert(''), false);
   assert.equal(classifyBusAlert(null), false);
+});
+
+test('classifySchoolNotice flags single-school impacts', () => {
+  assert.equal(classifySchoolNotice('Centennial High School closed today due to a water main break'), true);
+  assert.equal(classifySchoolNotice('Swansfield Elementary School students dismissed early after power outage'), true);
+  assert.equal(classifySchoolNotice('Oakland Mills Middle School will reopen tomorrow'), true);
+});
+
+test('classifySchoolNotice ignores district-wide and unrelated posts', () => {
+  // District-wide closures belong to the status scraper, not school notices.
+  assert.equal(classifySchoolNotice('All HCPSS schools closed today due to snow'), false);
+  assert.equal(classifySchoolNotice('HCPSS schools will open two hours late'), false);
+  assert.equal(classifySchoolNotice('Ethics panel seeks new members'), false);
+  assert.equal(classifySchoolNotice('High school sports schedules announced'), false);
+  assert.equal(classifySchoolNotice(''), false);
 });
 
 test('isWithinBusAlertHours limits scanning to 5 AM - 10 PM ET', () => {

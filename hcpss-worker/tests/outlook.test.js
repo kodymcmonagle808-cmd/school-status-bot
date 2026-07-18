@@ -84,3 +84,15 @@ test('formatOutlookLines includes the disclaimer and reasons', () => {
   assert.ok(text.includes('Winter Storm Warning'));
   assert.ok(text.includes('HCPSS makes the final call'));
 });
+
+test('widespread power outages raise the outlook', () => {
+  const alerts = [{ event: 'Winter Storm Warning', severity: 'Severe', endsMs: 0 }];
+  const base = computeClosureOutlook(alerts, []);
+  const moderate = computeClosureOutlook(alerts, [], { outagePercent: 7 });
+  const severe = computeClosureOutlook(alerts, [], { outagePercent: 25 });
+  assert.equal(moderate.score, base.score + 1);
+  assert.equal(severe.score, base.score + 2);
+  assert.ok(severe.reasons.some(r => r.includes('without power')));
+  // Tiny outages contribute nothing.
+  assert.equal(computeClosureOutlook(alerts, [], { outagePercent: 1 }).score, base.score);
+});

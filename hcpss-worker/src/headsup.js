@@ -6,9 +6,11 @@
 
 import { getEasternTimeStr, matchesScheduleTime, formatYmdNY } from './timeutil.js';
 import { getActiveWeatherAlerts, hasStormAlert, formatWeatherAlertLines } from './weather.js';
-import { getDistrictStatuses, formatDistrictLines } from './districts.js';
+import { getDistrictStatuses, formatDistrictLines, HCPSS_COUNTY } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines } from './outlook.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from './outages.js';
+import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { postLog } from './panel.js';
@@ -56,7 +58,10 @@ export async function maybeSendHeadsUp(env) {
   if (!hasStormAlert(alerts)) return { sent: 0 };
 
   const districts = await getDistrictStatuses(env);
-  const outlook = computeClosureOutlook(alerts, districts);
+  const outageSummary = await getBgeOutages(env);
+  const outlook = computeClosureOutlook(alerts, districts, {
+    outagePercent: outagePercent(getCountyOutage(outageSummary, HCPSS_COUNTY))
+  });
 
   // If HCPSS has already announced something, the status post says it better.
   const fetched = await getStatusCards(env);
@@ -66,6 +71,9 @@ export async function maybeSendHeadsUp(env) {
   const snowLines = formatSnowfallLines(await getSnowfallForecast(env));
   const alertLines = formatWeatherAlertLines(alerts);
   const districtLines = formatDistrictLines(districts);
+  const outageCounty = getCountyOutage(outageSummary, HCPSS_COUNTY);
+  const outageLine = outageCounty && outageCounty.out > 0 ? formatOutageLine(outageSummary, HCPSS_COUNTY) : '';
+  const roadLines = formatRoadLines(await getChartIncidents(env), HCPSS_COUNTY);
 
   let sent = 0;
   const token = env.DISCORD_BOT_TOKEN;
@@ -86,6 +94,8 @@ export async function maybeSendHeadsUp(env) {
     const fields = [];
     if (snowLines) fields.push({ name: '🌨️ Snowfall Forecast — Howard County', value: snowLines });
     if (alertLines) fields.push({ name: '⛅ Active Weather Alerts', value: alertLines });
+    if (outageLine) fields.push({ name: '🔌 Power Outages — Howard County', value: outageLine });
+    if (roadLines) fields.push({ name: '🛣️ Road Conditions — Howard County', value: roadLines });
     if (districtLines) fields.push({ name: '🏫 Nearby Districts', value: districtLines });
     if (fields.length) embed.fields = fields;
 

@@ -174,6 +174,7 @@ export const DISTRICTS = [
     name: 'Anne Arundel Co.',
     url: 'https://www.aacps.org',
     nwsZone: 'MDC003',
+    county: 'Anne Arundel',
     fetchEntries: async () => parseThrillshareFeed(await fetchText('https://api.thrillshare.com/api/v4/o/20274/cms/live_feeds?page=1&per_page=15', { headers: { Accept: 'application/json' } }))
   },
   {
@@ -181,6 +182,7 @@ export const DISTRICTS = [
     name: 'Baltimore Co.',
     url: 'https://www.bcps.org',
     nwsZone: 'MDC005',
+    county: 'Baltimore',
     fetchEntries: () => fetchSharpSchoolEntries('www.bcps.org')
   },
   {
@@ -188,6 +190,7 @@ export const DISTRICTS = [
     name: 'Carroll Co.',
     url: 'https://www.carrollk12.org',
     nwsZone: 'MDC013',
+    county: 'Carroll',
     fetchEntries: async () => {
       // Closings land on General News (3) or News Releases (63).
       const results = await Promise.allSettled([
@@ -203,6 +206,7 @@ export const DISTRICTS = [
     name: 'Frederick Co.',
     url: 'https://www.fcps.org',
     nwsZone: 'MDC021',
+    county: 'Frederick',
     fetchEntries: () => fetchSharpSchoolEntries('www.fcps.org')
   },
   {
@@ -210,6 +214,7 @@ export const DISTRICTS = [
     name: 'Montgomery Co.',
     url: 'https://www.montgomeryschoolsmd.org',
     nwsZone: 'MDC031',
+    county: 'Montgomery',
     fetchEntries: async () => parseMcpsEmergency(await fetchText('https://api.montgomeryschoolsmd.org/schools/homepageInput', { headers: { Accept: 'application/json' } }))
   },
   {
@@ -217,9 +222,13 @@ export const DISTRICTS = [
     name: "Prince George's Co.",
     url: 'https://www.pgcps.org',
     nwsZone: 'MDC033',
+    county: "Prince George's",
     fetchEntries: async () => parsePgcpsAlert(await fetchText('https://www.pgcps.org'))
   }
 ];
+
+// The county HCPSS itself serves (for outage and road-condition lookups).
+export const HCPSS_COUNTY = 'Howard';
 
 // Every district a guild can pick as its primary status source. HCPSS stays
 // the default and uses the full status-page scraper; the others use their

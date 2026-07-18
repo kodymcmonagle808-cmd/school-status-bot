@@ -16,6 +16,9 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Snowfall Forecast: during a storm alert, embeds show the NWS forecast's expected snow/ice accumulations ("New snow accumulation of 4 to 8 inches possible") for the next few forecast periods.
 - Night-Before Heads-Up: a 7:00 PM ET alert (with pings) when the Closure Outlook reaches High/Very High while HCPSS still shows Normal Operations — includes the snowfall forecast, active alerts, and nearby districts (toggleable, on by default).
 - Bus & Transportation Alerts: watches the HCPSS News feed for transportation service posts (route suspensions, systemwide delays, restorations) and posts new ones to the alert channel between 5 AM–10 PM ET (toggleable, on by default).
+- School-Specific Notices: single-building announcements from HCPSS News ("X Elementary closed for a water main break") post as low-key notices without pings (toggleable, on by default).
+- Power Outages: during storm alerts, embeds show BGE customers without power in the county (from BGE's own public county feed); widespread outages (5%+/20%+ of the county) raise the Closure Outlook score (toggleable).
+- Road Conditions: during storm alerts, embeds show active MD CHART road incidents in the county — crashes, closures, ice/flooding — with traffic alerts first (toggleable).
 - Primary District: each server can follow a neighboring district (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) instead of HCPSS — status posts, weather alerts (that county's NWS zone), storm-mode change detection, ping roles, and DM notifications all follow the chosen district, with HCPSS shown in its Nearby Districts list. Set it in Settings > Feature Toggles.
 - Source Cross-Check: scans the [HCPSS News](https://news.hcpss.org) RSS feed and warns on the embed when a recent news post reads as a closing/delay but the status page still shows Normal Operations (toggleable).
 - Retries failed scrapes once, then falls back to the last known status (up to 24h old) with a stale-data banner instead of going dark.
@@ -105,7 +108,9 @@ The health check returns JSON with the Worker name, timestamp, and whether the m
 - `src/weather.js` — NWS active alerts (Howard County zone MDC027 by default, per-district zones supported) with a 10-minute KV cache.
 - `src/snowfall.js` — NWS gridpoint forecast accumulation lines with a 30-minute KV cache.
 - `src/headsup.js` — the 7:00 PM ET night-before heads-up post.
-- `src/busalerts.js` — HCPSS News transportation alert watcher.
+- `src/busalerts.js` — HCPSS News watcher (transportation alerts + school-specific notices).
+- `src/outages.js` — BGE county power outage feed with a 10-minute KV cache.
+- `src/roads.js` — MD CHART road incident feed with a 10-minute KV cache.
 - `src/districts.js` — neighboring districts' operating status (per-platform fetchers, keyword classifier, 10-minute KV cache).
 - `src/outlook.js` — Closure Outlook scoring from weather alerts + district statuses.
 - `src/crosscheck.js` — HCPSS News RSS second-source signal and mismatch detection.

@@ -19,10 +19,13 @@ import {
   getDistrictMeta,
   DISTRICT_STATUS_LABELS,
   DISTRICT_STATUS_TO_KEY,
-  statusKeyToDistrictStatus
+  statusKeyToDistrictStatus,
+  HCPSS_COUNTY
 } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines } from './outlook.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from './outages.js';
+import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { getCalendarEvent } from './calendar.js';
@@ -153,11 +156,31 @@ export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', ca
     }
   }
 
+  const stormActive = weatherEnabled && hasStormAlert(alerts);
+
+  // BGE power outages and CHART road conditions for Howard County during storms.
+  const outagesEnabled = !config || config.toggle_outages !== false;
+  let outageSummary = null;
+  if (outagesEnabled && stormActive && embeds[0]) {
+    outageSummary = await getBgeOutages(env);
+    const county = getCountyOutage(outageSummary, HCPSS_COUNTY);
+    if (county && county.out > 0) {
+      const line = formatOutageLine(outageSummary, HCPSS_COUNTY);
+      if (line) addField(embeds[0], '🔌 Power Outages — Howard County', line);
+    }
+  }
+  const roadsEnabled = !config || config.toggle_roads !== false;
+  if (roadsEnabled && stormActive && embeds[0]) {
+    const roadLines = formatRoadLines(await getChartIncidents(env), HCPSS_COUNTY);
+    if (roadLines) {
+      addField(embeds[0], '🛣️ Road Conditions — Howard County', roadLines);
+    }
+  }
+
   // While a storm alert is active, show what the neighboring districts have
   // announced — surrounding counties' calls are the strongest signal for HCPSS.
   const districtsEnabled = !config || config.toggle_districts !== false;
   const outlookEnabled = !config || config.toggle_outlook !== false;
-  const stormActive = weatherEnabled && hasStormAlert(alerts);
   let districts = null;
   if ((districtsEnabled || outlookEnabled) && stormActive && embeds[0]) {
     districts = await getDistrictStatuses(env);
@@ -172,7 +195,8 @@ export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', ca
   // Closure Outlook: only meaningful during a storm alert, and pointless once
   // HCPSS has already announced something other than normal operations.
   if (outlookEnabled && stormActive && embeds[0] && statusKey === 'normal_operations') {
-    const outlookText = formatOutlookLines(computeClosureOutlook(alerts, districts || []));
+    const pct = outagePercent(getCountyOutage(outageSummary, HCPSS_COUNTY));
+    const outlookText = formatOutlookLines(computeClosureOutlook(alerts, districts || [], { outagePercent: pct }));
     if (outlookText) {
       addField(embeds[0], '❄️ Closure Outlook', outlookText);
     }
@@ -300,6 +324,25 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     }
   }
 
+  // BGE power outages (where BGE serves the county) and CHART road conditions.
+  const outagesEnabled = !config || config.toggle_outages !== false;
+  let outageSummary = null;
+  if (outagesEnabled && stormActive && embeds[0]) {
+    outageSummary = await getBgeOutages(env);
+    const county = getCountyOutage(outageSummary, meta.county);
+    if (county && county.out > 0) {
+      const line = formatOutageLine(outageSummary, meta.county);
+      if (line) addField(embeds[0], `🔌 Power Outages — ${meta.county} County`, line);
+    }
+  }
+  const roadsEnabled = !config || config.toggle_roads !== false;
+  if (roadsEnabled && stormActive && embeds[0]) {
+    const roadLines = formatRoadLines(await getChartIncidents(env), meta.county);
+    if (roadLines) {
+      addField(embeds[0], `🛣️ Road Conditions — ${meta.county} County`, roadLines);
+    }
+  }
+
   // Nearby Districts: the other five counties plus HCPSS itself.
   const districtsEnabled = !config || config.toggle_districts !== false;
   const outlookEnabled = !config || config.toggle_outlook !== false;
@@ -328,7 +371,8 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
   }
 
   if (outlookEnabled && stormActive && embeds[0] && statusKey === 'normal_operations') {
-    const outlookText = formatOutlookLines(computeClosureOutlook(alerts, neighborList || []));
+    const pct = outagePercent(getCountyOutage(outageSummary, meta.county));
+    const outlookText = formatOutlookLines(computeClosureOutlook(alerts, neighborList || [], { outagePercent: pct }));
     if (outlookText) {
       addField(embeds[0], '❄️ Closure Outlook', outlookText);
     }

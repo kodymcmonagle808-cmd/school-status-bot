@@ -261,6 +261,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const digest = config.toggle_digest === true; // opt-in, off by default
     const headsUp = config.toggle_heads_up !== false;
     const busAlerts = config.toggle_bus_alerts !== false;
+    const schoolNotices = config.toggle_school_notices !== false;
+    const outages = config.toggle_outages !== false;
+    const roads = config.toggle_roads !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -278,7 +281,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n` +
                    `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n` +
                    `• ${headsUp ? '🟢' : '🔴'} **Night-Before Heads-Up** — 7:00 PM ET alert when the Closure Outlook hits High/Very High\n` +
-                   `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n\n` +
+                   `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n` +
+                   `• ${schoolNotices ? '🟢' : '🔴'} **School-Specific Notices** — post single-school announcements (no pings)\n` +
+                   `• ${outages ? '🟢' : '🔴'} **Power Outages** — show BGE county outage counts during storm alerts\n` +
+                   `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -354,6 +360,27 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post transportation service alerts from HCPSS News',
         emoji: { name: '🚌' },
         default: busAlerts
+      },
+      {
+        label: 'School-Specific Notices',
+        value: 'toggle_school_notices',
+        description: 'Post single-school announcements from HCPSS News (no pings)',
+        emoji: { name: '🏫' },
+        default: schoolNotices
+      },
+      {
+        label: 'Power Outages',
+        value: 'toggle_outages',
+        description: 'Show BGE county outage counts during storm alerts',
+        emoji: { name: '🔌' },
+        default: outages
+      },
+      {
+        label: 'Road Conditions',
+        value: 'toggle_roads',
+        description: 'Show MD CHART road incidents during storm alerts',
+        emoji: { name: '🛣️' },
+        default: roads
       }
     ];
 
@@ -1047,6 +1074,9 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_digest = selected.includes('toggle_digest');
     next.toggle_heads_up = selected.includes('toggle_heads_up');
     next.toggle_bus_alerts = selected.includes('toggle_bus_alerts');
+    next.toggle_school_notices = selected.includes('toggle_school_notices');
+    next.toggle_outages = selected.includes('toggle_outages');
+    next.toggle_roads = selected.includes('toggle_roads');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];
