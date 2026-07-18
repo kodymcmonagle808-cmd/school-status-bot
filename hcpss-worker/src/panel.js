@@ -264,6 +264,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const schoolNotices = config.toggle_school_notices !== false;
     const outages = config.toggle_outages !== false;
     const roads = config.toggle_roads !== false;
+    const yearRecap = config.toggle_year_recap !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -284,7 +285,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n` +
                    `• ${schoolNotices ? '🟢' : '🔴'} **School-Specific Notices** — post single-school announcements (no pings)\n` +
                    `• ${outages ? '🟢' : '🔴'} **Power Outages** — show BGE county outage counts during storm alerts\n` +
-                   `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n\n` +
+                   `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n` +
+                   `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -381,6 +383,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Show MD CHART road incidents during storm alerts',
         emoji: { name: '🛣️' },
         default: roads
+      },
+      {
+        label: 'Year Recap',
+        value: 'toggle_year_recap',
+        description: 'Post an end-of-school-year summary each June',
+        emoji: { name: '🎓' },
+        default: yearRecap
       }
     ];
 
@@ -1077,6 +1086,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_school_notices = selected.includes('toggle_school_notices');
     next.toggle_outages = selected.includes('toggle_outages');
     next.toggle_roads = selected.includes('toggle_roads');
+    next.toggle_year_recap = selected.includes('toggle_year_recap');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];

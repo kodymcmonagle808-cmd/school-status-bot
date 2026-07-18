@@ -10,6 +10,7 @@ import { maybeSendHeadsUp } from './headsup.js';
 import { maybeSendBusAlerts } from './busalerts.js';
 import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
+import { maybeSendYearRecap } from './recap.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -104,6 +105,11 @@ export default {
         await checkNewMembersAndDM(env);
       } catch (e) {
         console.error('Greeter run failed', e);
+      }
+      try {
+        await maybeSendYearRecap(env);
+      } catch (e) {
+        console.error('Year recap run failed', e);
       }
       try {
         await maybeCleanupDepartedGuilds(env);

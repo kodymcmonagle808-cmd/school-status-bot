@@ -4,13 +4,19 @@ import { EPHEMERAL_FLAG, ALL_STATUS_LABELS, STATUS_LABELS, SCHOOL_CALENDAR_EVENT
 import { formatCheckedAt, formatStatusDate, formatYmdNY } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
 import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel, INCIDENT_KEYS } from './history.js';
-import { getDistrictStatuses, formatDistrictLines } from './districts.js';
+import { getDistrictStatuses, formatDistrictLines, HCPSS_COUNTY } from './districts.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
 import { postLog } from './panel.js';
 import { doCheckAndPost } from './check.js';
-import { footerWithCheckedAt } from './embeds.js';
+import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
+import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
+import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
+import { getBgeOutages, getCountyOutage, outagePercent } from './outages.js';
+import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { toggleSubscriber, getSubscribers } from './subscriptions.js';
+import { getGreetedUserIds } from './greeter.js';
 
 export async function runCalendarCommand(env, guildId = '') {
   const checkedAt = new Date();
@@ -100,6 +106,178 @@ export function runPrivacyCommand() {
         "**9. Contact** — For questions or data deletion requests, reach out through the bot's support server or the contact method on its official listing page.",
       timestamp: new Date().toISOString(),
       footer: { text: 'HCPSS Status Monitor' }
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// Deferred: scrapes the live status page and edits the ephemeral response.
+export async function runStatusCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const builtStatus = await buildStatusPayload(env, {
+    footer: 'HCPSS Status Monitor - Only you can see this',
+    guildId
+  });
+  await updateInteractionOriginal(env, body.token, {
+    content: '',
+    embeds: builtStatus.payload.embeds
+  });
+}
+
+export function runHelpCommand() {
+  return {
+    embeds: [{
+      title: '📖 HCPSS Status Monitor — Commands & Features',
+      color: 0x5865F2,
+      description:
+        '**For everyone:**\n' +
+        '• `/status` — check the current operating status (only you see it)\n' +
+        '• `/snowday` — closing/delay outlook from weather alerts, nearby districts, and outages\n' +
+        '• `/calendar` — scheduled closures and events in the next 7 days\n' +
+        '• `/history` — the last 10 operating status changes\n' +
+        '• `/districts` — what neighboring school districts have announced\n' +
+        '• `/stats` — closure days, delays, and scraper statistics\n' +
+        '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
+        '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
+        '**Buttons on status posts:**\n' +
+        '• **Check again** — re-check privately · **🔔 Notify Me** — same as `/notify`\n' +
+        '• **Role dropdown** — pick which status changes ping you\n\n' +
+        '**For bot staff:**\n' +
+        '• `/post-status` — publish a fresh status post now\n' +
+        '• `/override` — force a displayed status for 1–30 days\n' +
+        '• `/events` — add/remove custom calendar events\n' +
+        '• `/announce` — post a custom announcement embed\n' +
+        '• `/refresh-panel` — refresh the control panel in the log channel\n\n' +
+        '**For administrators:**\n' +
+        '• `/setup` — first-time setup wizard (channels, roles, notifications)\n' +
+        '• `/mydata` — view or delete everything the bot stores for this server\n\n' +
+        '*Automatic features (storm mode, morning digest, night-before heads-up, bus alerts, and more) are configured in the control panel in your log channel.*',
+      timestamp: new Date().toISOString(),
+      footer: { text: 'HCPSS Status Monitor · Unofficial — always verify with hcpss.org' }
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// Deferred: fetches weather, district, and outage signals, then edits the
+// ephemeral response with the on-demand Closure Outlook.
+export async function runSnowdayCommand(body, env) {
+  const checkedAt = new Date();
+  const alerts = await getActiveWeatherAlerts(env);
+  const districts = await getDistrictStatuses(env);
+  const outageSummary = await getBgeOutages(env);
+  const outlook = computeClosureOutlook(alerts, districts, {
+    outagePercent: outagePercent(getCountyOutage(outageSummary, HCPSS_COUNTY))
+  });
+
+  const embed = {
+    title: '❄️ Snow Day Outlook',
+    color: outlook.level === 'very_high' ? 0xE74C3C
+      : outlook.level === 'high' ? 0xE67E22
+      : outlook.level === 'moderate' ? 0xF1C40F
+      : 0x95A5A6,
+    timestamp: checkedAt.toISOString(),
+    footer: { text: footerWithCheckedAt('HCPSS Status Monitor · Unofficial estimate', checkedAt) }
+  };
+
+  if (outlook.level === 'none') {
+    embed.description = '⚪ **No storm signals right now.**\n\n' +
+      'No active winter weather alerts for Howard County, and no nearby districts have announced closings or delays. ' +
+      'Sorry — looks like a regular school day. 📚';
+  } else {
+    const meta = OUTLOOK_LEVELS[outlook.level] || OUTLOOK_LEVELS.low;
+    embed.description = formatOutlookLines(outlook);
+    const fields = [];
+    const snowLines = formatSnowfallLines(await getSnowfallForecast(env));
+    const alertLines = formatWeatherAlertLines(alerts);
+    const districtLines = formatDistrictLines(districts);
+    if (snowLines) fields.push({ name: '🌨️ Snowfall Forecast', value: snowLines });
+    if (alertLines) fields.push({ name: '⛅ Active Weather Alerts', value: alertLines });
+    if (districtLines) fields.push({ name: '🏫 Nearby Districts', value: districtLines });
+    if (fields.length) embed.fields = fields;
+    embed.title = `❄️ Snow Day Outlook — ${meta.label}`;
+  }
+
+  await updateInteractionOriginal(env, body.token, { content: '', embeds: [embed] });
+}
+
+export async function runNotifyCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const userId = getInvokerId(body);
+  if (!userId) {
+    return { content: '❌ Could not determine your user ID.', flags: EPHEMERAL_FLAG };
+  }
+  const result = await toggleSubscriber(env, guildId, userId);
+  if (result.full) {
+    return { content: '❌ The subscriber list for this server is full.', flags: EPHEMERAL_FLAG };
+  }
+  return {
+    content: result.subscribed
+      ? "🔔 **Subscribed!** I'll DM you whenever the HCPSS operating status changes (not on every scheduled repost). Make sure DMs from this server's members are enabled. Run `/notify` again to unsubscribe."
+      : '🔕 **Unsubscribed.** You will no longer get DMs when the status changes.',
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// /mydata view — fulfills the Privacy Policy's promise that admins can see a
+// summary of what the bot stores for their server.
+export async function runMyDataViewCommand(env, guildId) {
+  const stored = await getConfig(env, guildId);
+  const cfg = getEffectiveConfig(stored);
+  const subscribers = await getSubscribers(env, guildId);
+  let calendarCount = 0;
+  try { calendarCount = (await listCalendarEvents(env, guildId)).length; } catch {}
+  let greetedCount = 0;
+  try { greetedCount = (await getGreetedUserIds(env, guildId)).size; } catch {}
+  const setupDone = await env.STATUS_KV.get(`setup_done:${guildId}`);
+  const rawLogs = await env.STATUS_KV.get(`panel_logs:${guildId}`);
+  let logCount = 0;
+  if (rawLogs) {
+    try { logCount = JSON.parse(rawLogs).length; } catch {}
+  }
+
+  const pingRoleCount = Object.values(cfg.status_ping_roles || {}).filter(Boolean).length;
+
+  return {
+    embeds: [{
+      title: '🗄️ Data Stored for This Server',
+      color: 0x34495E,
+      description:
+        'Everything the bot keeps for this server, per the Privacy Policy (`/privacy`):\n\n' +
+        `• **Server ID**: \`${guildId || '(unknown)'}\`\n` +
+        `• **Setup completed**: ${setupDone === 'true' ? 'Yes' : 'No'}\n` +
+        `• **Configured channels**: alerts ${cfg.alert_channel_id ? `<#${cfg.alert_channel_id}>` : '*(not set)*'} · logs ${cfg.log_channel_id ? `<#${cfg.log_channel_id}>` : '*(not set)*'}\n` +
+        `• **Staff role**: ${stored.staff_role_id ? `<@&${stored.staff_role_id}>` : '*(none — Administrators only)*'}\n` +
+        `• **Notification ping roles**: ${pingRoleCount} configured\n` +
+        `• **Server settings**: feature toggles, check schedule, embed colors/footer\n` +
+        `• **DM subscribers**: ${subscribers.length} user ID(s) (opted in via 🔔 or \`/notify\`)\n` +
+        `• **Welcomed members**: ${greetedCount} user ID(s) (so nobody is greeted twice)\n` +
+        `• **Custom calendar events**: ${calendarCount}\n` +
+        `• **System log lines**: ${logCount}\n` +
+        `• **Bookkeeping**: last posted message/channel IDs, last check timestamps\n\n` +
+        'No message content, names, or other personal information is stored.\n' +
+        'Use `/mydata delete` to erase all of it, or simply remove the bot — departed servers are purged automatically within a day.',
+      timestamp: new Date().toISOString(),
+      footer: { text: 'HCPSS Status Monitor' }
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// /mydata delete — a destructive action, so it asks for confirmation first.
+export function runMyDataDeletePrompt() {
+  return {
+    content: '⚠️ **Delete all server data?**\n\n' +
+      'This permanently erases everything the bot stores for this server: configuration, ' +
+      'notification role mappings, DM subscriber list, custom calendar events, welcomed-member ' +
+      'records, and system logs. The bot will stop posting here until `/setup` is run again.\n\n' +
+      'Are you sure?',
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 4, label: 'Yes, delete everything', custom_id: 'mydata_delete_confirm' },
+        { type: 2, style: 2, label: 'Cancel', custom_id: 'mydata_delete_cancel' }
+      ]
     }],
     flags: EPHEMERAL_FLAG
   };

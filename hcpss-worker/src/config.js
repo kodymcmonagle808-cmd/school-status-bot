@@ -67,6 +67,7 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_school_notices !== 'boolean') next.toggle_school_notices = true;
   if (typeof next.toggle_outages !== 'boolean') next.toggle_outages = true;
   if (typeof next.toggle_roads !== 'boolean') next.toggle_roads = true;
+  if (typeof next.toggle_year_recap !== 'boolean') next.toggle_year_recap = true;
   if (!next.primary_district) next.primary_district = 'hcpss';
   return next;
 }

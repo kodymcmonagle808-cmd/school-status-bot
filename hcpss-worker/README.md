@@ -31,6 +31,9 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Adds `Last checked` timing to public and private embeds.
 - Posts an error embed if the HCPSS status page cannot be fetched.
 - Daily cleanup: once a day, checks each configured server for bot membership and automatically purges all stored KV data (config, logs, subscribers, calendar events, greeter records) for servers the bot has been removed from, as promised in the Privacy Policy.
+- Member commands (no staff role needed, all ephemeral): `/status` (current status on demand), `/snowday` (closing/delay outlook from weather, districts, and outages), `/calendar`, `/history`, `/districts`, `/stats`, `/notify` (DM subscription toggle), `/help`, `/terms`, `/privacy`.
+- Admin `/mydata view` shows everything the bot stores for the server; `/mydata delete` erases it after a confirmation, fulfilling the Privacy Policy's data-rights promises in-app.
+- End-of-year recap: a June 15 summary post comparing the school year's closures/delays/early closings to the previous year (toggleable, on by default).
 - Exposes `GET /health` for a lightweight health check.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 

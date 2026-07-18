@@ -89,13 +89,15 @@ payload=$(jq -n '[
     name: "post-status",
     description: "Post the latest HCPSS status now.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "override",
     description: "Override the posted status for a set number of days.",
     type: 1,
-    dm_permission: false,
+    integration_types: [0],
+    contexts: [0],
     options: [
       {
         name: "set",
@@ -131,25 +133,29 @@ payload=$(jq -n '[
     name: "calendar",
     description: "Show scheduled closures or events in the next 7 days.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "history",
     description: "Show the last 10 operating status changes.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "districts",
     description: "Show the operating status of neighboring school districts.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "events",
     description: "Manage dynamic calendar events.",
     type: 1,
-    dm_permission: false,
+    integration_types: [0],
+    contexts: [0],
     options: [
       {
         name: "add",
@@ -179,38 +185,92 @@ payload=$(jq -n '[
     name: "stats",
     description: "Show status check and operating status statistics.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "setup",
     description: "Initial one-time setup for the status monitor.",
     type: 1,
-    dm_permission: false,
+    integration_types: [0],
+    contexts: [0],
     default_member_permissions: "8"
   },
   {
     name: "announce",
     description: "Post a custom embed announcement in this channel.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "refresh-panel",
     description: "Refresh the control panel embed in the log channel.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "terms",
     description: "View the Terms and Conditions for this bot.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
   },
   {
     name: "privacy",
     description: "View the Privacy Policy for this bot.",
     type: 1,
-    dm_permission: false
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "status",
+    description: "Check the current HCPSS operating status (only you see the reply).",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "help",
+    description: "List the bot commands and features.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "snowday",
+    description: "Snow day outlook: closing/delay likelihood from weather, districts, and outages.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "notify",
+    description: "Get a DM when the operating status changes. Run again to unsubscribe.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "mydata",
+    description: "View or delete the data this bot stores for your server.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    default_member_permissions: "8",
+    options: [
+      {
+        name: "view",
+        description: "Show a summary of everything stored for this server.",
+        type: 1
+      },
+      {
+        name: "delete",
+        description: "Permanently erase all data stored for this server.",
+        type: 1
+      }
+    ]
   }
 ]')
 

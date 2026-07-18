@@ -23,7 +23,9 @@ function guildKeys(guildId) {
     `last_digest_day:${guildId}`,
     `last_headsup_day:${guildId}`,
     `last_sched_slot:${guildId}`,
-    `greeter_last_run_date:${guildId}`
+    `greeter_last_run_date:${guildId}`,
+    `greeted_users:${guildId}`,
+    `last_recap_year:${guildId}`
   ];
 }
 
@@ -54,7 +56,8 @@ async function botGuildMembership(env, guildId) {
   }
 }
 
-async function purgeGuildData(env, guildId) {
+// Also used by /mydata delete for on-demand purges.
+export async function purgeGuildData(env, guildId) {
   for (const key of guildKeys(guildId)) {
     await env.STATUS_KV.delete(key).catch(() => {});
   }
@@ -71,7 +74,7 @@ async function purgeGuildData(env, guildId) {
   }
 }
 
-async function removeFromGuildIndex(env, guildId) {
+export async function removeFromGuildIndex(env, guildId) {
   try {
     const rawIndex = await env.STATUS_KV.get('guild_index');
     if (!rawIndex) return;

@@ -5,12 +5,28 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { jsonResponse } from './discord.js';
 
 /**
- * Helper to fetch all greeted user IDs for a guild from KV to optimize reads.
+ * Greeted users live in one JSON-array key per guild (like dm_subscribers)
+ * instead of one KV key per user, keeping writes and list operations cheap.
+ * Legacy per-user `greeted:{gid}:{uid}` keys are migrated in on first read.
  */
-async function getGreetedUserIds(env, guildId) {
+function greetedKey(guildId) {
+  return `greeted_users:${guildId}`;
+}
+
+export async function getGreetedUserIds(env, guildId) {
+  const raw = await env.STATUS_KV.get(greetedKey(guildId));
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed);
+    } catch {}
+    return new Set();
+  }
+
+  // One-time migration from the legacy per-user key format.
   const userIds = new Set();
+  const legacyKeys = [];
   let cursor = undefined;
-  
   do {
     const listResult = await env.STATUS_KV.list({
       prefix: `greeted:${guildId}:`,
@@ -20,12 +36,22 @@ async function getGreetedUserIds(env, guildId) {
       const parts = key.name.split(':');
       if (parts[2]) {
         userIds.add(parts[2]);
+        legacyKeys.push(key.name);
       }
     }
     cursor = listResult.list_complete ? undefined : listResult.cursor;
   } while (cursor);
-  
+
+  await env.STATUS_KV.put(greetedKey(guildId), JSON.stringify([...userIds]));
+  for (const key of legacyKeys) {
+    await env.STATUS_KV.delete(key).catch(() => {});
+  }
+
   return userIds;
+}
+
+async function saveGreetedUserIds(env, guildId, userIds) {
+  await env.STATUS_KV.put(greetedKey(guildId), JSON.stringify([...userIds]));
 }
 
 /**
@@ -99,6 +125,7 @@ export async function checkNewMembersAndDM(env) {
 
       let dmsSentThisRun = 0;
       let hitLimit = false;
+      let greetedChanged = false;
 
       // 5. Check each member
       for (const member of members) {
@@ -123,15 +150,20 @@ export async function checkNewMembersAndDM(env) {
 
         // Send the welcome DM
         const sent = await sendWelcomeDM(env, userId, guildId, guildName);
-        
+
         // Mark them as greeted (even if it failed, to avoid retrying DMs if they blocked DMs)
-        const greetedKey = `greeted:${guildId}:${userId}`;
-        await env.STATUS_KV.put(greetedKey, sent ? 'true' : 'failed');
-        
+        greetedUserIds.add(userId);
+        greetedChanged = true;
+
         if (sent) {
           dmsSentThisRun++;
           console.log(`Greeter: Welcomed user ${member.user.username} (${userId}) for guild ${guildId}`);
         }
+      }
+
+      // Persist the greeted set once per run instead of one write per user.
+      if (greetedChanged) {
+        await saveGreetedUserIds(env, guildId, greetedUserIds);
       }
 
       // If we went through all members without hitting the backlog limit,
