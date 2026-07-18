@@ -30,6 +30,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Logs scheduled checks, manual triggers, and `/post-status` runs to the configured log channel.
 - Adds `Last checked` timing to public and private embeds.
 - Posts an error embed if the HCPSS status page cannot be fetched.
+- Daily cleanup: once a day, checks each configured server for bot membership and automatically purges all stored KV data (config, logs, subscribers, calendar events, greeter records) for servers the bot has been removed from, as promised in the Privacy Policy.
 - Exposes `GET /health` for a lightweight health check.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 
