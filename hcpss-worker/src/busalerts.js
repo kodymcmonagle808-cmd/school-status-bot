@@ -121,7 +121,7 @@ export async function maybeSendBusAlerts(env) {
     const cfg = getEffectiveConfig(await getConfig(env, gid));
     if (!cfg.alert_channel_id) continue;
 
-    const footerText = `${cfg.alert_embed_footer || 'HCPSS Status Monitor'} · via HCPSS News`;
+    const footerText = `${cfg.alert_embed_footer || 'School Status'} · via HCPSS News`;
     const embeds = [];
     if (cfg.toggle_bus_alerts !== false) {
       for (const item of freshBus) {

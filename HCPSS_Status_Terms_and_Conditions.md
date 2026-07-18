@@ -1,12 +1,12 @@
-# Terms and Conditions for HCPSS Status
+# Terms and Conditions for School Status
 
-**Last Updated: July 10, 2026**
+**Last Updated: July 18, 2026**
 
-These Terms and Conditions ("Terms") govern your use of the "HCPSS Status" Discord bot ("the Bot," "we," "us," or "our"). By adding the Bot to a Discord server or otherwise interacting with it, you ("you," "the User," or "the Server Owner") agree to be bound by these Terms.
+These Terms and Conditions ("Terms") govern your use of the "School Status" Discord bot ("the Bot," "we," "us," or "our"). By adding the Bot to a Discord server or otherwise interacting with it, you ("you," "the User," or "the Server Owner") agree to be bound by these Terms.
 
 ## 1. Description of Service
 
-HCPSS Status is a third-party Discord bot that monitors publicly available Howard County Public School System (HCPSS) information — such as school delays, closures, and emergency alerts — and posts automated status updates to Discord channels where the Bot has been added. The Bot may also provide commands that allow users to manually check the current HCPSS status.
+School Status is a third-party Discord bot that monitors publicly available Howard County Public School System (HCPSS) information — such as school delays, closures, and emergency alerts — and posts automated status updates to Discord channels where the Bot has been added. The Bot may also provide commands that allow users to manually check the current HCPSS status.
 
 **The Bot is an independent, unofficial project.** It is not created, operated, endorsed, or affiliated with the Howard County Public School System, Howard County Government, or any of their officials or employees.
 
@@ -66,4 +66,4 @@ Questions about these Terms can be directed to the Bot developer through the sup
 
 ---
 
-*By using HCPSS Status, you acknowledge that it is an independent, unofficial tool and agree to these Terms in full.*
+*By using School Status, you acknowledge that it is an independent, unofficial tool and agree to these Terms in full.*

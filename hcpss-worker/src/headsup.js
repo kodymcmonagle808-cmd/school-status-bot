@@ -89,7 +89,7 @@ export async function maybeSendHeadsUp(env) {
         `HCPSS usually announces weather closings and delays by early morning. ` +
         `Storm mode will check every 15 minutes from 4:30–7:30 AM ET and post the moment anything changes.`,
       timestamp: now.toISOString(),
-      footer: { text: `${cfg.alert_embed_footer || 'HCPSS Status Monitor'} · Night-Before Heads-Up` }
+      footer: { text: `${cfg.alert_embed_footer || 'School Status'} · Night-Before Heads-Up` }
     };
     const fields = [];
     if (snowLines) fields.push({ name: '🌨️ Snowfall Forecast — Howard County', value: snowLines });

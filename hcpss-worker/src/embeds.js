@@ -53,7 +53,7 @@ export function splitEmbeds(title, description, url, color, footer, checkedAt = 
     const embed = {
       color,
       description: c,
-      footer: { text: footerWithCheckedAt(footer || 'HCPSS Status Monitor', checkedAt) },
+      footer: { text: footerWithCheckedAt(footer || 'School Status', checkedAt) },
       timestamp: checkedAt.toISOString()
     };
     if (idx === 0) {
@@ -118,7 +118,7 @@ function addField(embed, name, value) {
   embed.fields = [...(embed.fields || []), { name, value }];
 }
 
-export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', cards = null, config = null, staleInfo = null, guildId = '') {
+export async function buildStatusEmbeds(env, footer = 'School Status', cards = null, config = null, staleInfo = null, guildId = '') {
   const checkedAt = new Date();
   if (!cards) {
     const html = await fetchHtml(HCPSS_URL);
@@ -258,7 +258,7 @@ export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', ca
   return embeds;
 }
 
-export function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', config = null) {
+export function buildStatusErrorEmbeds(error, footer = 'School Status', config = null) {
   const checkedAt = new Date();
   const detail = error && error.message ? `\n\nTechnical detail: ${error.message}` : '';
   let color = getDefaultStatusColor('unknown_alert');
@@ -413,7 +413,7 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
   return { embeds, statusKey };
 }
 
-export function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config = null) {
+export function buildOverrideEmbeds(override, footer = 'School Status', config = null) {
   const checkedAt = new Date();
   const statusKey = override && override.status_key ? String(override.status_key) : '';
   const statusLabel = override && override.status_label ? String(override.status_label) : 'Override';
@@ -434,7 +434,7 @@ export function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', c
   return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 }
 
-export async function buildStatusPayload(env, { includeComponents = false, footer = 'HCPSS Status Monitor', guildId = '', cards = null, error = null, stale = false, staleAt = 0 } = {}) {
+export async function buildStatusPayload(env, { includeComponents = false, footer = 'School Status', guildId = '', cards = null, error = null, stale = false, staleAt = 0 } = {}) {
   const storedConfig = await getConfig(env, guildId);
   const config = getEffectiveConfig(storedConfig);
 

@@ -89,7 +89,7 @@ export async function maybeSendYearRecap(env) {
       color: 0xF1C40F,
       description,
       timestamp: now.toISOString(),
-      footer: { text: `${cfg.alert_embed_footer || 'HCPSS Status Monitor'} · Year Recap` }
+      footer: { text: `${cfg.alert_embed_footer || 'School Status'} · Year Recap` }
     };
 
     try {

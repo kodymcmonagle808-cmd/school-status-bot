@@ -1,12 +1,12 @@
-# Privacy Policy for HCPSS Status
+# Privacy Policy for School Status
 
-**Last Updated: July 10, 2026**
+**Last Updated: July 18, 2026**
 
-This Privacy Policy explains what information the "HCPSS Status" Discord bot ("the Bot," "we," "us," or "our") collects, how it is used, and your rights regarding that information.
+This Privacy Policy explains what information the "School Status" Discord bot ("the Bot," "we," "us," or "our") collects, how it is used, and your rights regarding that information.
 
 ## 1. Information We Collect
 
-HCPSS Status is designed to collect the **minimum data necessary** to function. This typically includes:
+School Status is designed to collect the **minimum data necessary** to function. This typically includes:
 
 **Server (Guild) Configuration Data:**
 - Discord Server (Guild) ID
@@ -72,4 +72,4 @@ For questions, concerns, or data deletion requests, please reach out through the
 
 ---
 
-*By using HCPSS Status, you acknowledge that you have read and understood this Privacy Policy.*
+*By using School Status, you acknowledge that you have read and understood this Privacy Policy.*

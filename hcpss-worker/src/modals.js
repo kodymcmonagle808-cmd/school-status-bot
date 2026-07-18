@@ -54,7 +54,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
       title: announceTitle || undefined,
       description: announceBody || undefined,
       color: 0x5865F2,
-      footer: announceFooter ? { text: announceFooter } : { text: 'HCPSS Status Monitor' },
+      footer: announceFooter ? { text: announceFooter } : { text: 'School Status' },
       timestamp: new Date().toISOString()
     };
 

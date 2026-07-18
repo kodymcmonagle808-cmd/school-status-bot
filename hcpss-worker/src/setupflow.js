@@ -17,7 +17,7 @@ export function handleSetupCommand(body, env, guildId, setupDone) {
     return jsonResponse({
       type: 4,
       data: {
-        content: '⚠️ **HCPSS Status Monitor Setup Alert**\n\nThis command has already been run in this server. Running setup again will create duplicate notification roles and may disrupt your current configuration.\n\nAre you sure you want to proceed?',
+        content: '⚠️ **School Status Setup Alert**\n\nThis command has already been run in this server. Running setup again will create duplicate notification roles and may disrupt your current configuration.\n\nAre you sure you want to proceed?',
         components: [
           {
             type: 1,
@@ -44,7 +44,7 @@ export function handleSetupCommand(body, env, guildId, setupDone) {
   return jsonResponse({
     type: 4,
     data: {
-      content: '⚙️ **HCPSS Status Monitor Setup — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
+      content: '⚙️ **School Status Setup — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
       components: [
         {
           type: 1,
@@ -72,7 +72,7 @@ export function setupAlertChannelStep(logChannelId) {
   return jsonResponse({
     type: 7,
     data: {
-      content: `⚙️ **HCPSS Status Monitor Setup — Step 2 of 3**\n\n` +
+      content: `⚙️ **School Status Setup — Step 2 of 3**\n\n` +
                `• Log channel: <#${logChannelId}>\n\n` +
                `Which channel should **status alerts** be posted to? (This is the channel members will see.)`,
       components: [{
@@ -94,7 +94,7 @@ export function setupStaffRoleStep(logChannelId, alertChannelId) {
   return jsonResponse({
     type: 7,
     data: {
-      content: `⚙️ **HCPSS Status Monitor Setup — Step 3 of 3**\n\n` +
+      content: `⚙️ **School Status Setup — Step 3 of 3**\n\n` +
                `• Log channel: <#${logChannelId}>\n` +
                `• Alerts channel: <#${alertChannelId}>\n\n` +
                `Which role should count as **bot staff** (allowed to use commands and the control panel)? ` +
@@ -137,7 +137,7 @@ export function handleSetupFinalize(body, env, ctx, guildId, selectedChannelId, 
   ctx.waitUntil((async () => {
     try {
       await updateInteractionOriginal(env, body.token, {
-        content: '⚙️ **HCPSS Status Monitor Setup**\n\n⏳ Creating status notification roles and configuring the bot...',
+        content: '⚙️ **School Status Setup**\n\n⏳ Creating status notification roles and configuring the bot...',
         components: []
       });
 

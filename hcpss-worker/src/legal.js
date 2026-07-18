@@ -4,8 +4,8 @@
 // markdown documents at the repo root — keep all three in sync.
 
 export const TERMS_MD =
-  '**Last Updated: July 10, 2026**\n\n' +
-  'By adding HCPSS Status to a server or using its commands, you agree to these Terms.\n\n' +
+  '**Last Updated: July 18, 2026**\n\n' +
+  'By adding School Status to a server or using its commands, you agree to these Terms.\n\n' +
   '**1. Service** — The bot monitors publicly available HCPSS information (delays, closures, alerts) and posts automated status updates. It is an **independent, unofficial project** — not created, operated, endorsed, or affiliated with HCPSS or Howard County Government.\n\n' +
   '**2. Acceptance** — Inviting the bot, using its commands, or remaining in a server where it is active constitutes acceptance of these Terms and the Privacy Policy (see `/privacy`). If you do not agree, remove the bot and stop using it.\n\n' +
   '**3. No Guarantee of Accuracy** — Status updates are for **convenience only** and are never an official or authoritative source. Always confirm closures, delays, or emergency information through official HCPSS channels (hcpss.org, official social media, or direct school communication). We are not responsible for delayed, missed, incorrect, or outdated updates.\n\n' +
@@ -18,7 +18,7 @@ export const TERMS_MD =
   "**10. Contact** — Questions can be directed to the bot developer through the support server or the contact method on the bot's official listing page.";
 
 export const PRIVACY_MD =
-  '**Last Updated: July 10, 2026**\n\n' +
+  '**Last Updated: July 18, 2026**\n\n' +
   '**1. What We Collect** — The minimum needed to function: server (guild) ID, configured channel IDs, optional ping role IDs, server-specific settings, and the user/channel ID at the time a command is run (used only to process that command).\n\n' +
   '**We do NOT collect** message content outside of command interactions, private messages, personal information (names, emails, school enrollment data), or voice/audio data.\n\n' +
   '**2. How It Is Used** — Solely to deliver status updates to configured channels, ping configured roles, respond to commands, and maintain/troubleshoot the bot. Data is never sold, rented, or shared with third parties for advertising or marketing.\n\n' +
@@ -55,7 +55,7 @@ export function legalPageResponse(title, md) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} — HCPSS Status Bot</title>
+<title>${escapeHtml(title)} — School Status Bot</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.6;
@@ -69,7 +69,7 @@ export function legalPageResponse(title, md) {
 <body>
 <h1>${escapeHtml(title)}</h1>
 ${mdToHtml(md)}
-<footer>HCPSS Status is an independent, unofficial Discord bot. It is not affiliated with the Howard County Public School System. · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
+<footer>School Status is an independent, unofficial Discord bot. It is not affiliated with the Howard County Public School System. · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></footer>
 </body>
 </html>`;
   return new Response(html, {

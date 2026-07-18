@@ -44,7 +44,7 @@ export async function runCalendarCommand(env, guildId = '') {
     title: '🗓️ HCPSS Upcoming Calendar Events (Next 7 Days)',
     color: 3066993,
     timestamp: checkedAt.toISOString(),
-    footer: { text: 'HCPSS Status Monitor' }
+    footer: { text: 'School Status' }
   };
 
   if (events.length === 0) {
@@ -64,11 +64,11 @@ export async function runCalendarCommand(env, guildId = '') {
 export function runTermsCommand() {
   return {
     embeds: [{
-      title: '📄 HCPSS Status — Terms and Conditions',
+      title: '📄 School Status — Terms and Conditions',
       color: 0x5865F2,
       description: TERMS_MD,
       timestamp: new Date().toISOString(),
-      footer: { text: 'HCPSS Status Monitor' }
+      footer: { text: 'School Status' }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -77,11 +77,11 @@ export function runTermsCommand() {
 export function runPrivacyCommand() {
   return {
     embeds: [{
-      title: '🔒 HCPSS Status — Privacy Policy',
+      title: '🔒 School Status — Privacy Policy',
       color: 0x5865F2,
       description: PRIVACY_MD,
       timestamp: new Date().toISOString(),
-      footer: { text: 'HCPSS Status Monitor' }
+      footer: { text: 'School Status' }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -91,7 +91,7 @@ export function runPrivacyCommand() {
 export async function runStatusCommand(body, env) {
   const guildId = body.guild_id || '';
   const builtStatus = await buildStatusPayload(env, {
-    footer: 'HCPSS Status Monitor - Only you can see this',
+    footer: 'School Status - Only you can see this',
     guildId
   });
   await updateInteractionOriginal(env, body.token, {
@@ -103,7 +103,7 @@ export async function runStatusCommand(body, env) {
 export function runHelpCommand() {
   return {
     embeds: [{
-      title: '📖 HCPSS Status Monitor — Commands & Features',
+      title: '📖 School Status — Commands & Features',
       color: 0x5865F2,
       description:
         '**For everyone:**\n' +
@@ -129,7 +129,7 @@ export function runHelpCommand() {
         '• `/mydata` — view or delete everything the bot stores for this server\n\n' +
         '*Automatic features (storm mode, morning digest, night-before heads-up, bus alerts, and more) are configured in the control panel in your log channel.*',
       timestamp: new Date().toISOString(),
-      footer: { text: 'HCPSS Status Monitor · Unofficial — always verify with hcpss.org' }
+      footer: { text: 'School Status · Unofficial — always verify with hcpss.org' }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -153,7 +153,7 @@ export async function runSnowdayCommand(body, env) {
       : outlook.level === 'moderate' ? 0xF1C40F
       : 0x95A5A6,
     timestamp: checkedAt.toISOString(),
-    footer: { text: footerWithCheckedAt('HCPSS Status Monitor · Unofficial estimate', checkedAt) }
+    footer: { text: footerWithCheckedAt('School Status · Unofficial estimate', checkedAt) }
   };
 
   if (outlook.level === 'none') {
@@ -234,7 +234,7 @@ export async function runMyDataViewCommand(env, guildId) {
         'No message content, names, or other personal information is stored.\n' +
         'Use `/mydata delete` to erase all of it, or simply remove the bot — departed servers are purged automatically within a day.',
       timestamp: new Date().toISOString(),
-      footer: { text: 'HCPSS Status Monitor' }
+      footer: { text: 'School Status' }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -277,7 +277,7 @@ export async function runHistoryCommand(env, guildId = '') {
     title: '📜 HCPSS Recent Status History',
     color: 3066993,
     timestamp: checkedAt.toISOString(),
-    footer: { text: `HCPSS Status Monitor · ${history.length} change(s) recorded${joinedAt ? ' since this server was set up' : ''}` }
+    footer: { text: `School Status · ${history.length} change(s) recorded${joinedAt ? ' since this server was set up' : ''}` }
   };
 
   if (history.length === 0) {
@@ -306,7 +306,7 @@ export async function runDistrictsCommand(env) {
       description: formatDistrictLines(districts, { includeDetail: true }) ||
         'No district information available right now.',
       timestamp: checkedAt.toISOString(),
-      footer: { text: footerWithCheckedAt('HCPSS Status Monitor · Cached up to 10 min', checkedAt) }
+      footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -326,10 +326,10 @@ export async function runLogsCommand(env, guildId = '') {
   }
 
   const embed = {
-    title: '📋 HCPSS Status Monitor - System Logs',
+    title: '📋 School Status - System Logs',
     color: 10181046, // Purple
     timestamp: checkedAt.toISOString(),
-    footer: { text: 'HCPSS Status Monitor' }
+    footer: { text: 'School Status' }
   };
 
   if (logs.length === 0) {
@@ -412,7 +412,7 @@ export async function runStatsCommand(env, guildId = '') {
     : '';
 
   const embed = {
-    title: '📊 HCPSS Status Monitor - Statistics',
+    title: '📊 School Status - Statistics',
     color: 0x34495E,
     description: `**Scraper Diagnostics (all servers):**\n` +
                  `• Total Checks: \`${scrapesTotal}\`\n` +
@@ -428,7 +428,7 @@ export async function runStatsCommand(env, guildId = '') {
                  `**Status Changes (${joinedAt ? 'Since Server Setup' : 'All-Time'}):**\n` +
                  `${countsDisplay}`,
     timestamp: checkedAt.toISOString(),
-    footer: { text: 'HCPSS Status Monitor' }
+    footer: { text: 'School Status' }
   };
 
   return {
@@ -521,7 +521,7 @@ export async function runEventsCommand(body, env) {
       title: '🗓️ Dynamic School Calendar Events',
       color: 3066993,
       timestamp: new Date().toISOString(),
-      footer: { text: 'HCPSS Status Monitor' }
+      footer: { text: 'School Status' }
     };
 
     if (events.length === 0) {

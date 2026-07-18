@@ -1,4 +1,6 @@
-# HCPSS Status Monitor - Cloudflare Worker
+# School Status - Cloudflare Worker
+
+School Status is an unofficial Discord bot that monitors the HCPSS operating status (and six neighboring Maryland districts) and posts automated updates.
 
 This Worker checks the HCPSS status page, posts the current status to Discord, and handles the Discord `Check again` button privately.
 

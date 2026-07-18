@@ -167,7 +167,7 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
       `${barFromFilled(scale(incidentFilled))}\n` +
       `> Filled = more non-normal status events recorded`,
     timestamp: new Date().toISOString(),
-    footer: { text: 'HCPSS Status Monitor · Bot Status  •  ■ = filled  · space = empty' }
+    footer: { text: 'School Status · Bot Status  •  ■ = filled  · space = empty' }
   };
 
   const components = [

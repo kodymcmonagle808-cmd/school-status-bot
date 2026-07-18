@@ -490,7 +490,7 @@ export function handleTestAlert(body, env, ctx, guildId) {
       }
 
       const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
-      const customFooter = config.alert_embed_footer || 'HCPSS Status Monitor';
+      const customFooter = config.alert_embed_footer || 'School Status';
       const color = config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number'
         ? config.status_embed_colors[statusKey]
         : getDefaultStatusColor(statusKey);

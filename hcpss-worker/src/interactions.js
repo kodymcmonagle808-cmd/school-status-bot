@@ -400,7 +400,7 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
-    const builtStatus = await buildStatusPayload(env, { footer: 'HCPSS Status Monitor - Only you can see this', guildId });
+    const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId });
     return interactionResponse({
       content: '',
       embeds: builtStatus.payload.embeds,
@@ -434,7 +434,7 @@ export async function handleInteraction(body, env, ctx) {
     return jsonResponse({
       type: 7,
       data: {
-        content: '⚙️ **HCPSS Status Monitor Setup (Force Rerun) — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
+        content: '⚙️ **School Status Setup (Force Rerun) — Step 1 of 3**\n\nWhich channel should the bot post **system logs and the control panel** to?',
         components: [
           {
             type: 1,

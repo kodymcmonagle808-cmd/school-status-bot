@@ -74,7 +74,7 @@ export async function maybeSendMorningDigests(env) {
       color: override ? 0xF1C40F : getDefaultStatusColor(statusKey),
       description: lines.join('\n\n'),
       timestamp: now.toISOString(),
-      footer: { text: `${cfg.alert_embed_footer || 'HCPSS Status Monitor'} · Morning Digest` }
+      footer: { text: `${cfg.alert_embed_footer || 'School Status'} · Morning Digest` }
     };
 
     try {
