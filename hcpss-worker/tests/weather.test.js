@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeWeatherAlerts, formatWeatherAlertLines, getActiveWeatherAlerts, isStormAlert, hasStormAlert, alertsLikelyTomorrowMorning } from '../src/weather.js';
+import { summarizeWeatherAlerts, formatWeatherAlertLines, getActiveWeatherAlerts, isStormAlert, hasStormAlert, isPowerThreatAlert, hasPowerThreatAlert, alertsLikelyTomorrowMorning } from '../src/weather.js';
 
 function feature(props) {
   return { properties: props };
@@ -81,4 +81,26 @@ test('getActiveWeatherAlerts uses the KV cache when present', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('should not be called'); });
   const alerts = await getActiveWeatherAlerts({ STATUS_KV: kv });
   assert.equal(alerts[0].event, 'Cached Warning');
+});
+
+test('isPowerThreatAlert only matches warning-level power-threatening events', () => {
+  // Warnings for events that can take down power lines
+  assert.equal(isPowerThreatAlert({ event: 'Winter Storm Warning', severity: 'Moderate' }), true);
+  assert.equal(isPowerThreatAlert({ event: 'Ice Storm Warning', severity: 'Severe' }), true);
+  assert.equal(isPowerThreatAlert({ event: 'Blizzard Warning', severity: 'Severe' }), true);
+  assert.equal(isPowerThreatAlert({ event: 'High Wind Warning', severity: 'Severe' }), true);
+  assert.equal(isPowerThreatAlert({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }), true);
+
+  // Watches and advisories do not trigger, even though they are storm alerts
+  assert.equal(isPowerThreatAlert({ event: 'Winter Storm Watch', severity: 'Moderate' }), false);
+  assert.equal(isPowerThreatAlert({ event: 'Winter Weather Advisory', severity: 'Minor' }), false);
+  assert.equal(isPowerThreatAlert({ event: 'Wind Chill Advisory', severity: 'Moderate' }), false);
+  assert.equal(isPowerThreatAlert({ event: 'Wind Chill Warning', severity: 'Moderate' }), false);
+
+  // Extreme severity qualifies regardless of event name
+  assert.equal(isPowerThreatAlert({ event: 'Unusual Event', severity: 'Extreme' }), true);
+
+  assert.equal(hasPowerThreatAlert([{ event: 'Winter Weather Advisory' }, { event: 'Ice Storm Warning' }]), true);
+  assert.equal(hasPowerThreatAlert([{ event: 'Winter Weather Advisory' }]), false);
+  assert.equal(hasPowerThreatAlert([]), false);
 });

@@ -84,6 +84,26 @@ test('no storm alert means no refresh and no slot claim', async (t) => {
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
+test('advisory-level winter alerts do not trigger the refresh', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: 0 },
+    { event: 'Wind Chill Advisory', severity: 'Moderate', endsMs: 0 }
+  ]));
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env);
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+  assert.equal(kv.store.has('last_storm_refresh_slot'), false);
+});
+
 test('guilds with all storm sections disabled are skipped', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store);

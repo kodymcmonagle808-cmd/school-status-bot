@@ -1,9 +1,11 @@
-// While a winter storm alert is active, refresh each guild's posted status
-// message every 15 minutes so the live extras (power outages, road
-// conditions, nearby districts, weather alerts) stay current. Edits the
-// existing message in place — no new posts, no pings.
+// While a power-threatening storm warning is active (ice storm, blizzard,
+// winter storm, high wind, severe thunderstorm, ...), refresh each guild's
+// posted status message every 15 minutes so the live extras (power outages,
+// road conditions, nearby districts, weather alerts) stay current. Edits the
+// existing message in place — no new posts, no pings. Advisory-level events
+// don't trigger it.
 
-import { getActiveWeatherAlerts, hasStormAlert } from './weather.js';
+import { getActiveWeatherAlerts, hasPowerThreatAlert } from './weather.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 
@@ -21,7 +23,7 @@ export async function maybeRefreshStormEmbeds(env) {
   // Weather is checked before claiming the slot so quiet days cost one cached
   // read, and the first storm-time tick still runs the refresh.
   const alerts = await getActiveWeatherAlerts(env);
-  if (!hasStormAlert(alerts)) return { updated: 0 };
+  if (!hasPowerThreatAlert(alerts)) return { updated: 0 };
   await env.STATUS_KV.put(SLOT_KEY, slot);
 
   let guildIds = [];

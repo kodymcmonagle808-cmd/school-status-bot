@@ -60,6 +60,24 @@ export function hasStormAlert(alerts) {
   return (Array.isArray(alerts) ? alerts : []).some(isStormAlert);
 }
 
+// Storms that plausibly threaten power infrastructure: ice, heavy snow,
+// damaging wind, severe thunderstorms, tropical systems, tornadoes. Only
+// warning-level events count — watches and advisory-level events (Wind Chill
+// Advisory, Winter Weather Advisory) don't take down power lines. Anything
+// NWS rates Extreme qualifies regardless of name.
+const POWER_THREAT_EVENT_RE = /ice storm|blizzard|winter storm|heavy snow|freezing rain|high wind|severe thunderstorm|tropical storm|hurricane|tornado/i;
+
+export function isPowerThreatAlert(alert) {
+  if (!alert) return false;
+  if (alert.severity === 'Extreme') return true;
+  const event = alert.event || '';
+  return POWER_THREAT_EVENT_RE.test(event) && /warning/i.test(event);
+}
+
+export function hasPowerThreatAlert(alerts) {
+  return (Array.isArray(alerts) ? alerts : []).some(isPowerThreatAlert);
+}
+
 // Storm alerts likely still active tomorrow morning: no known end time, or an
 // end time far enough out (default 9h) that it reaches past the next morning's
 // decision window when evaluated during the evening.
