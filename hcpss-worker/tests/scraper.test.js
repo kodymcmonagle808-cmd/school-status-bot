@@ -79,8 +79,10 @@ function makeKv(store = new Map()) {
 
 test('getStatusCards falls back to the cached scrape when fetch fails', async (t) => {
   const kv = makeKv();
+  // Older than the 60s fresh-cache window (so the fetch is attempted) but
+  // well within the 24h stale-fallback window.
   kv.store.set('last_good_scrape', JSON.stringify({
-    at: Date.now() - 60_000,
+    at: Date.now() - 5 * 60_000,
     cards: [{ date: '', title: 'Schools Closed', body: 'cached' }]
   }));
 
