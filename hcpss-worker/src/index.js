@@ -6,6 +6,7 @@ import { jsonResponse, verifyDiscordRequest } from './discord.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
 import { maybeSendMorningDigests } from './digest.js';
+import { checkNewMembersAndDM } from './greeter.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -85,6 +86,11 @@ export default {
         await maybeSendMorningDigests(env);
       } catch (e) {
         console.error('Morning digest run failed', e);
+      }
+      try {
+        await checkNewMembersAndDM(env);
+      } catch (e) {
+        console.error('Greeter run failed', e);
       }
     })());
   }

@@ -60,6 +60,7 @@ import {
   handlePanelRefresh,
   handlePanelClearLogs
 } from './commands.js';
+import { handleGreeterInteraction } from './greeter.js';
 
 async function handleModalSubmit(body, env, ctx, guildId) {
   // Handle announce modal before the canConfigure gate (staff can announce)
@@ -1125,6 +1126,10 @@ export async function handleInteraction(body, env, ctx) {
       });
     }
     return handleTestAlert(body, env, ctx, guildId);
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('greeter_role_select:')) {
+    return await handleGreeterInteraction(body, env);
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'role_toggle_select') {
