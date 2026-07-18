@@ -1,4 +1,4 @@
-# hcpss-status-monitor
+# school-status-bot
 
 Monitors the [HCPSS status page](https://status.hcpss.org) and posts the current operating status to Discord.
 

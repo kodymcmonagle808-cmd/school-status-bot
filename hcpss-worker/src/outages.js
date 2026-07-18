@@ -8,7 +8,7 @@ const OUTAGE_CACHE_KEY = 'bge_outage_cache';
 const OUTAGE_CACHE_TTL_SECONDS = 600;
 const FETCH_TIMEOUT_MS = 8000;
 
-const UA = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 function timeoutSignal(ms) {
   const controller = new AbortController();

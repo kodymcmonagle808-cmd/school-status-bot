@@ -20,7 +20,7 @@ const SCHOOL_NOTICE_LAST_KEY = 'school_notice_last_ms';
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_POSTS_PER_RUN = 2;
 
-const UA = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 // Only scan while buses actually run and families are awake.
 export const BUS_ALERT_START_HOUR = 5;

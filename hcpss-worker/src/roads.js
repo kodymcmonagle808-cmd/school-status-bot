@@ -10,7 +10,7 @@ const ROADS_CACHE_KEY = 'chart_incidents_cache';
 const ROADS_CACHE_TTL_SECONDS = 600;
 const FETCH_TIMEOUT_MS = 8000;
 
-const UA = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 export const MAX_ROAD_LINES = 2;
 

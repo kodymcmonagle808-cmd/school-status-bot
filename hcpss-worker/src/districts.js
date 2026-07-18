@@ -13,7 +13,7 @@ const FETCH_TIMEOUT_MS = 8000;
 // only posts newer than this window are considered for classification.
 export const RECENT_WINDOW_MS = 18 * 60 * 60 * 1000;
 
-const UA = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 export const DISTRICT_STATUS_LABELS = {
   closed: 'Schools closed',

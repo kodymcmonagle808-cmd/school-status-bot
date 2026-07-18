@@ -3,7 +3,7 @@
 // pass that county's zone instead.
 // The NWS API is free and keyless but requires a User-Agent header.
 export const DEFAULT_NWS_ZONE = 'MDC027';
-const NWS_USER_AGENT = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const NWS_USER_AGENT = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 const WEATHER_CACHE_KEY = 'weather_alerts_cache';
 const WEATHER_CACHE_TTL_SECONDS = 600;

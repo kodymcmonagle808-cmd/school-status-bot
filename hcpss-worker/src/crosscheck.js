@@ -15,7 +15,7 @@ const FETCH_TIMEOUT_MS = 8000;
 // Only posts this recent can describe today's operating status.
 export const NEWS_RECENT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
-const UA = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 // Parses RSS 2.0 <item> blocks into [{ text, atMs }], newest first, keeping
 // only items within the recent window.

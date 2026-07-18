@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: hcpss-status-monitor-worker
+  group: school-status-bot-worker
   cancel-in-progress: true
 
 jobs:

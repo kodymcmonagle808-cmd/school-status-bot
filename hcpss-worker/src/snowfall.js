@@ -5,7 +5,7 @@
 // detail is never allowed to break a status post.
 
 const NWS_POINT_URL = 'https://api.weather.gov/points/39.2156,-76.8582'; // Columbia, MD
-const NWS_USER_AGENT = 'hcpss-status-monitor (github.com/kodymcmonagle808-cmd/hcpss-status-monitor)';
+const NWS_USER_AGENT = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 const FORECAST_URL_CACHE_KEY = 'nws_forecast_url';
 const SNOWFALL_CACHE_KEY = 'snowfall_forecast_cache';
