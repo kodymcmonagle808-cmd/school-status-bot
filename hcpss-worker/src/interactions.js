@@ -279,9 +279,27 @@ export async function handleInteraction(body, env, ctx) {
       });
     }
 
+    const label = ALL_STATUS_LABELS[statusKey] || statusKey;
     const hasRole = body.member && Array.isArray(body.member.roles) && body.member.roles.includes(roleId);
+
+    // Removing is destructive-ish (you stop getting pinged), so warn first.
+    if (hasRole) {
+      return interactionResponse({
+        content: `⚠️ You already have <@&${roleId}>.\n\n` +
+                 `Removing it means you'll **no longer be pinged** when **${label}** is announced. Remove it?`,
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 4, label: 'Yes, remove it', custom_id: `role_remove_confirm:${statusKey}` },
+            { type: 2, style: 2, label: 'Keep it', custom_id: 'role_remove_cancel' }
+          ]
+        }],
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
     const resp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
-      method: hasRole ? 'DELETE' : 'PUT',
+      method: 'PUT',
       headers: {
         Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
         'X-Audit-Log-Reason': 'Self-service HCPSS notification role toggle'
@@ -295,12 +313,57 @@ export async function handleInteraction(body, env, ctx) {
       });
     }
 
-    const label = ALL_STATUS_LABELS[statusKey] || statusKey;
     return interactionResponse({
-      content: hasRole
-        ? `🔕 Removed <@&${roleId}> — you'll no longer be pinged for **${label}**.`
-        : `🔔 Added <@&${roleId}> — you'll be pinged when **${label}** is announced.`,
+      content: `🔔 Added <@&${roleId}> — you'll be pinged when **${label}** is announced.`,
       flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'role_remove_cancel') {
+    return jsonResponse({
+      type: 7,
+      data: { content: '👍 Kept it — your notifications are unchanged.', components: [] }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('role_remove_confirm:')) {
+    const statusKey = body.data.custom_id.slice('role_remove_confirm:'.length);
+    const userId = getInvokerId(body);
+    if (!userId || !statusKey) {
+      return interactionResponse({ content: '❌ Could not determine your selection.', flags: EPHEMERAL_FLAG });
+    }
+
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    const roleId = cfg.status_ping_roles && cfg.status_ping_roles[statusKey];
+    if (!roleId) {
+      return jsonResponse({
+        type: 7,
+        data: { content: '❌ No notification role is configured for that status anymore.', components: [] }
+      });
+    }
+
+    const resp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'X-Audit-Log-Reason': 'Self-service HCPSS notification role toggle'
+      }
+    });
+    if (!resp.ok) {
+      return jsonResponse({
+        type: 7,
+        data: {
+          content: `❌ Couldn't update your roles (Discord error ${resp.status}). ` +
+                   `The bot needs the **Manage Roles** permission, and its role must be above the notification roles in the role list.`,
+          components: []
+        }
+      });
+    }
+
+    const label = ALL_STATUS_LABELS[statusKey] || statusKey;
+    return jsonResponse({
+      type: 7,
+      data: { content: `🔕 Removed <@&${roleId}> — you'll no longer be pinged for **${label}**.`, components: [] }
     });
   }
 
