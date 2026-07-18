@@ -52,6 +52,8 @@ import {
   runLogsCommand,
   runStatsCommand,
   runEventsCommand,
+  runTermsCommand,
+  runPrivacyCommand,
   runPostStatusCommand,
   runOverrideCommand,
   handlePanelSpeed,
@@ -1006,6 +1008,15 @@ export async function handleInteraction(body, env, ctx) {
     }
     const setupDone = await env.STATUS_KV.get(`setup_done:${guildId}`);
     return handleSetupCommand(body, env, guildId, setupDone);
+  }
+
+  // Terms and privacy policy are public information — no staff gate.
+  if (body.type === 2 && body.data && body.data.name === 'terms') {
+    return interactionResponse(runTermsCommand());
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'privacy') {
+    return interactionResponse(runPrivacyCommand());
   }
 
   if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {

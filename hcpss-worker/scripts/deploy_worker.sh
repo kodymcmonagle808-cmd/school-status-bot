@@ -199,6 +199,18 @@ payload=$(jq -n '[
     description: "Refresh the control panel embed in the log channel.",
     type: 1,
     dm_permission: false
+  },
+  {
+    name: "terms",
+    description: "View the Terms and Conditions for this bot.",
+    type: 1,
+    dm_permission: false
+  },
+  {
+    name: "privacy",
+    description: "View the Privacy Policy for this bot.",
+    type: 1,
+    dm_permission: false
   }
 ]')
 
