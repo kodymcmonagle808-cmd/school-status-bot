@@ -13,8 +13,16 @@ import {
 import { getEasternTimeStr, formatCheckedAt, formatStatusDate, formatYmdNY } from './timeutil.js';
 import { HCPSS_URL, fetchHtml, getStatusCards, extractCards, assembleDescription, determineStatusKey, statusDateInfo } from './scraper.js';
 import { getActiveWeatherAlerts, formatWeatherAlertLines, hasStormAlert, alertsLikelyTomorrowMorning } from './weather.js';
-import { getDistrictStatuses, formatDistrictLines } from './districts.js';
+import {
+  getDistrictStatuses,
+  formatDistrictLines,
+  getDistrictMeta,
+  DISTRICT_STATUS_LABELS,
+  DISTRICT_STATUS_TO_KEY,
+  statusKeyToDistrictStatus
+} from './districts.js';
 import { computeClosureOutlook, formatOutlookLines } from './outlook.js';
+import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { getCalendarEvent } from './calendar.js';
@@ -136,6 +144,15 @@ export async function buildStatusEmbeds(env, footer = 'HCPSS Status Monitor', ca
     }
   }
 
+  // During a storm alert, add expected snow/ice accumulations from the NWS
+  // forecast so the outlook has concrete numbers behind it.
+  if (weatherEnabled && hasStormAlert(alerts) && embeds[0]) {
+    const snowLines = formatSnowfallLines(await getSnowfallForecast(env));
+    if (snowLines) {
+      addField(embeds[0], '🌨️ Snowfall Forecast — Howard County', snowLines);
+    }
+  }
+
   // While a storm alert is active, show what the neighboring districts have
   // announced — surrounding counties' calls are the strongest signal for HCPSS.
   const districtsEnabled = !config || config.toggle_districts !== false;
@@ -227,6 +244,123 @@ export function buildStatusErrorEmbeds(error, footer = 'HCPSS Status Monitor', c
   }];
 }
 
+// Status embeds for a guild whose primary district is a neighboring county
+// rather than HCPSS. Announcements come from the district's own fetcher;
+// weather uses that county's NWS zone; Nearby Districts includes HCPSS.
+export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpssCards = null, footer = 'Status Monitor') {
+  const districtId = config && config.primary_district;
+  const meta = getDistrictMeta(districtId);
+  if (!meta) throw new Error(`Unknown primary district: ${districtId}`);
+
+  const districts = await getDistrictStatuses(env);
+  const mine = (districts || []).find(d => d.id === districtId);
+  if (!mine || mine.status === 'unavailable') {
+    throw new Error(`The ${meta.name} announcement source is unavailable right now.`);
+  }
+
+  const checkedAt = new Date();
+  const statusKey = DISTRICT_STATUS_TO_KEY[mine.status] || 'unknown_alert';
+  const statusLabel = mine.status === 'none' ? 'Normal Operations' : (DISTRICT_STATUS_LABELS[mine.status] || 'Announcement');
+
+  let desc = `## **${statusLabel}**`;
+  if (mine.detail && mine.status !== 'none') {
+    desc += `\n\n${mine.detail}`;
+  } else if (mine.status === 'none') {
+    desc += `\n\nNo closing or delay announcements from ${meta.name} schools — normal operations assumed.`;
+  }
+
+  let color = getDefaultStatusColor(statusKey);
+  if (config && config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number') {
+    color = config.status_embed_colors[statusKey];
+  }
+  const customFooter = (config && config.alert_embed_footer) || footer;
+  const thumbnailUrl = getStatusThumbnail(statusKey);
+
+  const embeds = splitEmbeds(
+    `${meta.name} Schools — Status for ${formatStatusDate(checkedAt)}`,
+    desc, meta.url, color, customFooter, checkedAt, thumbnailUrl
+  ).slice(0, MAX_EMBEDS);
+
+  // Weather alerts for this district's own county zone.
+  const weatherEnabled = !config || config.toggle_weather !== false;
+  const alerts = weatherEnabled ? await getActiveWeatherAlerts(env, meta.nwsZone) : [];
+  if (weatherEnabled && embeds[0]) {
+    const alertLines = formatWeatherAlertLines(alerts);
+    if (alertLines) {
+      addField(embeds[0], `⛅ Active Weather Alerts — ${meta.name}`, alertLines);
+    }
+  }
+
+  const stormActive = weatherEnabled && hasStormAlert(alerts);
+
+  if (weatherEnabled && stormActive && embeds[0]) {
+    const snowLines = formatSnowfallLines(await getSnowfallForecast(env));
+    if (snowLines) {
+      addField(embeds[0], '🌨️ Snowfall Forecast — Region', snowLines);
+    }
+  }
+
+  // Nearby Districts: the other five counties plus HCPSS itself.
+  const districtsEnabled = !config || config.toggle_districts !== false;
+  const outlookEnabled = !config || config.toggle_outlook !== false;
+  let neighborList = null;
+  if ((districtsEnabled || outlookEnabled) && stormActive && embeds[0]) {
+    neighborList = districts.filter(d => d.id !== districtId);
+    if (!hcpssCards) {
+      try {
+        const fetched = await getStatusCards(env);
+        hcpssCards = fetched.cards;
+      } catch {}
+    }
+    if (hcpssCards) {
+      const hcpssStatus = statusKeyToDistrictStatus(determineStatusKey(hcpssCards));
+      neighborList = [
+        { id: 'hcpss', name: 'Howard Co.', status: hcpssStatus, detail: '' },
+        ...neighborList
+      ];
+    }
+  }
+  if (districtsEnabled && stormActive && embeds[0] && neighborList) {
+    const districtLines = formatDistrictLines(neighborList);
+    if (districtLines) {
+      addField(embeds[0], '🏫 Nearby Districts', districtLines);
+    }
+  }
+
+  if (outlookEnabled && stormActive && embeds[0] && statusKey === 'normal_operations') {
+    const outlookText = formatOutlookLines(computeClosureOutlook(alerts, neighborList || []));
+    if (outlookText) {
+      addField(embeds[0], '❄️ Closure Outlook', outlookText);
+    }
+  }
+
+  // Evening Tomorrow Outlook: this guild's own calendar events (the built-in
+  // HCPSS calendar doesn't apply to other districts) plus lingering storm alerts.
+  const etHour = Number(getEasternTimeStr(checkedAt).split(':')[0]);
+  if (etHour >= 17 && embeds[0]) {
+    const outlookLines = [];
+    const tomorrow = new Date(checkedAt.getTime() + 24 * 60 * 60 * 1000);
+    let calEvent = null;
+    if (env && env.STATUS_KV) {
+      try { calEvent = await getCalendarEvent(env, guildId, formatYmdNY(tomorrow)); } catch {}
+    }
+    if (calEvent) {
+      outlookLines.push(`📅 **${formatStatusDate(tomorrow)}**: ${calEvent}`);
+    }
+    if (weatherEnabled) {
+      for (const a of alertsLikelyTomorrowMorning(alerts, checkedAt.getTime()).slice(0, 2)) {
+        const until = a.endsMs ? ` (until <t:${Math.floor(a.endsMs / 1000)}:f>)` : '';
+        outlookLines.push(`🌨️ **${a.event}** may affect tomorrow morning${until}`);
+      }
+    }
+    if (outlookLines.length) {
+      addField(embeds[0], '🌙 Tomorrow Outlook', outlookLines.join('\n'));
+    }
+  }
+
+  return { embeds, statusKey };
+}
+
 export function buildOverrideEmbeds(override, footer = 'HCPSS Status Monitor', config = null) {
   const checkedAt = new Date();
   const statusKey = override && override.status_key ? String(override.status_key) : '';
@@ -260,6 +394,33 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
     };
     if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
+  }
+
+  // Guilds with a non-HCPSS primary district get their district's status
+  // instead of the HCPSS status page.
+  if (config.primary_district && config.primary_district !== 'hcpss') {
+    try {
+      const built = await buildDistrictStatusEmbeds(env, config, guildId, cards, footer);
+      const payload = { content: '', embeds: built.embeds };
+      if (includeComponents) payload.components = buildCheckAgainComponents(config);
+      return { payload, isError: false, statusKey: built.statusKey };
+    } catch (err) {
+      const meta = getDistrictMeta(config.primary_district);
+      const checkedAt = new Date();
+      const payload = {
+        content: '',
+        embeds: [{
+          title: `${meta ? meta.name : 'District'} status check failed`,
+          url: meta ? meta.url : undefined,
+          description: `The monitor could not read this district's announcements right now. Try again in a minute.${err && err.message ? `\n\nTechnical detail: ${err.message}` : ''}`,
+          color: getDefaultStatusColor('unknown_alert'),
+          footer: { text: footerWithCheckedAt((config && config.alert_embed_footer) || footer, checkedAt) },
+          timestamp: checkedAt.toISOString()
+        }]
+      };
+      if (includeComponents) payload.components = buildCheckAgainComponents(config);
+      return { payload, isError: true, error: err, statusKey: 'unknown_alert' };
+    }
   }
 
   // No pre-fetched cards from the caller: fetch live, falling back to the

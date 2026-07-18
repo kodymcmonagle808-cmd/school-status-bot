@@ -4,6 +4,7 @@
 import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, stormTickSlot } from './timeutil.js';
 import { getStatusCards } from './scraper.js';
 import { getActiveWeatherAlerts, hasStormAlert } from './weather.js';
+import { getDistrictStatuses } from './districts.js';
 import { trackStatusHistory } from './history.js';
 import { notifySubscribers } from './subscriptions.js';
 import { getConfig, getEffectiveConfig } from './config.js';
@@ -240,9 +241,38 @@ export async function doCheckAndPost(env, options = {}) {
     }
   }
 
+  // Guilds with a non-HCPSS primary district track changes against their own
+  // district's announcements, not the HCPSS status page.
+  const guildPrimaries = new Map();
+  for (const gid of targetGuildIds) {
+    const cfg = getEffectiveConfig(await getConfig(env, gid));
+    guildPrimaries.set(gid, cfg.primary_district || 'hcpss');
+  }
+  const primaryDistrictIds = new Set([...guildPrimaries.values()].filter(id => id !== 'hcpss'));
+  const changedDistricts = new Set();
+  if (primaryDistrictIds.size) {
+    try {
+      const districtStatuses = await getDistrictStatuses(env);
+      for (const id of primaryDistrictIds) {
+        const d = districtStatuses.find(x => x.id === id);
+        if (!d || d.status === 'unavailable') continue;
+        const sig = `${d.status}|${d.detail || ''}`;
+        const key = `last_district_status:${id}`;
+        const prev = await env.STATUS_KV.get(key);
+        if (prev !== sig) {
+          // First observation is a baseline, not a change.
+          if (prev !== null) changedDistricts.add(id);
+          await env.STATUS_KV.put(key, sig);
+        }
+      }
+    } catch (e) {
+      console.error('District change tracking failed:', e);
+    }
+  }
+
   // Storm checks are silent unless the status actually changed — no reposts,
   // no pings, just fast detection of a new closing/delay announcement.
-  if (isStormCheck && !statusChanged) {
+  if (isStormCheck && !statusChanged && changedDistricts.size === 0) {
     await handleScraperSuccessOrFailure(env, scrapeFailed, fetched.error, targetGuildIds);
     return { ok: true, skipped: true, message: 'Storm check: status unchanged.' };
   }
@@ -255,6 +285,12 @@ export async function doCheckAndPost(env, options = {}) {
     const config = getEffectiveConfig(stored);
     if (isStormCheck && config.toggle_storm_mode === false) {
       results.push({ guildId, ok: true, skipped: true, reason: 'Storm mode disabled' });
+      continue;
+    }
+    const primary = guildPrimaries.get(guildId) || config.primary_district || 'hcpss';
+    const guildSourceChanged = primary === 'hcpss' ? statusChanged : changedDistricts.has(primary);
+    if (isStormCheck && !guildSourceChanged) {
+      results.push({ guildId, ok: true, skipped: true, reason: 'Storm check: no change for this guild\'s district' });
       continue;
     }
     const channelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
@@ -352,8 +388,8 @@ export async function doCheckAndPost(env, options = {}) {
         guildId
       );
 
-      // DM subscribers only when the operating status actually changed.
-      if (statusChanged && !builtStatus.isOverride) {
+      // DM subscribers only when this guild's source status actually changed.
+      if (guildSourceChanged && !builtStatus.isOverride) {
         const dmCount = await notifySubscribers(env, guildId, builtStatus.payload.embeds);
         if (dmCount > 0) {
           await postLog(env, logChannelId, `🔔 Status change DM sent to ${dmCount} subscriber(s).`, {}, guildId);

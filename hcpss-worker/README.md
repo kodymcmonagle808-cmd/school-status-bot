@@ -13,6 +13,10 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Evening posts (5 PM ET onward) include a Tomorrow Outlook: the next day's calendar event and storm alerts likely to still be active by morning.
 - Nearby Districts: while a storm alert is active, status embeds show what the six neighboring districts (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) have announced; `/districts` shows the same list on demand (toggleable in Settings > Feature Toggles).
 - Closure Outlook: while a storm alert is active (and HCPSS still shows Normal Operations), embeds include a Low/Moderate/High/Very High estimate of a closing or delay, scored from the strongest NWS alert plus nearby districts' calls (toggleable).
+- Snowfall Forecast: during a storm alert, embeds show the NWS forecast's expected snow/ice accumulations ("New snow accumulation of 4 to 8 inches possible") for the next few forecast periods.
+- Night-Before Heads-Up: a 7:00 PM ET alert (with pings) when the Closure Outlook reaches High/Very High while HCPSS still shows Normal Operations — includes the snowfall forecast, active alerts, and nearby districts (toggleable, on by default).
+- Bus & Transportation Alerts: watches the HCPSS News feed for transportation service posts (route suspensions, systemwide delays, restorations) and posts new ones to the alert channel between 5 AM–10 PM ET (toggleable, on by default).
+- Primary District: each server can follow a neighboring district (Anne Arundel, Baltimore Co., Carroll, Frederick, Montgomery, Prince George's) instead of HCPSS — status posts, weather alerts (that county's NWS zone), storm-mode change detection, ping roles, and DM notifications all follow the chosen district, with HCPSS shown in its Nearby Districts list. Set it in Settings > Feature Toggles.
 - Source Cross-Check: scans the [HCPSS News](https://news.hcpss.org) RSS feed and warns on the embed when a recent news post reads as a closing/delay but the status page still shows Normal Operations (toggleable).
 - Retries failed scrapes once, then falls back to the last known status (up to 24h old) with a stale-data banner instead of going dark.
 - Alerts staff after 3 consecutive scraper failures, and posts a recovery notice when the scraper starts working again.
@@ -98,7 +102,10 @@ The health check returns JSON with the Worker name, timestamp, and whether the m
 - `src/discord.js` — Discord API helpers and request signature verification.
 - `src/constants.js` — status labels, colors, defaults, and the school calendar.
 - `src/scraper.js` — status page fetching/parsing, retry, and last-good-scrape fallback cache.
-- `src/weather.js` — NWS active alerts for Howard County (zone MDC027) with a 10-minute KV cache.
+- `src/weather.js` — NWS active alerts (Howard County zone MDC027 by default, per-district zones supported) with a 10-minute KV cache.
+- `src/snowfall.js` — NWS gridpoint forecast accumulation lines with a 30-minute KV cache.
+- `src/headsup.js` — the 7:00 PM ET night-before heads-up post.
+- `src/busalerts.js` — HCPSS News transportation alert watcher.
 - `src/districts.js` — neighboring districts' operating status (per-platform fetchers, keyword classifier, 10-minute KV cache).
 - `src/outlook.js` — Closure Outlook scoring from weather alerts + district statuses.
 - `src/crosscheck.js` — HCPSS News RSS second-source signal and mismatch detection.

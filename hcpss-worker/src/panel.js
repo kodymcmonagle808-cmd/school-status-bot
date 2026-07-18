@@ -11,6 +11,7 @@ import {
   isInStormWindow
 } from './timeutil.js';
 import { hasStormAlert } from './weather.js';
+import { PRIMARY_DISTRICT_CHOICES } from './districts.js';
 import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { listCalendarEvents } from './calendar.js';
@@ -258,6 +259,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const outlook = config.toggle_outlook !== false;
     const crosscheck = config.toggle_crosscheck !== false;
     const digest = config.toggle_digest === true; // opt-in, off by default
+    const headsUp = config.toggle_heads_up !== false;
+    const busAlerts = config.toggle_bus_alerts !== false;
+    const primaryDistrict = config.primary_district || 'hcpss';
+    const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
     const embed = {
       title: '🔔 Control Panel — Feature Toggles',
@@ -271,7 +276,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n` +
                    `• ${outlook ? '🟢' : '🔴'} **Closure Outlook** — estimate closing/delay likelihood during storm alerts\n` +
                    `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n` +
-                   `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n\n` +
+                   `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n` +
+                   `• ${headsUp ? '🟢' : '🔴'} **Night-Before Heads-Up** — 7:00 PM ET alert when the Closure Outlook hits High/Very High\n` +
+                   `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n\n` +
+                   `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
@@ -332,6 +340,20 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post a daily 6:00 AM ET summary (status, calendar, weather)',
         emoji: { name: '🌅' },
         default: digest
+      },
+      {
+        label: 'Night-Before Heads-Up',
+        value: 'toggle_heads_up',
+        description: '7:00 PM ET alert when a closing/delay looks likely tomorrow',
+        emoji: { name: '🌙' },
+        default: headsUp
+      },
+      {
+        label: 'Bus & Transportation Alerts',
+        value: 'toggle_bus_alerts',
+        description: 'Post transportation service alerts from HCPSS News',
+        emoji: { name: '🚌' },
+        default: busAlerts
       }
     ];
 
@@ -346,6 +368,25 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           options: toggleOptions,
           min_values: 0,
           max_values: toggleOptions.length
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_primary_district',
+          placeholder: '🏫 Primary district for status posts...',
+          options: PRIMARY_DISTRICT_CHOICES.map(c => ({
+            label: c.name,
+            value: c.id,
+            description: c.id === 'hcpss'
+              ? 'Default — full HCPSS status page scraper'
+              : "Follow this district's own announcements",
+            emoji: { name: c.id === 'hcpss' ? '🏠' : '🏫' },
+            default: primaryDistrict === c.id
+          })),
+          min_values: 1,
+          max_values: 1
         }]
       }
     ];
@@ -1004,6 +1045,12 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_outlook = selected.includes('toggle_outlook');
     next.toggle_crosscheck = selected.includes('toggle_crosscheck');
     next.toggle_digest = selected.includes('toggle_digest');
+    next.toggle_heads_up = selected.includes('toggle_heads_up');
+    next.toggle_bus_alerts = selected.includes('toggle_bus_alerts');
+  } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
+    if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
+      next.primary_district = values[0];
+    }
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
   }

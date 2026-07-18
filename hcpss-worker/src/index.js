@@ -6,6 +6,8 @@ import { jsonResponse, verifyDiscordRequest } from './discord.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
 import { maybeSendMorningDigests } from './digest.js';
+import { maybeSendHeadsUp } from './headsup.js';
+import { maybeSendBusAlerts } from './busalerts.js';
 import { checkNewMembersAndDM } from './greeter.js';
 
 function getManualTriggerToken(request) {
@@ -86,6 +88,16 @@ export default {
         await maybeSendMorningDigests(env);
       } catch (e) {
         console.error('Morning digest run failed', e);
+      }
+      try {
+        await maybeSendHeadsUp(env);
+      } catch (e) {
+        console.error('Heads-up run failed', e);
+      }
+      try {
+        await maybeSendBusAlerts(env);
+      } catch (e) {
+        console.error('Bus alert run failed', e);
       }
       try {
         await checkNewMembersAndDM(env);

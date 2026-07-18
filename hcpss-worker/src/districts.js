@@ -172,16 +172,22 @@ export const DISTRICTS = [
   {
     id: 'aacps',
     name: 'Anne Arundel Co.',
+    url: 'https://www.aacps.org',
+    nwsZone: 'MDC003',
     fetchEntries: async () => parseThrillshareFeed(await fetchText('https://api.thrillshare.com/api/v4/o/20274/cms/live_feeds?page=1&per_page=15', { headers: { Accept: 'application/json' } }))
   },
   {
     id: 'bcps',
     name: 'Baltimore Co.',
+    url: 'https://www.bcps.org',
+    nwsZone: 'MDC005',
     fetchEntries: () => fetchSharpSchoolEntries('www.bcps.org')
   },
   {
     id: 'ccps',
     name: 'Carroll Co.',
+    url: 'https://www.carrollk12.org',
+    nwsZone: 'MDC013',
     fetchEntries: async () => {
       // Closings land on General News (3) or News Releases (63).
       const results = await Promise.allSettled([
@@ -195,19 +201,66 @@ export const DISTRICTS = [
   {
     id: 'fcps',
     name: 'Frederick Co.',
+    url: 'https://www.fcps.org',
+    nwsZone: 'MDC021',
     fetchEntries: () => fetchSharpSchoolEntries('www.fcps.org')
   },
   {
     id: 'mcps',
     name: 'Montgomery Co.',
+    url: 'https://www.montgomeryschoolsmd.org',
+    nwsZone: 'MDC031',
     fetchEntries: async () => parseMcpsEmergency(await fetchText('https://api.montgomeryschoolsmd.org/schools/homepageInput', { headers: { Accept: 'application/json' } }))
   },
   {
     id: 'pgcps',
     name: "Prince George's Co.",
+    url: 'https://www.pgcps.org',
+    nwsZone: 'MDC033',
     fetchEntries: async () => parsePgcpsAlert(await fetchText('https://www.pgcps.org'))
   }
 ];
+
+// Every district a guild can pick as its primary status source. HCPSS stays
+// the default and uses the full status-page scraper; the others use their
+// district fetcher above.
+export const PRIMARY_DISTRICT_CHOICES = [
+  { id: 'hcpss', name: 'Howard Co. (HCPSS)' },
+  ...DISTRICTS.map(d => ({ id: d.id, name: d.name }))
+];
+
+export function getDistrictMeta(districtId) {
+  return DISTRICTS.find(d => d.id === districtId) || null;
+}
+
+// Maps a classified district status to the bot's operating-status keys so
+// ping roles, embed colors, and thumbnails work for any primary district.
+export const DISTRICT_STATUS_TO_KEY = {
+  closed: 'schools_closed',
+  virtual: 'schools_closed',
+  delayed: 'schools_open_2_hours_late',
+  early: 'schools_close_3_hours_early',
+  notice: 'unknown_alert',
+  none: 'normal_operations'
+};
+
+// Reverse direction: lets an HCPSS status-page key render as a district-style
+// line when HCPSS appears in another primary district's Nearby Districts list.
+export function statusKeyToDistrictStatus(statusKey) {
+  switch (statusKey) {
+    case 'schools_closed':
+    case 'schools_and_offices_closed':
+      return 'closed';
+    case 'schools_open_2_hours_late':
+      return 'delayed';
+    case 'schools_close_3_hours_early':
+      return 'early';
+    case 'unknown_alert':
+      return 'notice';
+    default:
+      return 'none';
+  }
+}
 
 // Reduces one district's entries to a status. Banner-style entries
 // (active: true) that don't match a classification still surface as 'notice';

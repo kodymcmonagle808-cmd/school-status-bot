@@ -62,6 +62,9 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_districts !== 'boolean') next.toggle_districts = true;
   if (typeof next.toggle_outlook !== 'boolean') next.toggle_outlook = true;
   if (typeof next.toggle_crosscheck !== 'boolean') next.toggle_crosscheck = true;
+  if (typeof next.toggle_heads_up !== 'boolean') next.toggle_heads_up = true;
+  if (typeof next.toggle_bus_alerts !== 'boolean') next.toggle_bus_alerts = true;
+  if (!next.primary_district) next.primary_district = 'hcpss';
   return next;
 }
 
