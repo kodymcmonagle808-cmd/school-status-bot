@@ -11,6 +11,7 @@ import { maybeSendBusAlerts } from './busalerts.js';
 import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
+import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -40,6 +41,12 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
+      if (url.pathname === '/terms') {
+        return legalPageResponse('Terms and Conditions', TERMS_MD);
+      }
+      if (url.pathname === '/privacy') {
+        return legalPageResponse('Privacy Policy', PRIVACY_MD);
+      }
       if (url.pathname === '/health') {
         return jsonResponse({
           ok: true,

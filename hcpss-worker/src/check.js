@@ -14,6 +14,54 @@ import { postLog } from './panel.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
 
+// After this many consecutive failed posts to a guild's alert channel, warn
+// the log channel and DM the server owner — the most likely causes (deleted
+// channel, revoked permissions) are silent otherwise and the server just
+// stops getting updates.
+const ALERT_CHANNEL_FAILURE_THRESHOLD = 3;
+
+async function recordAlertPostFailure(env, guildId, channelId, logChannelId) {
+  const failKey = `alert_post_failures:${guildId}`;
+  const failures = (parseInt(await env.STATUS_KV.get(failKey), 10) || 0) + 1;
+  await env.STATUS_KV.put(failKey, String(failures));
+
+  // Fire the escalation exactly once per streak.
+  if (failures !== ALERT_CHANNEL_FAILURE_THRESHOLD) return;
+
+  const warning = `🚨 **Alert channel broken?** The bot has failed to post to <#${channelId}> ` +
+    `**${failures} times in a row**. Check that the channel still exists and the bot has ` +
+    `**View Channel**, **Send Messages**, and **Embed Links** there — or pick a new alert ` +
+    `channel in the control panel. Status updates are NOT reaching members until this is fixed.`;
+
+  await postLog(env, logChannelId, warning, {}, guildId);
+
+  // The log channel may be broken too, so also try to DM the server owner.
+  try {
+    const token = env.DISCORD_BOT_TOKEN;
+    const guildResp = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+      headers: { Authorization: `Bot ${token}` }
+    });
+    if (!guildResp.ok) return;
+    const ownerId = (await guildResp.json()).owner_id;
+    if (!ownerId) return;
+
+    const chResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+      method: 'POST',
+      headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_id: ownerId })
+    });
+    if (!chResp.ok) return;
+    const dmChannel = await chResp.json();
+    await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: warning })
+    });
+  } catch (e) {
+    console.error('Owner DM for broken alert channel failed:', e);
+  }
+}
+
 async function handleScraperFailure(env, logChannelId, config, error) {
   const currentFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0) + 1;
   await env.STATUS_KV.put('scraper_failures_count', String(currentFailures));
@@ -359,9 +407,13 @@ export async function doCheckAndPost(env, options = {}) {
           { latency },
           guildId
         );
+        await recordAlertPostFailure(env, guildId, channelId, logChannelId);
         results.push({ guildId, ok: false, error: postError, status: postResult.status });
         continue;
       }
+
+      // A successful post ends any broken-channel failure streak.
+      await env.STATUS_KV.delete(`alert_post_failures:${guildId}`).catch(() => {});
 
       const postedMessage = await postResult.json();
       postedMessageId = postedMessage.id;

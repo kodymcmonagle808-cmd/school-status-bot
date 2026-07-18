@@ -17,6 +17,7 @@ import { getBgeOutages, getCountyOutage, outagePercent } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { toggleSubscriber, getSubscribers } from './subscriptions.js';
 import { getGreetedUserIds } from './greeter.js';
+import { TERMS_MD, PRIVACY_MD } from './legal.js';
 
 export async function runCalendarCommand(env, guildId = '') {
   const checkedAt = new Date();
@@ -58,26 +59,14 @@ export async function runCalendarCommand(env, guildId = '') {
   };
 }
 
-// Condensed from HCPSS_Status_Terms_and_Conditions.md at the repo root —
-// keep the two in sync when the full document changes.
+// The shared text lives in legal.js, which also serves it as web pages at
+// GET /terms and GET /privacy.
 export function runTermsCommand() {
   return {
     embeds: [{
       title: '📄 HCPSS Status — Terms and Conditions',
       color: 0x5865F2,
-      description:
-        '**Last Updated: July 10, 2026**\n\n' +
-        'By adding HCPSS Status to a server or using its commands, you agree to these Terms.\n\n' +
-        '**1. Service** — The bot monitors publicly available HCPSS information (delays, closures, alerts) and posts automated status updates. It is an **independent, unofficial project** — not created, operated, endorsed, or affiliated with HCPSS or Howard County Government.\n\n' +
-        '**2. Acceptance** — Inviting the bot, using its commands, or remaining in a server where it is active constitutes acceptance of these Terms and the Privacy Policy (see `/privacy`). If you do not agree, remove the bot and stop using it.\n\n' +
-        '**3. No Guarantee of Accuracy** — Status updates are for **convenience only** and are never an official or authoritative source. Always confirm closures, delays, or emergency information through official HCPSS channels (hcpss.org, official social media, or direct school communication). We are not responsible for delayed, missed, incorrect, or outdated updates.\n\n' +
-        "**4. Acceptable Use** — Do not use the bot to violate Discord's Terms of Service or Community Guidelines; exploit, reverse-engineer, spam, or abuse it; spread misinformation; or interfere with its operation.\n\n" +
-        '**5. Server Owner Responsibilities** — Configure the bot appropriately for your community, inform members it is unofficial, and remove it if you no longer wish to use it (removal deletes server configuration data as described in the Privacy Policy).\n\n' +
-        '**6. Availability** — Provided "as-is" and "as-available" with no uptime guarantee. Features may change or be removed, and the bot may be suspended or discontinued, at any time without notice.\n\n' +
-        '**7. Limitation of Liability** — To the fullest extent permitted by law, the developers are not liable for damages arising from reliance on the bot, missed or inaccurate status information, downtime, bugs, or data loss. **Use for time-sensitive or safety-related decisions is at your own risk — always verify with official HCPSS sources.**\n\n' +
-        '**8. Termination** — Any server or user may be blocked from the bot at any time, for any reason, including violation of these Terms.\n\n' +
-        '**9. Changes** — These Terms may be updated periodically; continued use after changes constitutes acceptance of the revised Terms.\n\n' +
-        "**10. Contact** — Questions can be directed to the bot developer through the support server or the contact method on the bot's official listing page.",
+      description: TERMS_MD,
       timestamp: new Date().toISOString(),
       footer: { text: 'HCPSS Status Monitor' }
     }],
@@ -85,25 +74,12 @@ export function runTermsCommand() {
   };
 }
 
-// Condensed from HCPSS_Status_Privacy_Policy.md at the repo root — keep the
-// two in sync when the full document changes.
 export function runPrivacyCommand() {
   return {
     embeds: [{
       title: '🔒 HCPSS Status — Privacy Policy',
       color: 0x5865F2,
-      description:
-        '**Last Updated: July 10, 2026**\n\n' +
-        '**1. What We Collect** — The minimum needed to function: server (guild) ID, configured channel IDs, optional ping role IDs, server-specific settings, and the user/channel ID at the time a command is run (used only to process that command).\n\n' +
-        '**We do NOT collect** message content outside of command interactions, private messages, personal information (names, emails, school enrollment data), or voice/audio data.\n\n' +
-        '**2. How It Is Used** — Solely to deliver status updates to configured channels, ping configured roles, respond to commands, and maintain/troubleshoot the bot. Data is never sold, rented, or shared with third parties for advertising or marketing.\n\n' +
-        "**3. Storage & Security** — Configuration data is stored in a secure database on the bot's hosting infrastructure with reasonable technical protections. No system is 100% secure; data is stored and processed at your own risk.\n\n" +
-        "**4. Retention & Deletion** — Server data is kept only while the bot remains in your server; removing the bot deletes it automatically or within a reasonable period. Admins may also request manual deletion at any time through the bot's support channel.\n\n" +
-        "**5. Third-Party Services** — The bot reads publicly available HCPSS information one-way; none of your Discord data is shared with HCPSS or any third party. Discord's own Privacy Policy and Terms of Service apply to data Discord itself collects.\n\n" +
-        "**6. Children's Privacy** — The bot does not knowingly collect personal information from anyone and does not target children. Discord's own minimum age requirements apply.\n\n" +
-        "**7. Your Rights** — Server admins may request a summary of stored data for their server, request deletion (removing the bot also accomplishes this), and reach out with questions about data handling.\n\n" +
-        '**8. Changes** — This policy may be updated periodically; continued use after updates constitutes acceptance.\n\n' +
-        "**9. Contact** — For questions or data deletion requests, reach out through the bot's support server or the contact method on its official listing page.",
+      description: PRIVACY_MD,
       timestamp: new Date().toISOString(),
       footer: { text: 'HCPSS Status Monitor' }
     }],

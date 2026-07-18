@@ -90,6 +90,14 @@ export function buildCheckAgainComponents(config = null) {
       emoji: { name: '🔔' }
     }));
   if (options.length) {
+    // First option opens the per-user "My notifications" panel, which can
+    // show real checked state (ephemeral responses are per-user).
+    options.unshift({
+      label: 'My notification roles',
+      value: 'my_pings',
+      description: 'See which ping roles you have and edit them all at once',
+      emoji: { name: '📋' }
+    });
     rows.push({
       type: 1,
       components: [{

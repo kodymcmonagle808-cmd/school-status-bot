@@ -48,6 +48,7 @@ import {
 } from './setupflow.js';
 import { handlePanelComponent, handleTestAlert } from './panelcomponents.js';
 import { purgeGuildData, removeFromGuildIndex } from './cleanup.js';
+import { MY_PINGS_VALUE, buildMyPingsPanel, handleMyPingsSubmit } from './rolepanel.js';
 import { handleGreeterInteraction } from './greeter.js';
 
 export async function handleInteraction(body, env, ctx) {
@@ -271,6 +272,12 @@ export async function handleInteraction(body, env, ctx) {
     }
 
     const cfg = getEffectiveConfig(await getConfig(env, guildId));
+
+    // "My notification roles" opens the per-user panel with real checkmarks.
+    if (statusKey === MY_PINGS_VALUE) {
+      return interactionResponse(buildMyPingsPanel(cfg, body.member));
+    }
+
     const roleId = cfg.status_ping_roles && cfg.status_ping_roles[statusKey];
     if (!roleId) {
       return interactionResponse({
@@ -317,6 +324,13 @@ export async function handleInteraction(body, env, ctx) {
       content: `🔔 Added <@&${roleId}> — you'll be pinged when **${label}** is announced.`,
       flags: EPHEMERAL_FLAG
     });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'my_pings_select') {
+    // Open to everyone — syncing only affects the user's own roles.
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    const data = await handleMyPingsSubmit(body, env, guildId, cfg);
+    return jsonResponse({ type: 7, data });
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'role_remove_cancel') {

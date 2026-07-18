@@ -43,7 +43,7 @@ We do not sell, rent, or share collected data with third parties for advertising
 
 - Server configuration data is retained only as long as the Bot remains in your server.
 - If the Bot is removed from a server, associated configuration data is deleted automatically or within a reasonable period afterward.
-- Server owners or admins may request manual deletion of their server's data at any time through the Bot's support channel.
+- Server admins may erase all of their server's data at any time with the `/mydata delete` command, or request manual deletion through the Bot's support channel.
 
 ## 5. Third-Party Services
 
@@ -58,8 +58,8 @@ The Bot does not knowingly collect personal information from anyone, and does no
 ## 7. Your Rights
 
 Server administrators may:
-- Request a summary of what data is stored for their server.
-- Request deletion of their server's configuration data (removing the Bot also accomplishes this).
+- View a summary of what data is stored for their server with the `/mydata view` command.
+- Delete their server's configuration data with `/mydata delete` (removing the Bot also accomplishes this).
 - Reach out with questions or concerns about data handling.
 
 ## 8. Changes to This Policy

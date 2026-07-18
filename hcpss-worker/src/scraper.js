@@ -22,10 +22,27 @@ export async function fetchHtml(url, { retries = 1, retryDelayMs = 800 } = {}) {
   throw lastErr;
 }
 
+// Results younger than this are served from KV without re-scraping. Public
+// /status lets any member trigger a check, so this makes command spam free
+// and keeps request volume to the HCPSS site bounded regardless of usage.
+const FRESH_CACHE_MS = 60 * 1000;
+
 // Fetches and parses the live status page. On success the parsed cards are
 // cached in KV; on failure the last good scrape (if recent enough) is returned
 // with stale=true so callers can post a "last known status" instead of an error.
 export async function getStatusCards(env) {
+  if (env && env.STATUS_KV) {
+    try {
+      const raw = await env.STATUS_KV.get(LAST_GOOD_SCRAPE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.cards) && Date.now() - parsed.at <= FRESH_CACHE_MS) {
+          return { cards: parsed.cards, error: null, stale: false, staleAt: 0 };
+        }
+      }
+    } catch {}
+  }
+
   try {
     const html = await fetchHtml(HCPSS_URL);
     const cards = extractCards(html);

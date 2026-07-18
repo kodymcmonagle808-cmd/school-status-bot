@@ -34,6 +34,10 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Member commands (no staff role needed, all ephemeral): `/status` (current status on demand), `/snowday` (closing/delay outlook from weather, districts, and outages), `/calendar`, `/history`, `/districts`, `/stats`, `/notify` (DM subscription toggle), `/help`, `/terms`, `/privacy`.
 - Admin `/mydata view` shows everything the bot stores for the server; `/mydata delete` erases it after a confirmation, fulfilling the Privacy Policy's data-rights promises in-app.
 - End-of-year recap: a June 15 summary post comparing the school year's closures/delays/early closings to the previous year (toggleable, on by default).
+- "My notification roles" option on status posts opens a private panel with a multi-select pre-checked to the roles you actually have — review and sync all ping roles in one submit.
+- Serves the Terms and Privacy Policy as web pages at `GET /terms` and `GET /privacy` (public URLs for bot directory listings), from the same text as the `/terms` and `/privacy` commands.
+- Caches status scrapes for 60 seconds, so member-triggered `/status` checks can't hammer the HCPSS site.
+- Warns the log channel and DMs the server owner after 3 consecutive failed posts to the alert channel (deleted channel, missing permissions), and resets the streak on the next successful post.
 - Exposes `GET /health` for a lightweight health check.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 

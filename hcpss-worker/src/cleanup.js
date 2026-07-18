@@ -25,7 +25,8 @@ function guildKeys(guildId) {
     `last_sched_slot:${guildId}`,
     `greeter_last_run_date:${guildId}`,
     `greeted_users:${guildId}`,
-    `last_recap_year:${guildId}`
+    `last_recap_year:${guildId}`,
+    `alert_post_failures:${guildId}`
   ];
 }
 
