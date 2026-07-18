@@ -11,6 +11,7 @@ import { maybeSendBusAlerts } from './busalerts.js';
 import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
+import { maybeRefreshStormEmbeds } from './stormrefresh.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 
 function getManualTriggerToken(request) {
@@ -112,6 +113,11 @@ export default {
         await checkNewMembersAndDM(env);
       } catch (e) {
         console.error('Greeter run failed', e);
+      }
+      try {
+        await maybeRefreshStormEmbeds(env);
+      } catch (e) {
+        console.error('Storm refresh run failed', e);
       }
       try {
         await maybeSendYearRecap(env);
