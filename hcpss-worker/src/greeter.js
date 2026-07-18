@@ -45,10 +45,19 @@ export async function checkNewMembersAndDM(env) {
     return;
   }
 
-  const MAX_DMS_PER_RUN = 5; // Safe rate limit to avoid Discord spam/rate limit blocks
+  const MAX_DMS_PER_RUN = 50; // Welcome up to 50 users per run to handle daily joins/backlogs safely
 
   for (const guildId of guildIds) {
     try {
+      // 0. Check if we already completed today's run for this guild (using UTC date)
+      const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const lastRunDateKey = `greeter_last_run_date:${guildId}`;
+      const lastRunDate = await env.STATUS_KV.get(lastRunDateKey);
+      
+      if (lastRunDate === todayStr) {
+        continue; // Already finished welcoming for today
+      }
+
       // 1. Fetch guild config to know what status roles are configured
       const storedConfig = await getConfig(env, guildId);
       const config = getEffectiveConfig(storedConfig);
@@ -89,6 +98,7 @@ export async function checkNewMembersAndDM(env) {
       const greetedUserIds = await getGreetedUserIds(env, guildId);
 
       let dmsSentThisRun = 0;
+      let hitLimit = false;
 
       // 5. Check each member
       for (const member of members) {
@@ -104,8 +114,10 @@ export async function checkNewMembersAndDM(env) {
         if (hasStatusRole) continue;
 
         // If we hit the rate limit for this cron run, stop DMs for this guild
+        // We'll pick up the rest in the next run (minute) before marking today as complete
         if (dmsSentThisRun >= MAX_DMS_PER_RUN) {
           console.log(`Greeter: Hit max DMs limit (${MAX_DMS_PER_RUN}) for guild ${guildId} this run. Remaining users will be processed next minute.`);
+          hitLimit = true;
           break;
         }
 
@@ -120,6 +132,13 @@ export async function checkNewMembersAndDM(env) {
           dmsSentThisRun++;
           console.log(`Greeter: Welcomed user ${member.user.username} (${userId}) for guild ${guildId}`);
         }
+      }
+
+      // If we went through all members without hitting the backlog limit,
+      // it means everyone is fully welcomed for today. Mark today as completed.
+      if (!hitLimit) {
+        await env.STATUS_KV.put(lastRunDateKey, todayStr);
+        console.log(`Greeter: Completed daily welcoming for guild ${guildId}.`);
       }
 
     } catch (e) {
