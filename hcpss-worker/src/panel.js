@@ -10,7 +10,7 @@ import {
   formatYmdNY,
   isInStormWindow
 } from './timeutil.js';
-import { hasStormAlert } from './weather.js';
+import { hasStormAlert, getCachedWeatherAlerts } from './weather.js';
 import { PRIMARY_DISTRICT_CHOICES } from './districts.js';
 import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
@@ -874,11 +874,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     : '*(no message posted yet)*';
 
   // Storm-mode indicator from the cached weather alerts (no NWS call on panel render)
-  let stormAlertActive = false;
-  try {
-    const cachedWeather = await env.STATUS_KV.get('weather_alerts_cache');
-    if (cachedWeather) stormAlertActive = hasStormAlert(JSON.parse(cachedWeather));
-  } catch {}
+  const stormAlertActive = hasStormAlert(await getCachedWeatherAlerts(env));
   const stormEnabled = config.toggle_storm_mode !== false;
   const inStormWindow = isInStormWindow(getEasternTimeStr(new Date()));
   const stormModeStr = !stormEnabled

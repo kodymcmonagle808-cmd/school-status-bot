@@ -9,7 +9,7 @@ import { trackStatusHistory } from './history.js';
 import { notifySubscribers } from './subscriptions.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
-import { postMessageToChannel } from './discord.js';
+import { postMessageToChannel, discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
@@ -38,21 +38,21 @@ async function recordAlertPostFailure(env, guildId, channelId, logChannelId) {
   // The log channel may be broken too, so also try to DM the server owner.
   try {
     const token = env.DISCORD_BOT_TOKEN;
-    const guildResp = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+    const guildResp = await discordFetch(`https://discord.com/api/v10/guilds/${guildId}`, {
       headers: { Authorization: `Bot ${token}` }
     });
     if (!guildResp.ok) return;
     const ownerId = (await guildResp.json()).owner_id;
     if (!ownerId) return;
 
-    const chResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+    const chResp = await discordFetch('https://discord.com/api/v10/users/@me/channels', {
       method: 'POST',
       headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient_id: ownerId })
     });
     if (!chResp.ok) return;
     const dmChannel = await chResp.json();
-    await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+    await discordFetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: warning })
@@ -80,7 +80,7 @@ async function handleScraperFailure(env, logChannelId, config, error) {
 
       const token = env.DISCORD_BOT_TOKEN;
       if (token && logChannelId) {
-        await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+        await discordFetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bot ${token}`,
@@ -112,7 +112,7 @@ async function handleScraperSuccess(env, logChannelId, config) {
   if (config && config.toggle_error_alerts === false) return;
   const token = env.DISCORD_BOT_TOKEN;
   if (token && logChannelId) {
-    await fetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+    await discordFetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bot ${token}`,
@@ -142,6 +142,16 @@ async function handleScraperSuccessOrFailure(env, scrapeFailed, error, targetGui
 export async function doCheckAndPost(env, options = {}) {
   const start = Date.now();
   const isScheduled = options.source === 'scheduled';
+
+  // Guild configs are needed in up to four places per run (schedule matching,
+  // storm-zone probe, primary-district map, posting) — read each one once.
+  const configCache = new Map();
+  const getCfg = async (gid) => {
+    if (!configCache.has(gid)) {
+      configCache.set(gid, getEffectiveConfig(await getConfig(env, gid)));
+    }
+    return configCache.get(gid);
+  };
 
   // Determine target guilds to post/check for.
   let targetGuildIds = [];
@@ -192,14 +202,16 @@ export async function doCheckAndPost(env, options = {}) {
     const todayYmd = formatYmdNY(now);
     const matchedGuilds = [];
     for (const guildId of targetGuildIds) {
-      const stored = await getConfig(env, guildId);
-      const config = getEffectiveConfig(stored);
+      const config = await getCfg(guildId);
       const schedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
       const matchedTime = schedule.find(schedTime => matchesScheduleTime(currentEtStr, schedTime));
       if (!matchedTime) continue;
 
       // Dedupe: the cron fires every minute and the match window is 5 minutes
-      // wide, so skip guilds whose matched slot already ran today.
+      // wide, so skip guilds whose matched slot already ran today. KV is
+      // eventually consistent, so a same-minute cron overlap could in theory
+      // read a stale slot and double-fire — tolerable because the new post
+      // deletes the previous one, so members never see a duplicate.
       const slotKey = `last_sched_slot:${guildId}`;
       const slotVal = `${todayYmd} ${matchedTime}`;
       const lastSlot = await env.STATUS_KV.get(slotKey);
@@ -226,7 +238,7 @@ export async function doCheckAndPost(env, options = {}) {
       if (!stormZoneAlert) {
         const zones = new Set();
         for (const gid of targetGuildIds) {
-          const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+          const meta = getDistrictMeta((await getCfg(gid)).primary_district);
           if (meta && meta.nwsZone) zones.add(meta.nwsZone);
         }
         for (const zone of zones) {
@@ -310,8 +322,7 @@ export async function doCheckAndPost(env, options = {}) {
   // district's announcements, not the HCPSS status page.
   const guildPrimaries = new Map();
   for (const gid of targetGuildIds) {
-    const cfg = getEffectiveConfig(await getConfig(env, gid));
-    guildPrimaries.set(gid, cfg.primary_district || 'hcpss');
+    guildPrimaries.set(gid, (await getCfg(gid)).primary_district || 'hcpss');
   }
   const primaryDistrictIds = new Set([...guildPrimaries.values()].filter(id => id !== 'hcpss'));
   const changedDistricts = new Set();
@@ -353,8 +364,7 @@ export async function doCheckAndPost(env, options = {}) {
   const sourceLabel = isStormCheck ? 'storm-mode' : (options.source || 'unknown');
 
   for (const guildId of activeGuildIds) {
-    const stored = await getConfig(env, guildId);
-    const config = getEffectiveConfig(stored);
+    const config = await getCfg(guildId);
     if (isStormCheck && config.toggle_storm_mode === false) {
       results.push({ guildId, ok: true, skipped: true, reason: 'Storm mode disabled' });
       continue;
@@ -450,7 +460,7 @@ export async function doCheckAndPost(env, options = {}) {
 
       if (previousMessageId && previousMessageId !== postedMessageId) {
         const deleteChannelId = previousChannelId || channelId;
-        await fetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
+        await discordFetch(`https://discord.com/api/v10/channels/${deleteChannelId}/messages/${previousMessageId}`, {
           method: 'DELETE',
           headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
         }).catch(() => {});

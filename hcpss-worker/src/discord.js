@@ -2,6 +2,54 @@
 // posting, and small parsers for interaction payloads.
 
 import { EPHEMERAL_FLAG } from './constants.js';
+import { delay } from './timeutil.js';
+
+// Don't sleep longer than this waiting out a rate limit — storm mornings run
+// many guilds in sequence and a long stall would push later guilds past the
+// cron invocation budget.
+const RETRY_MAX_WAIT_MS = 5000;
+
+// fetch() for the Discord API with one retry on 429 (honoring retry_after) and
+// on 5xx/network errors. Storm mornings burst dozens of API calls back to
+// back, which is exactly when rate limits and transient errors show up — a
+// single silent drop there means a guild misses its status post.
+export async function discordFetch(url, init = {}, attempts = 2) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    let resp;
+    try {
+      resp = await fetch(url, init);
+    } catch (e) {
+      lastErr = e;
+      if (i + 1 < attempts) {
+        await delay(500);
+        continue;
+      }
+      throw e;
+    }
+
+    if (resp.status === 429 && i + 1 < attempts) {
+      let waitMs = 1000;
+      try {
+        const body = await resp.clone().json();
+        if (body && typeof body.retry_after === 'number') waitMs = Math.ceil(body.retry_after * 1000);
+      } catch {}
+      const headerSec = Number(resp.headers.get('Retry-After'));
+      if (Number.isFinite(headerSec) && headerSec > 0) waitMs = Math.max(waitMs, headerSec * 1000);
+      if (waitMs > RETRY_MAX_WAIT_MS) return resp;
+      await delay(waitMs);
+      continue;
+    }
+
+    if (resp.status >= 500 && i + 1 < attempts) {
+      await delay(500);
+      continue;
+    }
+
+    return resp;
+  }
+  throw lastErr;
+}
 
 export function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -67,7 +115,7 @@ export async function postMessageToChannel(env, payload) {
   const cleaned = { ...payload };
   delete cleaned.__channelId;
 
-  return await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+  return await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
     method: 'POST',
     headers: {
       Authorization: `Bot ${token}`,
@@ -81,7 +129,7 @@ export async function updateInteractionOriginal(env, interactionToken, payload) 
   const applicationId = env.DISCORD_APPLICATION_ID;
   if (!applicationId || !interactionToken) return;
 
-  await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
+  await discordFetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

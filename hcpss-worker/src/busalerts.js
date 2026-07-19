@@ -17,6 +17,7 @@
 import { HCPSS_NEWS_FEED_URL, parseRssItems } from './crosscheck.js';
 import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
+import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
 const SCAN_COOLDOWN_KEY = 'bus_alert_scan_cooldown';
@@ -190,7 +191,7 @@ export async function maybeSendBusAlerts(env) {
     if (!embeds.length) continue;
 
     try {
-      const resp = await fetch(`https://discord.com/api/v10/channels/${cfg.alert_channel_id}/messages`, {
+      const resp = await discordFetch(`https://discord.com/api/v10/channels/${cfg.alert_channel_id}/messages`, {
         method: 'POST',
         headers: {
           Authorization: `Bot ${token}`,

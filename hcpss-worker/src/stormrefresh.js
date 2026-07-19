@@ -9,6 +9,7 @@ import { getActiveWeatherAlerts, hasPowerThreatAlert } from './weather.js';
 import { getDistrictMeta } from './districts.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
+import { discordFetch } from './discord.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
 const PROBE_SLOT_KEY = 'last_storm_probe_slot';
@@ -87,7 +88,7 @@ export async function maybeRefreshStormEmbeds(env) {
 
       // PATCH only embeds/components: the original post's content (role
       // mentions) must stay untouched, and an edit never re-pings anyway.
-      const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
+      const resp = await discordFetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bot ${token}`,

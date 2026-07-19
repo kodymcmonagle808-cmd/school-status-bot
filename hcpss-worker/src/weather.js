@@ -92,6 +92,20 @@ export function alertsLikelyTomorrowMorning(alerts, nowMs, horizonMs = 9 * 60 * 
   );
 }
 
+// Cache-only read for surfaces that must never wait on an NWS fetch (the
+// control panel renders inside an interaction deadline). Returns [] on a miss.
+export async function getCachedWeatherAlerts(env, zone = DEFAULT_NWS_ZONE) {
+  const cacheKey = zone === DEFAULT_NWS_ZONE ? WEATHER_CACHE_KEY : `${WEATHER_CACHE_KEY}:${zone}`;
+  try {
+    const cached = env && env.STATUS_KV ? await env.STATUS_KV.get(cacheKey) : null;
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
 // Returns the summarized active alerts, cached in KV for 10 minutes so
 // frequent checks and Check-again clicks don't hammer the NWS API.
 // Any failure returns [] — weather context is never allowed to break a status post.

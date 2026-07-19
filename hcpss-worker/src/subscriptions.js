@@ -1,6 +1,8 @@
 // Opt-in DM notifications: users toggle via the 🔔 Notify Me button on status
 // messages, and get a DM only when the operating status actually changes
 // (not on every scheduled repost).
+import { discordFetch } from './discord.js';
+
 const MAX_SUBSCRIBERS = 500;
 
 function subsKey(guildId) {
@@ -48,7 +50,7 @@ export async function notifySubscribers(env, guildId, embeds) {
   let sent = 0;
   for (const userId of subs) {
     try {
-      const chRes = await fetch('https://discord.com/api/v10/users/@me/channels', {
+      const chRes = await discordFetch('https://discord.com/api/v10/users/@me/channels', {
         method: 'POST',
         headers: {
           Authorization: `Bot ${token}`,
@@ -59,7 +61,7 @@ export async function notifySubscribers(env, guildId, embeds) {
       if (!chRes.ok) continue;
       const ch = await chRes.json();
 
-      const msgRes = await fetch(`https://discord.com/api/v10/channels/${ch.id}/messages`, {
+      const msgRes = await discordFetch(`https://discord.com/api/v10/channels/${ch.id}/messages`, {
         method: 'POST',
         headers: {
           Authorization: `Bot ${token}`,

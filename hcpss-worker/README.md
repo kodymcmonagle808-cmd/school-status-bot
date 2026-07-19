@@ -43,6 +43,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Serves the Terms and Privacy Policy as web pages at `GET /terms` and `GET /privacy` (public URLs for bot directory listings), from the same text as the `/terms` and `/privacy` commands.
 - Caches status scrapes for 60 seconds, so member-triggered `/status` checks can't hammer the HCPSS site.
 - Warns the log channel and DMs the server owner after 3 consecutive failed posts to the alert channel (deleted channel, missing permissions), and resets the streak on the next successful post.
+- Discord API calls retry once on rate limits (honoring `retry_after`) and transient 5xx errors, and embeds are clamped to Discord's field/total size limits so a burst-heavy storm morning can't drop a guild's post.
 - Exposes `GET /health` for a lightweight health check, including the served-guild count, current scraper failure streak, and the last status-change timestamp.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 

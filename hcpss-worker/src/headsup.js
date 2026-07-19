@@ -22,6 +22,7 @@ import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from 
 import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
+import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
 export const HEADS_UP_TIME = '19:00';
@@ -170,7 +171,7 @@ export async function maybeSendHeadsUp(env) {
     const content = roleIds.length ? roleIds.map(id => `<@&${id}>`).join(' ') : '';
 
     try {
-      const resp = await fetch(`https://discord.com/api/v10/channels/${cfg.alert_channel_id}/messages`, {
+      const resp = await discordFetch(`https://discord.com/api/v10/channels/${cfg.alert_channel_id}/messages`, {
         method: 'POST',
         headers: {
           Authorization: `Bot ${token}`,

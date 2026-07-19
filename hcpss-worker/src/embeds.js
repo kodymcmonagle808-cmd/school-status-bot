@@ -114,8 +114,53 @@ export function buildCheckAgainComponents(config = null) {
   return rows;
 }
 
+// Discord hard limits: field name 256, field value 1024, and 6000 characters
+// across the whole embed. The individual sections are informally capped, but
+// one long NWS event name or road description must never 400 the whole post —
+// clamp defensively at the seams.
+const FIELD_NAME_LIMIT = 256;
+const FIELD_VALUE_LIMIT = 1024;
+const EMBED_TOTAL_LIMIT = 6000;
+
+function clampText(text, limit) {
+  const s = String(text || '');
+  if (s.length <= limit) return s;
+  // Prefer cutting at a line break so a truncated list loses whole lines.
+  const cut = s.lastIndexOf('\n', limit - 2);
+  return `${s.slice(0, cut > limit / 2 ? cut : limit - 1).trimEnd()}…`;
+}
+
 function addField(embed, name, value) {
-  embed.fields = [...(embed.fields || []), { name, value }];
+  embed.fields = [...(embed.fields || []), {
+    name: clampText(name, FIELD_NAME_LIMIT),
+    value: clampText(value, FIELD_VALUE_LIMIT)
+  }];
+}
+
+export function embedTotalSize(embed) {
+  if (!embed) return 0;
+  let size = (embed.title || '').length + (embed.description || '').length +
+    ((embed.footer && embed.footer.text) || '').length +
+    ((embed.author && embed.author.name) || '').length;
+  for (const f of embed.fields || []) {
+    size += (f.name || '').length + (f.value || '').length;
+  }
+  return size;
+}
+
+// Keeps an embed under Discord's 6000-character total by dropping fields from
+// the end (they're added in priority order, so the least critical go first).
+// Exported for tests.
+export function enforceEmbedBudget(embed) {
+  if (!embed) return embed;
+  while (embedTotalSize(embed) > EMBED_TOTAL_LIMIT && Array.isArray(embed.fields) && embed.fields.length) {
+    embed.fields.pop();
+  }
+  if (embedTotalSize(embed) > EMBED_TOTAL_LIMIT && embed.description) {
+    const overshoot = embedTotalSize(embed) - EMBED_TOTAL_LIMIT;
+    embed.description = clampText(embed.description, Math.max(0, embed.description.length - overshoot - 1));
+  }
+  return embed;
 }
 
 export async function buildStatusEmbeds(env, footer = 'School Status', cards = null, config = null, staleInfo = null, guildId = '') {
@@ -255,7 +300,7 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
     }
   }
 
-  return embeds;
+  return embeds.map(enforceEmbedBudget);
 }
 
 export function buildStatusErrorEmbeds(error, footer = 'School Status', config = null) {
@@ -410,7 +455,7 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     }
   }
 
-  return { embeds, statusKey };
+  return { embeds: embeds.map(enforceEmbedBudget), statusKey };
 }
 
 export function buildOverrideEmbeds(override, footer = 'School Status', config = null) {
