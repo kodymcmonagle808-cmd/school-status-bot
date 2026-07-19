@@ -22,7 +22,7 @@ import { delay, formatScheduleTimeLabel } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
 import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride } from './config.js';
 import { splitEmbeds } from './embeds.js';
-import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, postLog } from './panel.js';
+import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload, postLog } from './panel.js';
 import { doCheckAndPost } from './check.js';
 import {
   runHistoryCommand,
@@ -39,6 +39,22 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
 
   if (customId === 'panel_nav_select') {
     const selected = Array.isArray(body.data.values) && body.data.values[0];
+
+    // Owner-only page: replies ephemerally (never rendered into the shared
+    // panel message) and the panel stays on its current page. OWNER_ID is a
+    // worker secret; unset means the page is locked for everyone.
+    if (selected === 'worker_updates') {
+      const ownerId = String(env.OWNER_ID || '').trim();
+      if (!ownerId || getInvokerId(body) !== ownerId) {
+        return interactionResponse({
+          content: '🔒 Worker Updates is only visible to the bot owner.',
+          flags: EPHEMERAL_FLAG
+        });
+      }
+      const payload = await buildWorkerUpdatesPayload(env);
+      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+    }
+
     const target = PANEL_NAV_TABS.some(t => t.value === selected) ? selected : 'dashboard';
     await env.STATUS_KV.put(`panel_page:${guildId}`, target);
     const payload = await buildControlPanelPayload(env, guildId);

@@ -66,6 +66,11 @@ if [ -n "${MANUAL_TRIGGER_TOKEN:-}" ]; then
 else
   echo "MANUAL_TRIGGER_TOKEN not set; manual public POST trigger will remain disabled."
 fi
+if [ -n "${OWNER_ID:-}" ]; then
+  secrets_json=$(printf '%s' "$secrets_json" | jq --arg o "$OWNER_ID" '. + {OWNER_ID: $o}')
+else
+  echo "OWNER_ID not set; the panel's Worker Updates page will stay locked."
+fi
 
 secrets_uploaded=0
 for attempt in 1 2 3; do

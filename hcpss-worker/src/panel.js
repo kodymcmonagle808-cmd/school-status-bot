@@ -41,7 +41,8 @@ export const PANEL_NAV_TABS = [
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
-  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
+  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
+  { label: 'Worker Updates', value: 'worker_updates', emoji: '🚀', description: 'Deploy history (bot owner only)' }
 ];
 
 function getNavTabForPage(page) {
@@ -179,6 +180,40 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   ];
 
   return { embeds: [embed], components };
+}
+
+// The deploy workflow prepends an entry to the global `worker_updates` KV key
+// after every run on main: { sha, ok, ts }. Global, not per-guild — deploys
+// affect every server — so it is not part of guildKeys() cleanup.
+export function formatWorkerUpdates(list) {
+  const entries = Array.isArray(list) ? list.filter(e => e && e.sha).slice(0, 15) : [];
+  if (entries.length === 0) {
+    return 'No worker updates recorded yet. Each deploy to `main` will appear here.';
+  }
+  return entries.map(e => {
+    const when = Number(e.ts) > 0 ? `<t:${Math.floor(Number(e.ts) / 1000)}:f>` : 'unknown time';
+    return e.ok
+      ? `✅ \`${e.sha}\` — deployed ${when}`
+      : `❌ \`${e.sha}\` — **failed** ${when} (previous version still running)`;
+  }).join('\n');
+}
+
+export async function buildWorkerUpdatesPayload(env) {
+  let updates = [];
+  try {
+    const raw = await env.STATUS_KV.get('worker_updates');
+    if (raw) updates = JSON.parse(raw);
+  } catch {}
+
+  const embed = {
+    title: '🚀 Control Panel — Worker Updates',
+    color: 0x9B59B6,
+    description: `### Recent deploys to \`main\`\n${formatWorkerUpdates(updates)}`,
+    timestamp: new Date().toISOString(),
+    footer: { text: 'School Status · Worker Updates  •  visible to the bot owner only' }
+  };
+
+  return { embeds: [embed] };
 }
 
 export async function buildControlPanelPayload(env, guildId, configOverride = null, pageOverride = null) {

@@ -53,9 +53,36 @@ jobs:
           DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
           DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
           MANUAL_TRIGGER_TOKEN: ${{ secrets.MANUAL_TRIGGER_TOKEN }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
         run: |
           chmod +x ./hcpss-worker/scripts/deploy_worker.sh
           ./hcpss-worker/scripts/deploy_worker.sh
+
+      # Record this run's outcome in the worker_updates KV key (rolling last
+      # 15) so the control panel's owner-only Worker Updates page can list
+      # deploy history. Best-effort: never fails the job.
+      - name: Record deploy result
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          LIST=$(curl -s "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces?per_page=100" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}")
+          KV_ID=$(echo "$LIST" | jq -r '.result[]? | select(.title == "hcpss-status-kv") | .id' | head -n 1)
+          if [ -z "$KV_ID" ]; then
+            KV_ID=$(echo "$LIST" | jq -r '.result // [] | map(select(.title | test("^hcpss-status-kv-[0-9]+$"))) | sort_by(.title) | last | .id // empty')
+          fi
+          if [ -z "$KV_ID" ]; then echo "KV namespace not found — skipping deploy record."; exit 0; fi
+          BASE="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${KV_ID}/values/worker_updates"
+          CURRENT=$(curl -s -H "Authorization: Bearer ${CF_API_TOKEN}" "$BASE")
+          echo "$CURRENT" | jq -e 'type == "array"' >/dev/null 2>&1 || CURRENT='[]'
+          NEW=$(jq -cn --argjson cur "$CURRENT" --arg sha "${GITHUB_SHA::7}" --arg outcome "$OUTCOME" --arg ts "$(date +%s)" \
+            '[{sha: $sha, ok: ($outcome == "success"), ts: (($ts | tonumber) * 1000)}] + $cur | .[0:15]')
+          curl -s -X PUT -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" \
+            --data "$NEW" "$BASE" >/dev/null
+          echo "Recorded deploy result: ${OUTCOME} (${GITHUB_SHA::7})"
 
       # Failure alert goes to the bot's log channel as a log line, posted by
       # the bot itself (no webhook, no repo links — the log channel is staff
