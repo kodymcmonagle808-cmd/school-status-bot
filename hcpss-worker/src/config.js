@@ -64,6 +64,7 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_crosscheck !== 'boolean') next.toggle_crosscheck = true;
   if (typeof next.toggle_heads_up !== 'boolean') next.toggle_heads_up = true;
   if (typeof next.toggle_bus_alerts !== 'boolean') next.toggle_bus_alerts = true;
+  if (typeof next.toggle_activity_alerts !== 'boolean') next.toggle_activity_alerts = true;
   if (typeof next.toggle_school_notices !== 'boolean') next.toggle_school_notices = true;
   if (typeof next.toggle_outages !== 'boolean') next.toggle_outages = true;
   if (typeof next.toggle_roads !== 'boolean') next.toggle_roads = true;

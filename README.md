@@ -11,6 +11,7 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Snowfall Forecast: storm-time embeds include expected snow/ice accumulations from the NWS forecast.
 - Night-Before Heads-Up: 7:00 PM ET alert when the Closure Outlook hits High/Very High before HCPSS has announced anything.
 - Bus & Transportation Alerts: posts HCPSS News transportation service alerts (route suspensions, delays, restorations).
+- Activities & Athletics Alerts: posts after-school activity, athletics, and field trip cancellations that never reach the status page.
 - School-Specific Notices: surfaces single-building announcements (no pings) that district-wide filters skip.
 - Power Outages: BGE county outage counts on storm embeds, feeding the Closure Outlook when widespread; `/outages` shows the county-by-county counts to any member, any time.
 - Road Conditions: active MD CHART road incidents for the county on storm embeds.

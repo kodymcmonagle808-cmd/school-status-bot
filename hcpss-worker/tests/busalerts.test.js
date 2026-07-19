@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyBusAlert, classifySchoolNotice, isWithinBusAlertHours } from '../src/busalerts.js';
+import { classifyBusAlert, classifyActivityAlert, classifySchoolNotice, isWithinBusAlertHours } from '../src/busalerts.js';
 
 test('classifyBusAlert flags service-impact transportation posts', () => {
   assert.equal(classifyBusAlert('HCPSS Transportation Update: several bus routes suspended Monday'), true);
@@ -15,6 +15,31 @@ test('classifyBusAlert ignores newsletters and non-transportation posts', () => 
   assert.equal(classifyBusAlert('Board of Education meeting delayed'), false);
   assert.equal(classifyBusAlert(''), false);
   assert.equal(classifyBusAlert(null), false);
+});
+
+test('classifyActivityAlert flags after-school/athletics cancellations', () => {
+  assert.equal(classifyActivityAlert('All after-school and evening activities are canceled today, January 6'), true);
+  assert.equal(classifyActivityAlert('All HCPSS athletic events and practices are canceled this afternoon'), true);
+  assert.equal(classifyActivityAlert('Field trips scheduled for today are canceled'), true);
+  assert.equal(classifyActivityAlert('Evening activities are postponed due to expected ice'), true);
+  assert.equal(classifyActivityAlert('After-school programs called off ahead of the storm'), true);
+});
+
+test('classifyActivityAlert ignores schedules and as-planned posts', () => {
+  assert.equal(classifyActivityAlert('High school sports schedules announced'), false);
+  assert.equal(classifyActivityAlert('Evening activities will continue as scheduled'), false);
+  assert.equal(classifyActivityAlert('Athletic boosters meeting Thursday'), false);
+  assert.equal(classifyActivityAlert('Schools closed today due to snow'), false);
+  assert.equal(classifyActivityAlert(''), false);
+  assert.equal(classifyActivityAlert(null), false);
+});
+
+test('bus alerts outrank activity alerts for the same post', () => {
+  // A post about canceled bus routes is a transportation alert, not an
+  // activities one — the scanner checks classifyBusAlert first.
+  const text = 'Several bus routes to after-school activities are canceled';
+  assert.equal(classifyBusAlert(text), true);
+  assert.equal(classifyActivityAlert(text), true);
 });
 
 test('classifySchoolNotice flags single-school impacts', () => {

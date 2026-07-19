@@ -261,6 +261,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const digest = config.toggle_digest === true; // opt-in, off by default
     const headsUp = config.toggle_heads_up !== false;
     const busAlerts = config.toggle_bus_alerts !== false;
+    const activityAlerts = config.toggle_activity_alerts !== false;
     const schoolNotices = config.toggle_school_notices !== false;
     const outages = config.toggle_outages !== false;
     const roads = config.toggle_roads !== false;
@@ -283,6 +284,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n` +
                    `• ${headsUp ? '🟢' : '🔴'} **Night-Before Heads-Up** — 7:00 PM ET alert when the Closure Outlook hits High/Very High\n` +
                    `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n` +
+                   `• ${activityAlerts ? '🟢' : '🔴'} **Activities & Athletics Alerts** — post after-school/athletics cancellations (no pings)\n` +
                    `• ${schoolNotices ? '🟢' : '🔴'} **School-Specific Notices** — post single-school announcements (no pings)\n` +
                    `• ${outages ? '🟢' : '🔴'} **Power Outages** — show BGE county outage counts during storm alerts\n` +
                    `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n` +
@@ -362,6 +364,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post transportation service alerts from HCPSS News',
         emoji: { name: '🚌' },
         default: busAlerts
+      },
+      {
+        label: 'Activities & Athletics Alerts',
+        value: 'toggle_activity_alerts',
+        description: 'Post after-school/athletics cancellations from HCPSS News (no pings)',
+        emoji: { name: '🏟️' },
+        default: activityAlerts
       },
       {
         label: 'School-Specific Notices',
@@ -1083,6 +1092,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_digest = selected.includes('toggle_digest');
     next.toggle_heads_up = selected.includes('toggle_heads_up');
     next.toggle_bus_alerts = selected.includes('toggle_bus_alerts');
+    next.toggle_activity_alerts = selected.includes('toggle_activity_alerts');
     next.toggle_school_notices = selected.includes('toggle_school_notices');
     next.toggle_outages = selected.includes('toggle_outages');
     next.toggle_roads = selected.includes('toggle_roads');

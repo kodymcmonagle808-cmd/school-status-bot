@@ -1,8 +1,14 @@
-// HCPSS News watcher: bus/transportation alerts and school-specific notices.
+// HCPSS News watcher: bus/transportation alerts, activities/athletics
+// cancellations, and school-specific notices.
 //
 // Bus alerts — HCPSS has no public bus-delay feed (delays go out via
 // text/email and the Zum app), but service-level transportation posts (route
 // suspensions, systemwide delays, restorations) land on the HCPSS News RSS.
+//
+// Activity alerts — HCPSS regularly cancels after-school activities,
+// athletics, and field trips without closing schools ("all after-school and
+// evening activities are canceled"); the status page never shows these, so
+// the news feed is the only source.
 //
 // School-specific notices — the district-wide classifier deliberately ignores
 // single-building announcements ("X Elementary closed for a water main
@@ -16,6 +22,7 @@ import { postLog } from './panel.js';
 const SCAN_COOLDOWN_KEY = 'bus_alert_scan_cooldown';
 const SCAN_COOLDOWN_TTL_SECONDS = 600;
 const LAST_POSTED_KEY = 'bus_alert_last_ms';
+const ACTIVITY_LAST_KEY = 'activity_alert_last_ms';
 const SCHOOL_NOTICE_LAST_KEY = 'school_notice_last_ms';
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_POSTS_PER_RUN = 2;
@@ -35,6 +42,17 @@ const IMPACT_RE = /\b(delay(?:s|ed)?|suspend(?:s|ed|ing|sion)?|cancel(?:s|l?ed|i
 export function classifyBusAlert(text) {
   const t = String(text || '');
   return TRANSPORT_RE.test(t) && IMPACT_RE.test(t);
+}
+
+// An activity alert names after-school programming AND describes an impact —
+// schedule announcements ("High school sports schedules announced") and
+// "activities will continue as scheduled" posts stay quiet.
+const ACTIVITY_RE = /\bafter-?school\b|\bevening activit\w*|\bextracurricular\b|\bathletic\w*\b|\bfield trips?\b|\bintramural\w*\b|\bpractices and games\b/i;
+const ACTIVITY_IMPACT_RE = /\b(cancel(?:s|l?ed|ing|lation)?|postpon\w*|suspend\w*|called? off|will not (?:be held|take place|occur)|resched\w*)\b/i;
+
+export function classifyActivityAlert(text) {
+  const t = String(text || '');
+  return ACTIVITY_RE.test(t) && ACTIVITY_IMPACT_RE.test(t);
 }
 
 // A school-specific notice names a single school and a real impact, without
@@ -89,15 +107,25 @@ export async function maybeSendBusAlerts(env) {
     .slice(0, MAX_POSTS_PER_RUN)
     .reverse();
 
-  const lastSchoolMs = Number(await env.STATUS_KV.get(SCHOOL_NOTICE_LAST_KEY) || 0);
-  const freshSchool = items.filter(i =>
-    !classifyBusAlert(i.text) && classifySchoolNotice(i.text) && i.atMs > lastSchoolMs
+  // Each item lands in exactly one category: bus beats activity beats school.
+  const lastActivityMs = Number(await env.STATUS_KV.get(ACTIVITY_LAST_KEY) || 0);
+  const freshActivity = items.filter(i =>
+    !classifyBusAlert(i.text) && classifyActivityAlert(i.text) && i.atMs > lastActivityMs
   ).slice(0, MAX_POSTS_PER_RUN).reverse();
 
-  if (!freshBus.length && !freshSchool.length) return { sent: 0 };
+  const lastSchoolMs = Number(await env.STATUS_KV.get(SCHOOL_NOTICE_LAST_KEY) || 0);
+  const freshSchool = items.filter(i =>
+    !classifyBusAlert(i.text) && !classifyActivityAlert(i.text) &&
+    classifySchoolNotice(i.text) && i.atMs > lastSchoolMs
+  ).slice(0, MAX_POSTS_PER_RUN).reverse();
+
+  if (!freshBus.length && !freshActivity.length && !freshSchool.length) return { sent: 0 };
 
   if (freshBus.length) {
     await env.STATUS_KV.put(LAST_POSTED_KEY, String(Math.max(...freshBus.map(i => i.atMs))));
+  }
+  if (freshActivity.length) {
+    await env.STATUS_KV.put(ACTIVITY_LAST_KEY, String(Math.max(...freshActivity.map(i => i.atMs))));
   }
   if (freshSchool.length) {
     await env.STATUS_KV.put(SCHOOL_NOTICE_LAST_KEY, String(Math.max(...freshSchool.map(i => i.atMs))));
@@ -129,6 +157,18 @@ export async function maybeSendBusAlerts(env) {
           title: '🚌 HCPSS Transportation Alert',
           url: 'https://news.hcpss.org',
           color: 0xE67E22,
+          description: item.text.slice(0, 3900),
+          footer: { text: footerText },
+          timestamp: new Date(item.atMs).toISOString()
+        });
+      }
+    }
+    if (cfg.toggle_activity_alerts !== false) {
+      for (const item of freshActivity) {
+        embeds.push({
+          title: '🏟️ Activities & Athletics Alert',
+          url: 'https://news.hcpss.org',
+          color: 0x9B59B6,
           description: item.text.slice(0, 3900),
           footer: { text: footerText },
           timestamp: new Date(item.atMs).toISOString()
