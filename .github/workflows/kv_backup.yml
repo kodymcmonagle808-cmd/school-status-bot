@@ -1,0 +1,65 @@
+name: KV backup
+
+# Weekly encrypted export of the Worker's KV namespace (closure history,
+# yearly stats, outlook track record, every server's config) as a workflow
+# artifact. Requires a KV_BACKUP_PASSPHRASE repository secret — the backup
+# contains server configs and opt-in user IDs, so it is never uploaded
+# unencrypted.
+#
+# To restore/inspect a downloaded artifact:
+#   openssl enc -d -aes-256-cbc -pbkdf2 -in kv_backup.json.enc -out kv_backup.json
+#   (enter the passphrase when prompted)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1' # Mondays, 3/4 AM ET
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Check passphrase secret
+        env:
+          KV_BACKUP_PASSPHRASE: ${{ secrets.KV_BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$KV_BACKUP_PASSPHRASE" ]; then
+            echo "::error::KV_BACKUP_PASSPHRASE secret is not set — refusing to upload an unencrypted backup. Add it in repo Settings → Secrets."
+            exit 1
+          fi
+
+      - name: Export KV namespace
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          cd hcpss-worker
+          node scripts/kv_backup.mjs
+          mv kv_backup.json "$GITHUB_WORKSPACE/kv_backup.json"
+
+      - name: Encrypt backup
+        env:
+          KV_BACKUP_PASSPHRASE: ${{ secrets.KV_BACKUP_PASSPHRASE }}
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -salt \
+            -in kv_backup.json -out kv_backup.json.enc \
+            -pass env:KV_BACKUP_PASSPHRASE
+          rm kv_backup.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kv-backup-${{ github.run_id }}
+          path: kv_backup.json.enc
+          retention-days: 90

@@ -22,6 +22,12 @@ jobs:
           sudo npm install -g wrangler@4
           sudo apt-get update && sudo apt-get install -y jq
 
+      - name: Lint
+        run: |
+          cd hcpss-worker
+          npm ci --no-audit --no-fund
+          npm run lint
+
       - name: Run worker tests
         run: |
           cd hcpss-worker

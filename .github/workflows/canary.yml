@@ -1,0 +1,56 @@
+name: Scraper canary
+
+# Fetches every live external source (status page, district feeds, NWS, BGE,
+# Kubra outage maps, AirNow, CHART) through the real parsers. The Worker
+# degrades silently when these break — this is what makes a breakage visible.
+# On failure it opens (or comments on) an issue titled "Scraper canary failing".
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * *' # daily, 5/6 AM ET
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Run canary
+        id: canary
+        run: |
+          cd hcpss-worker
+          node scripts/canary.mjs 2>&1 | tee canary.log
+
+      - name: Open or update failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Scraper canary failing"
+          BODY_FILE=body.md
+          {
+            echo "The daily scraper canary failed on $(date -u +%Y-%m-%d). Output:"
+            echo
+            echo '```'
+            tail -40 hcpss-worker/canary.log 2>/dev/null || echo '(no log captured)'
+            echo '```'
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > "$BODY_FILE"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body-file "$BODY_FILE"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY_FILE"
+          fi

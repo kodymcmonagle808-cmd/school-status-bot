@@ -6,7 +6,7 @@
 // driver (and a direct signal for the Closure Outlook). Failures always
 // degrade to null — outage context is never allowed to break a status post.
 
-const BGE_COUNTIES_URL = 'https://bge-prod.ifactornotifi.com/report/datafeed/counties';
+export const BGE_COUNTIES_URL = 'https://bge-prod.ifactornotifi.com/report/datafeed/counties';
 const OUTAGE_CACHE_KEY = 'bge_outage_cache';
 const OUTAGE_CACHE_TTL_SECONDS = 600;
 const FETCH_TIMEOUT_MS = 8000;
@@ -17,7 +17,7 @@ const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot
 // FirstEnergy's outage maps). The instance/view IDs are stable per utility;
 // the report ID comes from the deployed view config and the data path from
 // currentState, so each fetch resolves currentState first.
-const KUBRA_UTILITIES = {
+export const KUBRA_UTILITIES = {
   pepco: {
     label: 'Pepco',
     // Pepco fronts the Kubra API with its own proxy; kubra.io serves the data files.

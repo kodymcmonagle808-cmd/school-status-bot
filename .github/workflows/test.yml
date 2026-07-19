@@ -1,0 +1,36 @@
+name: Tests
+
+# Test + lint on pull requests and non-main branches; pushes to main run the
+# same checks inside the deploy workflow.
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dev dependencies
+        run: |
+          cd hcpss-worker
+          npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: |
+          cd hcpss-worker
+          npm run lint
+
+      - name: Run worker tests
+        run: |
+          cd hcpss-worker
+          node --test
