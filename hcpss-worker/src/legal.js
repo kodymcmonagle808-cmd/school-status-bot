@@ -19,7 +19,7 @@ export const TERMS_MD =
 
 export const PRIVACY_MD =
   '**Last Updated: July 18, 2026**\n\n' +
-  '**1. What We Collect** — The minimum needed to function: server (guild) ID, configured channel IDs, optional ping role IDs, server-specific settings, and the user/channel ID at the time a command is run (used only to process that command).\n\n' +
+  '**1. What We Collect** — The minimum needed to function: server (guild) ID, configured channel IDs, optional ping role IDs, server-specific settings, the user/channel ID at the time a command is run (used only to process that command), and — only if a user opts in via `/myschool` — the school name they registered (used solely to match public notices for DM alerts; cleared with `/myschool clear`).\n\n' +
   '**We do NOT collect** message content outside of command interactions, private messages, personal information (names, emails, school enrollment data), or voice/audio data.\n\n' +
   '**2. How It Is Used** — Solely to deliver status updates to configured channels, ping configured roles, respond to commands, and maintain/troubleshoot the bot. Data is never sold, rented, or shared with third parties for advertising or marketing.\n\n' +
   "**3. Storage & Security** — Configuration data is stored in a secure database on the bot's hosting infrastructure with reasonable technical protections. No system is 100% secure; data is stored and processed at your own risk.\n\n" +

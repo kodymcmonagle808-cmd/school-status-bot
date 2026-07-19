@@ -17,6 +17,9 @@ School Status is designed to collect the **minimum data necessary** to function.
 **Command Usage Data:**
 - User ID and Channel ID at the time a command is run, used only to process and respond to that command.
 
+**Opt-In Notification Data:**
+- If a user runs `/myschool`, the school name they typed is stored with their User ID and used solely to match publicly posted school-specific notices for DM alerts. It is removed with `/myschool clear`, when the server's data is deleted, or when the bot leaves the server.
+
 **We do NOT collect:**
 - Message content outside of direct command interactions
 - Private messages

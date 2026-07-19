@@ -59,6 +59,7 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_error_alerts !== 'boolean') next.toggle_error_alerts = true;
   if (typeof next.toggle_weather !== 'boolean') next.toggle_weather = true;
   if (typeof next.toggle_storm_mode !== 'boolean') next.toggle_storm_mode = true;
+  if (typeof next.toggle_decision_watch !== 'boolean') next.toggle_decision_watch = true;
   if (typeof next.toggle_districts !== 'boolean') next.toggle_districts = true;
   if (typeof next.toggle_outlook !== 'boolean') next.toggle_outlook = true;
   if (typeof next.toggle_crosscheck !== 'boolean') next.toggle_crosscheck = true;

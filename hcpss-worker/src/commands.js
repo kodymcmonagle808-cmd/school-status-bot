@@ -1,22 +1,25 @@
 // Slash command runners and control-panel quick-action handlers.
 
 import { EPHEMERAL_FLAG, ALL_STATUS_LABELS, STATUS_LABELS, SCHOOL_CALENDAR_EVENTS } from './constants.js';
-import { formatCheckedAt, formatStatusDate, formatYmdNY } from './timeutil.js';
-import { HCPSS_URL } from './scraper.js';
+import { formatCheckedAt, formatStatusDate, formatYmdNY, getEasternTimeStr, isInStormWindow, nextScheduledTime, formatScheduleTimeLabel } from './timeutil.js';
+import { HCPSS_URL, getStatusCards, determineStatusKey } from './scraper.js';
 import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel, INCIDENT_KEYS } from './history.js';
-import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, HCPSS_COUNTY } from './districts.js';
+import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY } from './districts.js';
+import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
 import { postLog } from './panel.js';
 import { doCheckAndPost } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
-import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
+import { getActiveWeatherAlerts, getCachedWeatherAlerts, formatWeatherAlertLines, hasStormAlert, DEFAULT_NWS_ZONE } from './weather.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
 import { getBgeOutages, getCountyOutage, outagePercent, formatOutageLine } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { getOutlookPredictions, summarizeOutlookAccuracy, formatOutlookAccuracyLines } from './outlookaccuracy.js';
+import { computeSnowDayBudget } from './snowbudget.js';
 import { toggleSubscriber, getSubscribers } from './subscriptions.js';
+import { getSchoolSubscriptions, setSchoolSubscription, clearSchoolSubscription, MAX_SCHOOL_NAME_LENGTH } from './schoolsubs.js';
 import { getGreetedUserIds } from './greeter.js';
 import { TERMS_MD, PRIVACY_MD } from './legal.js';
 
@@ -116,6 +119,7 @@ export function runHelpCommand() {
         '• `/outages` — current BGE power outage counts by county\n' +
         '• `/stats` — closure days, delays, and scraper statistics\n' +
         '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
+        '• `/myschool` — register your school to get DMed when a notice mentions it\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
         '**Buttons on status posts:**\n' +
         '• **Check again** — re-check privately · **🔔 Notify Me** — same as `/notify`\n' +
@@ -125,6 +129,7 @@ export function runHelpCommand() {
         '• `/override` — force a displayed status for 1–30 days\n' +
         '• `/events` — add/remove custom calendar events\n' +
         '• `/announce` — post a custom announcement embed\n' +
+        '• `/health` — scraper, posting, and storm-mode health at a glance\n' +
         '• `/refresh-panel` — refresh the control panel in the log channel\n\n' +
         '**For administrators:**\n' +
         '• `/setup` — first-time setup wizard (channels, roles, notifications)\n' +
@@ -197,12 +202,68 @@ export async function runNotifyCommand(body, env) {
   };
 }
 
+// /myschool — register (or clear) the school whose School-Specific Notices
+// should be DMed to you. Open to everyone; only affects the invoker.
+export async function runMySchoolCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const userId = getInvokerId(body);
+  if (!userId) {
+    return { content: '❌ Could not determine your user ID.', flags: EPHEMERAL_FLAG };
+  }
+
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const sub = options[0] && options[0].type === 1 ? options[0] : null;
+  const subName = sub && sub.name ? String(sub.name) : '';
+  const subOptions = sub && Array.isArray(sub.options) ? sub.options : [];
+
+  if (subName === 'set') {
+    const nameRaw = getCommandOption(subOptions, 'name');
+    const name = (nameRaw ? String(nameRaw) : '').replace(/\s+/g, ' ').trim();
+    if (name.length < 3 || name.length > MAX_SCHOOL_NAME_LENGTH) {
+      return {
+        content: `❌ Please give a school name between 3 and ${MAX_SCHOOL_NAME_LENGTH} characters (e.g. \`Centennial High\`).`,
+        flags: EPHEMERAL_FLAG
+      };
+    }
+    const result = await setSchoolSubscription(env, guildId, userId, name);
+    if (result.full) {
+      return { content: '❌ The school subscription list for this server is full.', flags: EPHEMERAL_FLAG };
+    }
+    return {
+      content: `🏫 **Got it!** I'll DM you when a School-Specific Notice mentions **${name}**. ` +
+        'Make sure DMs from this server\'s members are enabled. Run `/myschool clear` to stop.',
+      flags: EPHEMERAL_FLAG
+    };
+  }
+
+  if (subName === 'clear') {
+    const removed = await clearSchoolSubscription(env, guildId, userId);
+    return {
+      content: removed
+        ? `🔕 Cleared — you'll no longer get DMs about **${removed}**.`
+        : 'You don\'t have a school registered here. Use `/myschool set` to pick one.',
+      flags: EPHEMERAL_FLAG
+    };
+  }
+
+  const subs = await getSchoolSubscriptions(env, guildId);
+  const mine = subs[userId];
+  return {
+    content: mine
+      ? `🏫 You're subscribed to notices mentioning **${mine}**. Use \`/myschool set\` to change it or \`/myschool clear\` to stop.`
+      : 'You don\'t have a school registered here. Use `/myschool set` to pick one and get DMed when a notice mentions it.',
+    flags: EPHEMERAL_FLAG
+  };
+}
+
 // /mydata view — fulfills the Privacy Policy's promise that admins can see a
 // summary of what the bot stores for their server.
 export async function runMyDataViewCommand(env, guildId) {
   const stored = await getConfig(env, guildId);
   const cfg = getEffectiveConfig(stored);
   const subscribers = await getSubscribers(env, guildId);
+  let schoolSubCount = 0;
+  try { schoolSubCount = Object.keys(await getSchoolSubscriptions(env, guildId)).length; } catch {}
   let calendarCount = 0;
   try { calendarCount = (await listCalendarEvents(env, guildId)).length; } catch {}
   let greetedCount = 0;
@@ -229,6 +290,7 @@ export async function runMyDataViewCommand(env, guildId) {
         `• **Notification ping roles**: ${pingRoleCount} configured\n` +
         `• **Server settings**: feature toggles, check schedule, embed colors/footer\n` +
         `• **DM subscribers**: ${subscribers.length} user ID(s) (opted in via 🔔 or \`/notify\`)\n` +
+        `• **School subscriptions**: ${schoolSubCount} user(s) registered a school via \`/myschool\`\n` +
         `• **Welcomed members**: ${greetedCount} user ID(s) (so nobody is greeted twice)\n` +
         `• **Custom calendar events**: ${calendarCount}\n` +
         `• **System log lines**: ${logCount}\n` +
@@ -247,8 +309,8 @@ export function runMyDataDeletePrompt() {
   return {
     content: '⚠️ **Delete all server data?**\n\n' +
       'This permanently erases everything the bot stores for this server: configuration, ' +
-      'notification role mappings, DM subscriber list, custom calendar events, welcomed-member ' +
-      'records, and system logs. The bot will stop posting here until `/setup` is run again.\n\n' +
+      'notification role mappings, DM subscriber list, school subscriptions, custom calendar events, ' +
+      'welcomed-member records, and system logs. The bot will stop posting here until `/setup` is run again.\n\n' +
       'Are you sure?',
     components: [{
       type: 1,
@@ -307,18 +369,41 @@ export async function runHistoryCommand(env, guildId = '') {
   };
 }
 
-export async function runDistrictsCommand(env) {
+export async function runDistrictsCommand(env, guildId = '') {
   const checkedAt = new Date();
   const districts = await getDistrictStatuses(env);
 
+  // The neighbor list only covers the six surrounding counties, so add HCPSS
+  // itself from the status page and pin the guild's own district to the top.
+  let primaryId = 'hcpss';
+  try {
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    if (cfg.primary_district) primaryId = cfg.primary_district;
+  } catch {}
+
+  let hcpssEntry = null;
+  try {
+    const fetched = await getStatusCards(env);
+    if (fetched.cards) {
+      hcpssEntry = {
+        id: 'hcpss',
+        name: 'Howard Co. (HCPSS)',
+        status: statusKeyToDistrictStatus(determineStatusKey(fetched.cards)),
+        detail: ''
+      };
+    }
+  } catch {}
+
+  const entries = buildDecisionWatchEntries(districts, hcpssEntry, primaryId);
+
   return {
     embeds: [{
-      title: '🏫 Nearby School Districts — Operating Status',
+      title: '🏫 School Districts — Operating Status',
       color: 3447003,
-      description: formatDistrictLines(districts, { includeDetail: true }) ||
+      description: buildDecisionWatchDescription(entries, primaryId) ||
         'No district information available right now.',
       timestamp: checkedAt.toISOString(),
-      footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
+      footer: { text: footerWithCheckedAt('School Status · 📍 your district · Cached up to 10 min', checkedAt) }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -384,6 +469,78 @@ export async function runOutagesCommand(env, guildId = '') {
       description: `${lines.join('\n')}\n\n**Total**: ${totalOut.toLocaleString('en-US')} customers without power${stormNote}`,
       timestamp: checkedAt.toISOString(),
       footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// /health — staff-facing operational snapshot: scraper health, this server's
+// last check and post, the next scheduled slot, and storm-mode state. All
+// reads are KV or cache so the reply fits inside the interaction deadline.
+export async function runHealthCommand(env, guildId = '') {
+  const checkedAt = new Date();
+  const cfg = getEffectiveConfig(await getConfig(env, guildId));
+
+  let stats = {};
+  try {
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    if (rawStats) stats = JSON.parse(rawStats) || {};
+  } catch {}
+  const scrapesTotal = stats.scrapes_total || 0;
+  const scrapesFailed = stats.scrapes_failed || 0;
+  const uptimePct = scrapesTotal > 0 ? (((scrapesTotal - scrapesFailed) / scrapesTotal) * 100).toFixed(2) : '100.00';
+  const failureStreak = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+
+  const lastCheckMs = Number(await env.STATUS_KV.get(`last_check_time:${guildId}`)) || 0;
+  const latency = await env.STATUS_KV.get(`last_check_latency:${guildId}`);
+  const lastMsgId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
+  const lastChanId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
+  const alertFailures = Number(await env.STATUS_KV.get(`alert_post_failures:${guildId}`)) || 0;
+
+  let guildCount = null;
+  try {
+    const rawIndex = await env.STATUS_KV.get('guild_index');
+    if (rawIndex) {
+      const parsed = JSON.parse(rawIndex);
+      if (Array.isArray(parsed)) guildCount = parsed.filter(Boolean).length;
+    }
+  } catch {}
+
+  // Storm state from the cached weather read — never waits on an NWS fetch.
+  const meta = cfg.primary_district && cfg.primary_district !== 'hcpss' ? getDistrictMeta(cfg.primary_district) : null;
+  const alerts = await getCachedWeatherAlerts(env, meta && meta.nwsZone ? meta.nwsZone : DEFAULT_NWS_ZONE);
+  const stormAlert = hasStormAlert(alerts);
+  const etStr = getEasternTimeStr(checkedAt);
+  const inWindow = isInStormWindow(etStr);
+
+  const schedule = Array.isArray(cfg.check_schedule) ? cfg.check_schedule : [];
+  const next = nextScheduledTime(schedule, etStr);
+
+  const scraperEmoji = failureStreak >= 3 ? '🔴' : failureStreak > 0 ? '🟠' : '🟢';
+  const lines = [
+    `**Scraper (all servers):**`,
+    `• ${scraperEmoji} Consecutive failures: \`${failureStreak}\``,
+    `• Success rate: \`${uptimePct}%\` over \`${scrapesTotal}\` checks`,
+    guildCount !== null ? `• Serving \`${guildCount}\` server(s)` : null,
+    ``,
+    `**This server:**`,
+    `• Last check: ${lastCheckMs ? `<t:${Math.floor(lastCheckMs / 1000)}:R>` : '*none recorded*'}${latency ? ` (\`${latency}ms\`)` : ''}`,
+    `• Last status post: ${lastMsgId && lastChanId ? `[jump to message](https://discord.com/channels/${guildId}/${lastChanId}/${lastMsgId})` : '*none tracked*'}`,
+    alertFailures > 0 ? `• 🔴 Alert channel: \`${alertFailures}\` consecutive failed post(s) — check permissions on <#${cfg.alert_channel_id}>` : `• 🟢 Alert channel: ${cfg.alert_channel_id ? `<#${cfg.alert_channel_id}>` : '*(not set)*'}`,
+    `• Next scheduled check: ${next ? `**${formatScheduleTimeLabel(next.time)} ET**${next.tomorrow ? ' (tomorrow)' : ''}` : '*no schedule configured*'}`,
+    ``,
+    `**Storm mode:**`,
+    `• ${cfg.toggle_storm_mode !== false ? '🟢 Enabled' : '🔴 Disabled'} — windows 4:30–7:30 AM & 10 AM–2 PM ET`,
+    `• Storm alert active${meta ? ` (${meta.name})` : ' (Howard Co.)'}: ${stormAlert ? '🌨️ **Yes**' : 'No'}${inWindow && stormAlert ? ' — extra checks running now' : ''}`
+  ].filter(l => l !== null);
+
+  return {
+    embeds: [{
+      title: '🩺 School Status — Health Check',
+      color: failureStreak >= 3 || alertFailures >= 3 ? 0xE74C3C : 0x2ECC71,
+      description: lines.join('\n'),
+      timestamp: checkedAt.toISOString(),
+      footer: { text: 'School Status · Weather state from cache (≤10 min old)' }
     }],
     flags: EPHEMERAL_FLAG
   };
@@ -471,6 +628,16 @@ export async function runStatsCommand(env, guildId = '') {
     ? `<t:${Math.floor(yearStats.lastIncident.timestamp / 1000)}:D> — *${yearStats.lastIncident.date || 'Unknown date'}*`
     : '*None recorded*';
 
+  // Inclement weather day budget (HCPSS-specific: the budget number comes from
+  // the HCPSS calendar, so district guilds don't see it). District-wide, so it
+  // uses the unfiltered history rather than the since-setup view.
+  let budgetLine = '';
+  if (!districtId) {
+    const budget = computeSnowDayBudget(fullHistory, checkedAt);
+    budgetLine = `\n• ❄️ **Inclement Weather Budget**: \`${budget.used}/${budget.budget}\` built-in days used` +
+      (budget.over > 0 ? ` (**${budget.over} over** — makeup days likely)` : '');
+  }
+
   // Previous school years from the persistent archive (current year excluded —
   // it's already shown above). District-wide, so it uses the unfiltered history.
   const yearly = await getYearlyStats(env, fullHistory, districtId);
@@ -512,6 +679,7 @@ export async function runStatsCommand(env, guildId = '') {
                  `• 🕑 **2-Hour Delays**: \`${yearStats.delays}\`\n` +
                  `• 🏃 **Early Closings**: \`${yearStats.earlyCloses}\`\n` +
                  `• 📌 **Last Incident**: ${lastIncidentStr}` +
+                 budgetLine +
                  pastYearsSection + outlookSection + `\n\n` +
                  `**Status Changes (This School Year):**\n` +
                  `${yearCountsDisplay}\n\n` +
@@ -759,6 +927,8 @@ export async function handlePanelKvDebug(body, env) {
     `weather_alerts_cache`,
     `news_signal_cache`,
     `dm_subscribers:${guildId}`,
+    `school_subs:${guildId}`,
+    `decision_watch:${guildId}`,
     `scraper_failures_count`,
     `scraper_failure_alerted`,
     `log_panel_message_id:${guildId}`,

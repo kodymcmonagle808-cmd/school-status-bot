@@ -29,6 +29,8 @@ import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { getCalendarEvent } from './calendar.js';
+import { getStatusHistory } from './history.js';
+import { computeSnowDayBudget, formatSnowDayBudgetLines } from './snowbudget.js';
 
 export function footerWithCheckedAt(label, checkedAt) {
   return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
@@ -207,6 +209,18 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
     if (snowLines) {
       addField(embeds[0], '🌨️ Snowfall Forecast — Howard County', snowLines);
     }
+  }
+
+  // On closure days, show how much of the built-in inclement weather day
+  // budget the district has burned (the closure being announced is already in
+  // history by the time the per-guild posts build).
+  if ((statusKey === 'schools_closed' || statusKey === 'schools_and_offices_closed') && embeds[0] && env && env.STATUS_KV) {
+    try {
+      const budgetLines = formatSnowDayBudgetLines(computeSnowDayBudget(await getStatusHistory(env), checkedAt));
+      if (budgetLines) {
+        addField(embeds[0], '❄️ Inclement Weather Days', budgetLines);
+      }
+    } catch {}
   }
 
   const stormActive = weatherEnabled && hasStormAlert(alerts);

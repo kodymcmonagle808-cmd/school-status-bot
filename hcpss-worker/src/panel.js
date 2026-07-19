@@ -255,6 +255,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const errorAlerts = config.toggle_error_alerts !== false;
     const weather = config.toggle_weather !== false;
     const stormMode = config.toggle_storm_mode !== false;
+    const decisionWatch = config.toggle_decision_watch !== false;
     const districts = config.toggle_districts !== false;
     const outlook = config.toggle_outlook !== false;
     const crosscheck = config.toggle_crosscheck !== false;
@@ -278,6 +279,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
                    `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n` +
                    `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n` +
+                   `• ${decisionWatch ? '🟢' : '🔴'} **Decision Watch** — live board of every district's morning announcements on storm mornings\n` +
                    `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n` +
                    `• ${outlook ? '🟢' : '🔴'} **Closure Outlook** — estimate closing/delay likelihood during storm alerts\n` +
                    `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n` +
@@ -322,6 +324,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Extra early-morning checks during storm alerts, post on change only',
         emoji: { name: '🌨️' },
         default: stormMode
+      },
+      {
+        label: 'Decision Watch',
+        value: 'toggle_decision_watch',
+        description: 'Live morning announcement board on storm mornings (no pings)',
+        emoji: { name: '🌅' },
+        default: decisionWatch
       },
       {
         label: 'Nearby Districts',
@@ -1082,6 +1091,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
     next.toggle_weather = selected.includes('toggle_weather');
     next.toggle_storm_mode = selected.includes('toggle_storm_mode');
+    next.toggle_decision_watch = selected.includes('toggle_decision_watch');
     next.toggle_districts = selected.includes('toggle_districts');
     next.toggle_outlook = selected.includes('toggle_outlook');
     next.toggle_crosscheck = selected.includes('toggle_crosscheck');

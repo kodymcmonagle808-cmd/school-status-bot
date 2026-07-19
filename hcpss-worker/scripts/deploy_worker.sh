@@ -260,6 +260,40 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "myschool",
+    description: "Get a DM when a school-specific notice mentions your school.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      {
+        name: "set",
+        description: "Register your school for notice DMs.",
+        type: 1,
+        options: [
+          { name: "name", description: "School name, e.g. Centennial High.", type: 3, required: true, max_length: 80 }
+        ]
+      },
+      {
+        name: "show",
+        description: "Show which school you have registered.",
+        type: 1
+      },
+      {
+        name: "clear",
+        description: "Stop school-specific notice DMs.",
+        type: 1
+      }
+    ]
+  },
+  {
+    name: "health",
+    description: "Scraper, posting, and storm-mode health at a glance (staff).",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
     name: "mydata",
     description: "View or delete the data this bot stores for your server.",
     type: 1,

@@ -79,6 +79,28 @@ export function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// The next configured check time strictly after the current ET time, wrapping
+// to tomorrow's earliest slot. Returns { time, tomorrow } or null for an
+// empty/invalid schedule.
+export function nextScheduledTime(schedule, currentEtStr) {
+  const toMin = s => {
+    const [h, m] = String(s).split(':').map(Number);
+    return isNaN(h) || isNaN(m) ? null : h * 60 + m;
+  };
+  const nowMin = toMin(currentEtStr);
+  const mins = (Array.isArray(schedule) ? schedule : [])
+    .map(toMin)
+    .filter(v => v !== null)
+    .sort((a, b) => a - b);
+  if (!mins.length || nowMin === null) return null;
+  const next = mins.find(v => v > nowMin);
+  const pick = next !== undefined ? next : mins[0];
+  return {
+    time: `${Math.floor(pick / 60)}:${String(pick % 60).padStart(2, '0')}`,
+    tomorrow: next === undefined
+  };
+}
+
 // Storm mode: extra checks every 15 minutes during the 4:30-7:30 AM ET window,
 // when HCPSS typically announces weather closings and delays.
 export const STORM_WINDOW_START_MIN = 4 * 60 + 30;
@@ -118,4 +140,14 @@ export function stormTickSlot(etStr) {
 
 export function middayTickSlot(etStr) {
   return tickSlotInWindow(etStr, MIDDAY_WINDOW_START_MIN, MIDDAY_WINDOW_END_MIN);
+}
+
+// Evening watch: the heads-up fires at 7 PM, but the outlook keeps moving as
+// districts announce through the evening — these ticks let an escalation post
+// go out any quarter hour from 7:00 to 11:45 PM ET.
+export const EVENING_WINDOW_START_MIN = 19 * 60;
+export const EVENING_WINDOW_END_MIN = 23 * 60 + 45;
+
+export function eveningTickSlot(etStr) {
+  return tickSlotInWindow(etStr, EVENING_WINDOW_START_MIN, EVENING_WINDOW_END_MIN);
 }

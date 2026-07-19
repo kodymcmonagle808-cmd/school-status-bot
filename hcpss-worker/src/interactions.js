@@ -36,6 +36,8 @@ import {
   runNotifyCommand,
   runMyDataViewCommand,
   runMyDataDeletePrompt,
+  runMySchoolCommand,
+  runHealthCommand,
   runPostStatusCommand,
   runOverrideCommand,
   handlePanelRefresh
@@ -96,6 +98,7 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'privacy') return interactionResponse(runPrivacyCommand());
     if (name === 'help') return interactionResponse(runHelpCommand());
     if (name === 'notify') return interactionResponse(await runNotifyCommand(body, env));
+    if (name === 'myschool') return interactionResponse(await runMySchoolCommand(body, env));
 
     if (name === 'status') {
       ctx.waitUntil(runStatusCommand(body, env));
@@ -117,7 +120,7 @@ export async function handleInteraction(body, env, ctx) {
 
     if (name === 'districts') {
       ctx.waitUntil((async () => {
-        const payload = await runDistrictsCommand(env);
+        const payload = await runDistrictsCommand(env, guildId);
         await updateInteractionOriginal(env, body.token, payload);
       })());
       return deferredInteractionResponse();
@@ -141,6 +144,10 @@ export async function handleInteraction(body, env, ctx) {
       content: 'You do not have permission to use this bot command.',
       flags: EPHEMERAL_FLAG
     });
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'health') {
+    return interactionResponse(await runHealthCommand(env, guildId));
   }
 
   if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {

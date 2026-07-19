@@ -12,6 +12,7 @@ import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
+import { maybeUpdateDecisionWatch } from './decisionwatch.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 
@@ -144,6 +145,11 @@ export default {
         await maybeRefreshStormEmbeds(env);
       } catch (e) {
         console.error('Storm refresh run failed', e);
+      }
+      try {
+        await maybeUpdateDecisionWatch(env);
+      } catch (e) {
+        console.error('Decision watch run failed', e);
       }
       try {
         await maybeTrackOutlookAccuracy(env);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot } from '../src/timeutil.js';
+import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot, eveningTickSlot, nextScheduledTime } from '../src/timeutil.js';
 
 test('matchesScheduleTime fires on time and up to 5 minutes late', () => {
   assert.equal(matchesScheduleTime('5:20', '5:20'), true);
@@ -65,6 +65,25 @@ test('middayTickSlot covers the 10 AM-2 PM early-dismissal window', () => {
   assert.equal(middayTickSlot('14:15'), null);
   assert.equal(middayTickSlot('12:20'), null); // not a tick minute
   assert.equal(middayTickSlot('5:15'), null);  // morning window belongs to stormTickSlot
+});
+
+test('eveningTickSlot covers 7:00-11:45 PM for the heads-up watch', () => {
+  assert.equal(eveningTickSlot('19:00'), '19:00');
+  assert.equal(eveningTickSlot('21:30'), '21:30');
+  assert.equal(eveningTickSlot('23:45'), '23:45');
+  assert.equal(eveningTickSlot('23:46'), '23:45'); // cron delay grace
+  assert.equal(eveningTickSlot('18:45'), null);
+  assert.equal(eveningTickSlot('0:00'), null);
+  assert.equal(eveningTickSlot('19:20'), null); // not a tick minute
+});
+
+test('nextScheduledTime finds the next slot and wraps to tomorrow', () => {
+  const schedule = ['5:20', '7:20', '10:00', '20:00'];
+  assert.deepEqual(nextScheduledTime(schedule, '6:00'), { time: '7:20', tomorrow: false });
+  assert.deepEqual(nextScheduledTime(schedule, '10:00'), { time: '20:00', tomorrow: false });
+  assert.deepEqual(nextScheduledTime(schedule, '21:00'), { time: '5:20', tomorrow: true });
+  assert.equal(nextScheduledTime([], '6:00'), null);
+  assert.equal(nextScheduledTime(['bogus'], '6:00'), null);
 });
 
 test('formatYmdNY formats an Eastern calendar date', () => {

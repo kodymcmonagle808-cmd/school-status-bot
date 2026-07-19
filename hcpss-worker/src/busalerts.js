@@ -19,6 +19,7 @@ import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { notifySchoolSubscribers } from './schoolsubs.js';
 
 const SCAN_COOLDOWN_KEY = 'bus_alert_scan_cooldown';
 const SCAN_COOLDOWN_TTL_SECONDS = 600;
@@ -207,6 +208,26 @@ export async function maybeSendBusAlerts(env) {
       }
     } catch (e) {
       console.error('News watcher post failed:', e);
+    }
+  }
+
+  // DM members who registered a school with /myschool when a school-specific
+  // notice names it (deduped across guilds inside notifySchoolSubscribers).
+  for (const item of freshSchool) {
+    try {
+      const dmCount = await notifySchoolSubscribers(env, guildIds, {
+        title: '🏫 School-Specific Notice',
+        url: 'https://news.hcpss.org',
+        color: 0x95A5A6,
+        description: item.text.slice(0, 3900),
+        footer: { text: 'School Status · via HCPSS News' },
+        timestamp: new Date(item.atMs).toISOString()
+      }, item.text);
+      if (dmCount > 0) {
+        console.log(`School notice DM sent to ${dmCount} subscriber(s).`);
+      }
+    } catch (e) {
+      console.error('School subscriber DM failed:', e);
     }
   }
   return { sent };

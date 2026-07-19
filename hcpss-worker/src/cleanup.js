@@ -20,6 +20,8 @@ function guildKeys(guildId) {
     `last_channel_id:${guildId}`,
     `log_panel_message_id:${guildId}`,
     `dm_subscribers:${guildId}`,
+    `school_subs:${guildId}`,
+    `decision_watch:${guildId}`,
     `last_digest_day:${guildId}`,
     `last_headsup_day:${guildId}`,
     `last_sched_slot:${guildId}`,
