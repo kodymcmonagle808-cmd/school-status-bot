@@ -64,13 +64,16 @@ jobs:
           path: kv_backup.json.enc
           retention-days: 90
 
-      # Optional Discord staff-channel alert (DISCORD_OPS_WEBHOOK_URL secret).
-      - name: Notify Discord
+      # Failure alert goes to the bot's log channel as a log line, posted by
+      # the bot itself (no webhook, no repo links). DISCORD_LOG_CHANNEL_ID
+      # secret overrides the default from src/constants.js.
+      - name: Log failure to Discord
         if: failure()
         env:
-          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
-          jq -n --arg content "❌ **KV backup failed** — this week's export did not run.
-          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
-            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
+          jq -n --arg content "❌ **KV backup failed** — this week's export did not run. See the Actions tab for details." '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null

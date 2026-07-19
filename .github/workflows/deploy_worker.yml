@@ -57,13 +57,17 @@ jobs:
           chmod +x ./hcpss-worker/scripts/deploy_worker.sh
           ./hcpss-worker/scripts/deploy_worker.sh
 
-      # Optional Discord staff-channel alert (DISCORD_OPS_WEBHOOK_URL secret).
-      - name: Notify Discord
+      # Failure alert goes to the bot's log channel as a log line, posted by
+      # the bot itself (no webhook, no repo links — the log channel is staff
+      # only but logs shouldn't leak URLs regardless). DISCORD_LOG_CHANNEL_ID
+      # secret overrides the default from src/constants.js.
+      - name: Log failure to Discord
         if: failure()
         env:
-          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
-          jq -n --arg content "❌ **Worker deploy failed** on main (${GITHUB_SHA::7}) — the bot is still running the previous version.
-          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
-            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
+          jq -n --arg content "❌ **Worker deploy failed** on main (${GITHUB_SHA::7}) — the bot is still running the previous version. See the Actions tab for details." '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null

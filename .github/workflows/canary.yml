@@ -55,16 +55,19 @@ jobs:
             gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY_FILE"
           fi
 
-      # Optional: also ping a Discord staff channel. Set the
-      # DISCORD_OPS_WEBHOOK_URL secret to a channel webhook URL to enable.
-      - name: Notify Discord
+      # Failure alert goes to the bot's log channel as a log line, posted by
+      # the bot itself (no webhook, no repo links). DISCORD_LOG_CHANNEL_ID
+      # secret overrides the default from src/constants.js. Details live in
+      # the GitHub issue opened above.
+      - name: Log failure to Discord
         if: failure()
         env:
-          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
           FAILING=$(grep '^❌' hcpss-worker/canary.log 2>/dev/null | head -8 || true)
           jq -n --arg content "❌ **Scraper canary failed** — a data source stopped parsing.
-          ${FAILING}
-          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
-            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"
+          ${FAILING}" '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null
