@@ -28,10 +28,13 @@ export function summarizeWeatherAlerts(features) {
 
     const endsRaw = p.ends || p.expires;
     const endsMs = endsRaw ? Date.parse(endsRaw) : 0;
+    const onsetMs = p.onset ? Date.parse(p.onset) : 0;
     alerts.push({
       event: p.event,
       severity: p.severity || 'Unknown',
-      endsMs: Number.isFinite(endsMs) ? endsMs : 0
+      endsMs: Number.isFinite(endsMs) ? endsMs : 0,
+      onsetMs: Number.isFinite(onsetMs) ? onsetMs : 0,
+      headline: typeof p.headline === 'string' ? p.headline.slice(0, 300) : ''
     });
   }
 
@@ -81,6 +84,19 @@ export function isPowerThreatAlert(alert) {
 
 export function hasPowerThreatAlert(alerts) {
   return (Array.isArray(alerts) ? alerts : []).some(isPowerThreatAlert);
+}
+
+// Alerts worth announcing the moment NWS issues them: the winter and heat
+// events school decisions hinge on, at watch/warning/advisory level (a
+// Winter Weather Advisory is the classic 2-hour-delay signal), plus anything
+// rated Extreme. Deliberately excludes Severe Thunderstorm Warnings and
+// other summer noise schools rarely act on.
+export function isSchoolImpactIssuance(alert) {
+  if (!alert) return false;
+  if (alert.severity === 'Extreme') return true;
+  const event = alert.event || '';
+  if (!WINTER_EVENT_RE.test(event) && !HEAT_EVENT_RE.test(event)) return false;
+  return /warning|watch|advisory/i.test(event);
 }
 
 // Storm alerts likely still active tomorrow morning: no known end time, or an

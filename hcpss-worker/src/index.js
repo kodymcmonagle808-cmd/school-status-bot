@@ -14,6 +14,7 @@ import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
 import { maybeUpdateDecisionWatch } from './decisionwatch.js';
 import { maybeSendAqiAlerts } from './aqi.js';
+import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
@@ -210,6 +211,12 @@ export default {
       } catch (e) {
         console.error('AQI alert run failed', e);
         await recordWatcherError(env, 'aqi', e);
+      }
+      try {
+        await maybeSendWeatherAlertNotices(env);
+      } catch (e) {
+        console.error('NWS issuance notice run failed', e);
+        await recordWatcherError(env, 'weatheralerts', e);
       }
       try {
         await maybeSendYearRecap(env);

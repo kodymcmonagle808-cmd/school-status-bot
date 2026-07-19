@@ -1,0 +1,42 @@
+name: Wrangler bump reminder
+
+# Quarterly nudge to bump the pinned wrangler CLI (deploy_worker.yml and
+# rollback.yml pin it so a bad release can't break deploys at random — this
+# keeps the pin from fossilizing). Opens an issue only when the pin is
+# actually behind the latest release; quiet otherwise.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 14 1 1,4,7,10 *' # 1st of Jan/Apr/Jul/Oct
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compare pinned vs latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PINNED=$(grep -oP 'wrangler@\K[0-9.]+' .github/workflows/deploy_worker.yml | head -n 1)
+          LATEST=$(npm view wrangler version)
+          echo "Pinned: $PINNED — Latest: $LATEST"
+          if [ -z "$PINNED" ] || [ -z "$LATEST" ] || [ "$PINNED" = "$LATEST" ]; then
+            echo "Pin is current (or could not compare) — nothing to do."
+            exit 0
+          fi
+          TITLE="Bump pinned wrangler ($PINNED → $LATEST)"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"Bump pinned wrangler\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Issue #$EXISTING already open — skipping."
+            exit 0
+          fi
+          gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body \
+            "Quarterly reminder: the deploy workflows pin wrangler@$PINNED; latest is $LATEST. Update the version in .github/workflows/deploy_worker.yml and .github/workflows/rollback.yml, push, and confirm the deploy goes green. See instructions/deploys-and-rollback.md."

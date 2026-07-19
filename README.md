@@ -18,6 +18,7 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - School-Specific Notices: surfaces single-building announcements (no pings) that district-wide filters skip — and members can register their building with `/myschool` to get a DM when a notice mentions it.
 - Power Outages: county outage counts on storm embeds from every utility serving the district's county — BGE, Pepco (Montgomery/Prince George's), and Potomac Edison (Frederick/Carroll) — feeding the Closure Outlook when widespread; `/outages` shows all utilities' county-by-county counts to any member, any time.
 - Air Quality Alerts: posts when AirNow reports Code Orange (AQI 101+) or worse for the district's area — the days outdoor athletics and recess get modified.
+- NWS Issuance Notices: posts within ~15 minutes when the National Weather Service issues a school-impacting alert (winter/heat watch, warning, or advisory) for the district's county — the moment the closure question starts, hours before any district announcement.
 - Road Conditions: active MD CHART road incidents for the county on storm embeds.
 - Primary District: any server can follow a neighboring district instead of HCPSS (per-server setting) — status posts, storm mode, the night-before heads-up, and `/history`/`/stats` all follow that district's own weather zone and announcements.
 - Cross-checks the HCPSS News feed and flags when it disagrees with the (sometimes lagging) status page.

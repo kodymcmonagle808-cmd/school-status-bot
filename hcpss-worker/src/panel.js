@@ -376,6 +376,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const yearRecap = config.toggle_year_recap !== false;
     const aqiAlerts = config.toggle_aqi_alerts !== false;
     const stormRecap = config.toggle_storm_recap !== false;
+    const nwsAlerts = config.toggle_nws_alerts !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -401,7 +402,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n` +
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
                    `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
-                   `• ${stormRecap ? '🟢' : '🔴'} **Storm Recap** — noon summary after storm mornings (outlook grade, every district's call)\n\n` +
+                   `• ${stormRecap ? '🟢' : '🔴'} **Storm Recap** — noon summary after storm mornings (outlook grade, every district's call)\n` +
+                   `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -533,6 +535,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Noon summary after storm mornings (no pings)',
         emoji: { name: '🌤️' },
         default: stormRecap
+      },
+      {
+        label: 'NWS Issuance Notices',
+        value: 'toggle_nws_alerts',
+        description: 'Post when a school-impacting NWS alert is issued (no pings)',
+        emoji: { name: '⚠️' },
+        default: nwsAlerts
       }
     ];
 
@@ -1230,6 +1239,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_year_recap = selected.includes('toggle_year_recap');
     next.toggle_aqi_alerts = selected.includes('toggle_aqi_alerts');
     next.toggle_storm_recap = selected.includes('toggle_storm_recap');
+    next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];

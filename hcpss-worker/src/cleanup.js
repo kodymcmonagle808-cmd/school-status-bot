@@ -30,7 +30,8 @@ function guildKeys(guildId) {
     `last_recap_year:${guildId}`,
     `last_aqi_day:${guildId}`,
     `last_storm_recap:${guildId}`,
-    `alert_post_failures:${guildId}`
+    `alert_post_failures:${guildId}`,
+    `nws_alerts_seen:${guildId}`
   ];
 }
 
