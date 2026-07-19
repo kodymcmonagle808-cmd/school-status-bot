@@ -2,6 +2,7 @@
 
 import { DEFAULT_STAFF_ROLE_ID, DEFAULT_LOG_CHANNEL_ID, DEFAULT_CHECK_SCHEDULE } from './constants.js';
 import { memberIsAdmin, memberHasRole } from './discord.js';
+import { isGuildBlocked } from './blocklist.js';
 
 function configKey(guildId) {
   return guildId ? `config:${guildId}` : 'config:default';
@@ -25,9 +26,10 @@ export async function setConfig(env, guildId, next) {
   await env.STATUS_KV.put(key, JSON.stringify(next));
 
   // Keep the cached guild index in sync so per-minute scheduled runs can
-  // avoid KV list operations.
+  // avoid KV list operations. Owner-blocked guilds stay out of the index.
   if (effectiveGuildId) {
     try {
+      if (await isGuildBlocked(env, effectiveGuildId)) return;
       let index = [];
       const rawIndex = await env.STATUS_KV.get('guild_index');
       if (rawIndex) {

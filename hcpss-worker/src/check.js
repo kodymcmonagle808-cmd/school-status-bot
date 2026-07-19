@@ -11,6 +11,7 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { postMessageToChannel, discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { getBlockedGuilds } from './blocklist.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
 
@@ -190,6 +191,11 @@ export async function doCheckAndPost(env, options = {}) {
       try {
         const listResult = await env.STATUS_KV.list({ prefix: 'config:' });
         targetGuildIds = listResult.keys.map(k => k.name.replace(/^config:/, '')).filter(Boolean);
+        // The rebuilt index must not resurrect owner-blocked guilds.
+        const blocked = await getBlockedGuilds(env);
+        if (blocked.length) {
+          targetGuildIds = targetGuildIds.filter(gid => !blocked.includes(gid));
+        }
         if (isScheduled) {
           await env.STATUS_KV.put('guild_index', JSON.stringify(targetGuildIds));
         }

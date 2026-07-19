@@ -2,6 +2,8 @@
 // Privacy Policy's promise that server data is deleted automatically after
 // the bot is removed. Runs from the cron tick at most once per day.
 
+import { removeFromBlocklist } from './blocklist.js';
+
 const CLEANUP_DAY_KEY = 'last_guild_cleanup_day';
 
 // Every exact KV key that stores data for a single guild. Keep in sync with
@@ -67,6 +69,9 @@ export async function purgeGuildData(env, guildId) {
   for (const key of guildKeys(guildId)) {
     await env.STATUS_KV.delete(key).catch(() => {});
   }
+
+  // A departed guild has no business staying on the owner blocklist.
+  await removeFromBlocklist(env, guildId);
 
   for (const prefix of guildPrefixes(guildId)) {
     let cursor = undefined;

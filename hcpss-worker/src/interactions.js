@@ -53,11 +53,24 @@ import { handlePanelComponent, handleTestAlert } from './panelcomponents.js';
 import { purgeGuildData, removeFromGuildIndex } from './cleanup.js';
 import { MY_PINGS_VALUE, buildMyPingsPanel, handleMyPingsSubmit } from './rolepanel.js';
 import { handleGreeterInteraction } from './greeter.js';
+import { isGuildBlocked } from './blocklist.js';
 
 export async function handleInteraction(body, env, ctx) {
   if (body.type === 1) return jsonResponse({ type: 1 });
 
   const guildId = body.guild_id || '';
+
+  // Owner lockdown: blocked servers get no interactions (the owner stays
+  // exempt so they can still look around and unblock from the panel).
+  if (guildId && await isGuildBlocked(env, guildId)) {
+    const invokerId = getInvokerId(body);
+    if (!env.OWNER_ID || invokerId !== String(env.OWNER_ID).trim()) {
+      return interactionResponse({
+        content: '🔒 This server has been restricted by the bot owner.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+  }
 
   if (body.type === 5) {
     return await handleModalSubmit(body, env, ctx, guildId);

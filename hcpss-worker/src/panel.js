@@ -16,6 +16,8 @@ import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { listCalendarEvents } from './calendar.js';
 import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
+import { getBlockedGuilds } from './blocklist.js';
+import { discordFetch } from './discord.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -232,6 +234,55 @@ export function buildOwnerStatsFields({ runningSha, updates, guildCount, scrapes
   ];
 }
 
+// Server list line rendering, pure for tests. blockedIds: string array.
+export function buildServerLines(servers, blockedIds, homeGuildId) {
+  const list = Array.isArray(servers) ? servers : [];
+  if (!list.length) return '(none)';
+  const blocked = Array.isArray(blockedIds) ? blockedIds : [];
+  return list.slice(0, 15).map(s => {
+    const home = homeGuildId && s.id === homeGuildId ? ' 🏠' : '';
+    return blocked.includes(s.id)
+      ? `🔒 **${s.name}** · \`${s.id}\`${home} — locked down`
+      : `🟢 **${s.name}** · \`${s.id}\`${home}`;
+  }).join('\n');
+}
+
+// Resolves guild names via the Discord API with a 1h KV cache so the owner
+// page renders inside the interaction deadline.
+async function fetchGuildSummaries(env, guildIds) {
+  let cache = {};
+  try {
+    const raw = await env.STATUS_KV.get('guild_names_cache');
+    if (raw) cache = JSON.parse(raw) || {};
+  } catch {}
+
+  const out = [];
+  let cacheDirty = false;
+  for (const gid of guildIds) {
+    let name = cache[gid];
+    if (!name) {
+      try {
+        const r = await discordFetch(`https://discord.com/api/v10/guilds/${gid}`, {
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+        });
+        if (r.ok) {
+          const g = await r.json();
+          if (g && g.name) {
+            name = g.name;
+            cache[gid] = name;
+            cacheDirty = true;
+          }
+        }
+      } catch {}
+    }
+    out.push({ id: gid, name: name || '(name unavailable)' });
+  }
+  if (cacheDirty) {
+    await env.STATUS_KV.put('guild_names_cache', JSON.stringify(cache), { expirationTtl: 3600 }).catch(() => {});
+  }
+  return out;
+}
+
 export async function buildWorkerUpdatesPayload(env) {
   let updates = [];
   try {
@@ -242,11 +293,27 @@ export async function buildWorkerUpdatesPayload(env) {
   // Every read degrades independently — this page must render even if a key
   // is missing or corrupt.
   let guildCount = 0;
+  let indexIds = [];
   try {
     const rawIndex = await env.STATUS_KV.get('guild_index');
     const index = rawIndex ? JSON.parse(rawIndex) : [];
-    if (Array.isArray(index)) guildCount = index.length;
+    if (Array.isArray(index)) {
+      indexIds = index.filter(Boolean);
+      guildCount = indexIds.length;
+    }
   } catch {}
+
+  // Blocked guilds are removed from the index, so the full server list is
+  // index ∪ blocklist ∪ home guild.
+  let blockedIds = [];
+  try { blockedIds = await getBlockedGuilds(env); } catch {}
+  const allIds = [...new Set([
+    ...indexIds,
+    ...blockedIds,
+    ...(env.DISCORD_GUILD_ID ? [env.DISCORD_GUILD_ID] : [])
+  ])];
+  let servers = allIds.map(id => ({ id, name: '(name unavailable)' }));
+  try { servers = await fetchGuildSummaries(env, allIds); } catch {}
 
   let stats = {};
   try {
@@ -279,13 +346,34 @@ export async function buildWorkerUpdatesPayload(env) {
       lastCheckTime,
       lastCheckLatencyMs
     }).concat([
-      { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false }
+      { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false },
+      { name: '🌐 Servers', value: buildServerLines(servers, blockedIds, env.DISCORD_GUILD_ID || ''), inline: false }
     ]),
     timestamp: new Date().toISOString(),
     footer: { text: 'School Status · Worker Updates  •  visible to the bot owner only' }
   };
 
-  return { embeds: [embed] };
+  // Lock/unlock select: every server except the home guild (several cron
+  // paths force-include it, so blocking it would half-work at best).
+  const lockable = servers.filter(s => s.id !== env.DISCORD_GUILD_ID).slice(0, 25);
+  const components = lockable.length ? [{
+    type: 1,
+    components: [{
+      type: 3,
+      custom_id: 'panel_owner_lock_select',
+      placeholder: '🔐 Lock down / unlock a server...',
+      options: lockable.map(s => ({
+        label: s.name.slice(0, 100),
+        value: s.id,
+        description: blockedIds.includes(s.id) ? 'Locked — select to unlock' : 'Select to lock down (no posts, no commands)',
+        emoji: { name: blockedIds.includes(s.id) ? '🔒' : '🟢' }
+      })),
+      min_values: 1,
+      max_values: 1
+    }]
+  }] : [];
+
+  return { embeds: [embed], components };
 }
 
 export async function buildControlPanelPayload(env, guildId, configOverride = null, pageOverride = null) {

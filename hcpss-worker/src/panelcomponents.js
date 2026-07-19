@@ -23,6 +23,7 @@ import { HCPSS_URL } from './scraper.js';
 import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride } from './config.js';
 import { splitEmbeds } from './embeds.js';
 import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload, postLog } from './panel.js';
+import { isGuildBlocked, setGuildBlocked } from './blocklist.js';
 import { doCheckAndPost } from './check.js';
 import {
   runHistoryCommand,
@@ -59,6 +60,26 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     await env.STATUS_KV.put(`panel_page:${guildId}`, target);
     const payload = await buildControlPanelPayload(env, guildId);
     return jsonResponse({ type: 7, data: payload });
+  }
+
+  // Owner-only: toggle a server's lockdown from the Worker Updates page.
+  // Lives on an ephemeral message only the owner can see, but verify anyway.
+  if (customId === 'panel_owner_lock_select') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({
+        content: '🔒 Only the bot owner can manage server lockdowns.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    const target = Array.isArray(body.data.values) && body.data.values[0];
+    if (!target || target === env.DISCORD_GUILD_ID) {
+      return interactionResponse({ content: '❌ The home server cannot be locked down.', flags: EPHEMERAL_FLAG });
+    }
+    const nowBlocked = !(await isGuildBlocked(env, target));
+    await setGuildBlocked(env, target, nowBlocked);
+    const payload = await buildWorkerUpdatesPayload(env);
+    return jsonResponse({ type: 7, data: { ...payload, flags: EPHEMERAL_FLAG } });
   }
 
   if (customId === 'panel_view_select') {
