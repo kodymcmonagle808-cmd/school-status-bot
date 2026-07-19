@@ -1,0 +1,107 @@
+name: Rollback Worker
+
+# Redeploys a previous commit — the escape hatch when a deploy on main breaks
+# the Worker. Run it from the Actions tab: pick this workflow, "Run workflow",
+# and paste a SHA from the panel's Worker Updates page (short or full).
+# Skips lint/tests for speed: the target commit already passed them when it
+# was first deployed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit SHA to redeploy (short or full — see Worker Updates)'
+        required: true
+        type: string
+
+# Same group as regular deploys so a rollback can never race one.
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check out target commit
+        id: target
+        run: |
+          git checkout "${{ inputs.sha }}"
+          FULL_SHA=$(git rev-parse HEAD)
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "Rolling back to $FULL_SHA"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: |
+          sudo npm install -g wrangler@4.112.0
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run deploy script
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          MANUAL_TRIGGER_TOKEN: ${{ secrets.MANUAL_TRIGGER_TOKEN }}
+          OWNER_ID: ${{ secrets.OWNER_ID }}
+          GITHUB_SHA: ${{ steps.target.outputs.full_sha }}
+        run: |
+          chmod +x ./hcpss-worker/scripts/deploy_worker.sh
+          ./hcpss-worker/scripts/deploy_worker.sh
+
+      - name: Record rollback result
+        if: always()
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          OUTCOME: ${{ job.status }}
+          FULL_SHA: ${{ steps.target.outputs.full_sha }}
+        run: |
+          if [ -z "$FULL_SHA" ]; then echo "No target sha resolved — skipping record."; exit 0; fi
+          LIST=$(curl -s "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces?per_page=100" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}")
+          KV_ID=$(echo "$LIST" | jq -r '.result[]? | select(.title == "hcpss-status-kv") | .id' | head -n 1)
+          if [ -z "$KV_ID" ]; then
+            KV_ID=$(echo "$LIST" | jq -r '.result // [] | map(select(.title | test("^hcpss-status-kv-[0-9]+$"))) | sort_by(.title) | last | .id // empty')
+          fi
+          if [ -z "$KV_ID" ]; then echo "KV namespace not found — skipping record."; exit 0; fi
+          BASE="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${KV_ID}/values/worker_updates"
+          CURRENT=$(curl -s -H "Authorization: Bearer ${CF_API_TOKEN}" "$BASE")
+          echo "$CURRENT" | jq -e 'type == "array"' >/dev/null 2>&1 || CURRENT='[]'
+          NEW=$(jq -cn --argjson cur "$CURRENT" --arg sha "${FULL_SHA:0:7}" --arg outcome "$OUTCOME" --arg ts "$(date +%s)" \
+            '[{sha: $sha, ok: ($outcome == "success"), ts: (($ts | tonumber) * 1000), rollback: true}] + $cur | .[0:15]')
+          curl -s -X PUT -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" \
+            --data "$NEW" "$BASE" >/dev/null
+          echo "Recorded rollback result: ${OUTCOME} (${FULL_SHA:0:7})"
+
+      - name: Log outcome to Discord
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
+          OUTCOME: ${{ job.status }}
+          FULL_SHA: ${{ steps.target.outputs.full_sha }}
+        run: |
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
+          if [ "$OUTCOME" = "success" ]; then
+            MSG="↩️ **Worker rolled back** to \`${FULL_SHA:0:7}\` and redeployed."
+          else
+            MSG="❌ **Worker rollback to \`${FULL_SHA:0:7}\` failed** — the previously deployed version is still running. See the Actions tab."
+          fi
+          jq -n --arg content "$MSG" '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null

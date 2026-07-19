@@ -55,7 +55,26 @@ jobs:
           openssl enc -aes-256-cbc -pbkdf2 -salt \
             -in kv_backup.json -out kv_backup.json.enc \
             -pass env:KV_BACKUP_PASSPHRASE
-          rm kv_backup.json
+
+      # A backup only counts if it restores: decrypt the artifact we are about
+      # to upload, confirm it matches the original byte for byte, and check
+      # the JSON is sane (entries present, count matches the manifest).
+      - name: Verify backup restores
+        env:
+          KV_BACKUP_PASSPHRASE: ${{ secrets.KV_BACKUP_PASSPHRASE }}
+        run: |
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in kv_backup.json.enc -out kv_backup_verify.json \
+            -pass env:KV_BACKUP_PASSPHRASE
+          cmp kv_backup.json kv_backup_verify.json
+          KEYS=$(jq '.entries | length' kv_backup_verify.json)
+          MANIFEST=$(jq '.keyCount' kv_backup_verify.json)
+          if [ "$KEYS" -lt 1 ] || [ "$KEYS" != "$MANIFEST" ]; then
+            echo "::error::Backup verification failed: entries=$KEYS manifest keyCount=$MANIFEST"
+            exit 1
+          fi
+          echo "Verified: backup decrypts and contains $KEYS keys."
+          rm kv_backup.json kv_backup_verify.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

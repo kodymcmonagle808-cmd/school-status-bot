@@ -2,7 +2,7 @@
 
 Monitors the [HCPSS status page](https://status.hcpss.org) and posts the current operating status to Discord.
 
-Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) — see its [README](hcpss-worker/README.md) for setup, features, and deployment. The Worker:
+Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) — see its [README](hcpss-worker/README.md) for setup, features, and deployment. Operational runbooks (backups, rollback, monitoring, secrets) live in [`instructions/`](instructions/). The Worker:
 
 - Checks the status page on each guild's configured schedule (Eastern time) and posts the status embed, replacing the previous message instead of stacking.
 - Shows active NWS weather alerts for Howard County on status embeds, plus a Tomorrow Outlook on evening posts.

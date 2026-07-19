@@ -1,0 +1,93 @@
+name: Worker uptime check
+
+# Polls the live Worker's /health endpoint every 20 minutes. Fails when the
+# Worker is unreachable, unhealthy, or its cron heartbeat (written every 15th
+# minute) is older than 40 minutes — the one failure mode nothing else
+# catches: a deployed Worker whose cron silently stopped firing.
+#
+# Dedupe via a GitHub issue: the first failure opens "Worker health check
+# failing" and pings the log channel; repeat failures stay quiet while the
+# issue is open; the first healthy run closes it and posts a recovery line.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/20 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  HEALTH_URL: https://hcpss-worker.kodymcmonagle808.workers.dev/health
+  ISSUE_TITLE: Worker health check failing
+  MAX_CRON_AGE_MINUTES: 40
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe /health
+        id: probe
+        run: |
+          set +e
+          BODY=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 "$HEALTH_URL")
+          CURL_RC=$?
+          set -e
+          REASON=""
+          if [ "$CURL_RC" -ne 0 ]; then
+            REASON="Worker unreachable (curl exit ${CURL_RC})"
+          elif ! echo "$BODY" | jq -e '.ok == true' >/dev/null 2>&1; then
+            REASON="Worker responded but not healthy: $(echo "$BODY" | head -c 300)"
+          else
+            TICK=$(echo "$BODY" | jq -r '.lastCronTickAt // empty')
+            if [ -z "$TICK" ]; then
+              REASON="No cron heartbeat recorded yet (lastCronTickAt is null)"
+            else
+              AGE_MIN=$(( ( $(date +%s) - $(date -d "$TICK" +%s) ) / 60 ))
+              if [ "$AGE_MIN" -gt "$MAX_CRON_AGE_MINUTES" ]; then
+                REASON="Cron heartbeat is ${AGE_MIN} minutes old (limit ${MAX_CRON_AGE_MINUTES}) — the cron may have stopped firing"
+              fi
+            fi
+          fi
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          if [ -n "$REASON" ]; then
+            echo "::error::$REASON"
+            exit 1
+          fi
+          echo "Healthy. gitSha=$(echo "$BODY" | jq -r .gitSha) lastCronTickAt=$(echo "$BODY" | jq -r .lastCronTickAt)"
+
+      - name: Alert on first failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
+          REASON: ${{ steps.probe.outputs.reason }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Issue #$EXISTING already open — still failing, staying quiet."
+            exit 0
+          fi
+          gh issue create --repo "${{ github.repository }}" --title "$ISSUE_TITLE" \
+            --body "The live Worker health check failed: ${REASON:-unknown reason}. This issue auto-closes when the check recovers."
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
+          jq -n --arg content "🚨 **Worker health check failed** — ${REASON:-unknown reason}. Checks run every 20 minutes; you'll get a recovery log when it comes back." '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null
+
+      - name: Close issue on recovery
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -z "$EXISTING" ]; then exit 0; fi
+          gh issue close "$EXISTING" --repo "${{ github.repository }}" --comment "Health check recovered."
+          CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
+          jq -n --arg content "✅ **Worker health check recovered** — /health is responding and the cron heartbeat is fresh." '{content: $content}' \
+            | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
+                -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null

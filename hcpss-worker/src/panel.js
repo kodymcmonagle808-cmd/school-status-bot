@@ -15,6 +15,7 @@ import { PRIMARY_DISTRICT_CHOICES } from './districts.js';
 import { getStatusHistory } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { listCalendarEvents } from './calendar.js';
+import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -192,9 +193,10 @@ export function formatWorkerUpdates(list) {
   }
   return entries.map(e => {
     const when = Number(e.ts) > 0 ? `<t:${Math.floor(Number(e.ts) / 1000)}:f>` : 'unknown time';
+    const tag = e.rollback ? ' ↩️ rollback' : '';
     return e.ok
-      ? `✅ \`${e.sha}\` — deployed ${when}`
-      : `❌ \`${e.sha}\` — **failed** ${when} (previous version still running)`;
+      ? `✅ \`${e.sha}\` — deployed ${when}${tag}`
+      : `❌ \`${e.sha}\` — **failed** ${when}${tag} (previous version still running)`;
   }).join('\n');
 }
 
@@ -261,6 +263,8 @@ export async function buildWorkerUpdatesPayload(env) {
     lastCheckLatencyMs = Number(await env.STATUS_KV.get('last_check_latency')) || 0;
   } catch {}
 
+  const watcherErrors = await getWatcherErrors(env);
+
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
     color: 0x9B59B6,
@@ -274,7 +278,9 @@ export async function buildWorkerUpdatesPayload(env) {
       consecutiveFailures,
       lastCheckTime,
       lastCheckLatencyMs
-    }),
+    }).concat([
+      { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false }
+    ]),
     timestamp: new Date().toISOString(),
     footer: { text: 'School Status · Worker Updates  •  visible to the bot owner only' }
   };

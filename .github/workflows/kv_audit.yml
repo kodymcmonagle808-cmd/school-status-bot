@@ -1,0 +1,60 @@
+name: KV orphan audit
+
+# Monthly report-only sweep for per-guild KV keys whose guild is no longer in
+# guild_index — evidence that a purge missed a key (usually a key name that
+# was never added to guildKeys() in cleanup.js). Never deletes anything; on
+# findings it opens (or comments on) an issue titled "KV orphan audit found
+# leftovers".
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 1 * *' # 1st of each month, 4/5 AM ET
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Run audit
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+        run: |
+          cd hcpss-worker
+          node scripts/kv_audit.mjs 2>&1 | tee audit.log
+
+      - name: Open or update findings issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="KV orphan audit found leftovers"
+          BODY_FILE=body.md
+          {
+            echo "The monthly KV orphan audit found per-guild keys for guilds no longer in guild_index (report-only — nothing was deleted). Output:"
+            echo
+            echo '```'
+            tail -60 hcpss-worker/audit.log 2>/dev/null || echo '(no log captured)'
+            echo '```'
+            echo
+            echo "If a base key name is missing from guildKeys() in cleanup.js, add it there, then purge the leftovers manually."
+          } > "$BODY_FILE"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body-file "$BODY_FILE"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY_FILE"
+          fi

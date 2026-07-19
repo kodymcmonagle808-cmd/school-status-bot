@@ -18,6 +18,7 @@ import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
+import { recordWatcherError } from './watcherhealth.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -68,6 +69,7 @@ export default {
         let guilds = null;
         let scraperFailureStreak = null;
         let lastStatusChangeAt = null;
+        let lastCronTickAt = null;
         if (env.STATUS_KV) {
           try {
             const rawIndex = await env.STATUS_KV.get('guild_index');
@@ -83,6 +85,8 @@ export default {
                 lastStatusChangeAt = new Date(hist[0].timestamp).toISOString();
               }
             }
+            const rawTick = Number(await env.STATUS_KV.get('last_cron_tick') || 0);
+            if (rawTick > 0) lastCronTickAt = new Date(rawTick).toISOString();
           } catch {}
         }
         return jsonResponse({
@@ -93,7 +97,8 @@ export default {
           manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN,
           guilds,
           scraperFailureStreak,
-          lastStatusChangeAt
+          lastStatusChangeAt,
+          lastCronTickAt
         });
       }
       return new Response('HCPSS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
@@ -129,66 +134,94 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
+      // Heartbeat for the external uptime monitor: proves the cron itself is
+      // firing (a dead cron is otherwise invisible). Reads every tick but
+      // writes only when the stored tick is ≥14 minutes old, keeping ~100
+      // writes/day within the KV free-plan budget; the monitor alerts when
+      // the tick is older than ~40 minutes.
+      try {
+        if (env.STATUS_KV) {
+          const now = Date.now();
+          const last = Number(await env.STATUS_KV.get('last_cron_tick') || 0);
+          if (now - last >= 14 * 60 * 1000) {
+            await env.STATUS_KV.put('last_cron_tick', String(now));
+          }
+        }
+      } catch (e) {
+        console.error('Heartbeat write failed', e);
+      }
       try {
         await doCheckAndPost(env, { source: 'scheduled' });
       } catch (e) {
         console.error('Scheduled run failed', e);
+        await recordWatcherError(env, 'check', e);
       }
       try {
         await maybeSendMorningDigests(env);
       } catch (e) {
         console.error('Morning digest run failed', e);
+        await recordWatcherError(env, 'digest', e);
       }
       try {
         await maybeSendHeadsUp(env);
       } catch (e) {
         console.error('Heads-up run failed', e);
+        await recordWatcherError(env, 'headsup', e);
       }
       try {
         await maybeSendBusAlerts(env);
       } catch (e) {
         console.error('Bus alert run failed', e);
+        await recordWatcherError(env, 'busalerts', e);
       }
       try {
         await checkNewMembersAndDM(env);
       } catch (e) {
         console.error('Greeter run failed', e);
+        await recordWatcherError(env, 'greeter', e);
       }
       try {
         await maybeRefreshStormEmbeds(env);
       } catch (e) {
         console.error('Storm refresh run failed', e);
+        await recordWatcherError(env, 'stormrefresh', e);
       }
       try {
         await maybeUpdateDecisionWatch(env);
       } catch (e) {
         console.error('Decision watch run failed', e);
+        await recordWatcherError(env, 'decisionwatch', e);
       }
       try {
         await maybeTrackOutlookAccuracy(env);
       } catch (e) {
         console.error('Outlook accuracy run failed', e);
+        await recordWatcherError(env, 'outlookaccuracy', e);
       }
       // After the accuracy grader, so the noon recap reads a graded prediction.
       try {
         await maybeSendStormRecap(env);
       } catch (e) {
         console.error('Storm recap run failed', e);
+        await recordWatcherError(env, 'stormrecap', e);
       }
       try {
         await maybeSendAqiAlerts(env);
       } catch (e) {
         console.error('AQI alert run failed', e);
+        await recordWatcherError(env, 'aqi', e);
       }
       try {
         await maybeSendYearRecap(env);
       } catch (e) {
         console.error('Year recap run failed', e);
+        await recordWatcherError(env, 'recap', e);
       }
       try {
         await maybeCleanupDepartedGuilds(env);
       } catch (e) {
         console.error('Guild cleanup run failed', e);
+        await recordWatcherError(env, 'cleanup', e);
       }
     })());
   }
