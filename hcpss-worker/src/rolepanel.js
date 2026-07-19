@@ -27,8 +27,12 @@ export function buildMyPingsPanel(cfg, member) {
   const options = roles.map(({ key, label, roleId }) => ({
     label,
     value: key,
-    description: `Ping role for ${label}`,
-    emoji: { name: '🔔' },
+    // Normal Operations pings on every scheduled post — warn in the option
+    // itself since a multi-select submit has no confirmation step.
+    description: key === 'normal_operations'
+      ? '⚠️ Everyday status — expect pings on every scheduled post'
+      : `Ping role for ${label}`,
+    emoji: { name: key === 'normal_operations' ? '⚠️' : '🔔' },
     default: memberRoles.includes(roleId)
   }));
 

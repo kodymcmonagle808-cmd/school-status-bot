@@ -130,6 +130,38 @@ test('role removal asks for confirmation when the member has the role', async ()
   assert.match(kept.data.content, /unchanged/);
 });
 
+test('picking the Normal Operations ping role warns about daily pings first', async () => {
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({ status_ping_roles: { normal_operations: 'r2' } }));
+
+  const warn = await json(handleInteraction(
+    component('role_toggle_select', { member: member({ roles: [] }), values: ['normal_operations'] }), env, ctx));
+  assert.match(warn.data.content, /every day/i);
+  assert.equal(warn.data.components[0].components[0].custom_id, 'role_add_confirm:normal_operations');
+
+  const cancelled = await json(handleInteraction(component('role_add_cancel'), env, ctx));
+  assert.equal(cancelled.type, 7);
+  assert.match(cancelled.data.content, /No role added/);
+});
+
+test('other status ping roles still add without a confirmation step', async (t) => {
+  const putUrls = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
+    if ((opts.method || 'GET') === 'PUT') putUrls.push(String(url));
+    return new Response(null, { status: 204 });
+  });
+
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({ status_ping_roles: { schools_closed: 'r1' } }));
+
+  const out = await json(handleInteraction(
+    component('role_toggle_select', { member: member({ roles: [] }), values: ['schools_closed'] }), env, ctx));
+  assert.match(out.data.content, /Added/);
+  assert.equal(out.data.components, undefined);
+  assert.equal(putUrls.length, 1);
+  assert.match(putUrls[0], /members\/user1\/roles\/r1$/);
+});
+
 test('my notifications panel pre-checks the roles the member has', async () => {
   const env = makeEnv();
   env.STATUS_KV.store.set('config:g1', JSON.stringify({
