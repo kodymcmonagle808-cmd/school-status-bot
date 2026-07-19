@@ -28,7 +28,6 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 
 - `hcpss-worker/` — the Cloudflare Worker (source, tests, deploy script).
 - `.github/workflows/deploy_worker.yml` — runs the worker tests and deploys on push to `main`.
-- `.github/workflows/current_status.yml` — manual workflow that triggers an on-demand status post via the Worker (requires the `MANUAL_TRIGGER_TOKEN` secret).
 
 ## Tests
 
