@@ -40,6 +40,10 @@ export default [
     rules: {
       // The codebase deliberately uses `catch {}` for degrade-to-null paths.
       'no-empty': ['error', { allowEmptyCatch: true }],
+      // Same degrade pattern: `let x = fallback; try { x = ... } catch {...}`.
+      // The initializer is the safety net even when every current read path
+      // reassigns first, so this rule fights the house style.
+      'no-useless-assignment': 'off',
       'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }]
     }
   }
