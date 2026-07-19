@@ -322,15 +322,26 @@ payload=$(jq -n '[
 global_base="https://discord.com/api/v10/applications/${discord_application_id}"
 
 echo "Registering global slash commands via bulk overwrite..."
-resp=$(curl -sS -X PUT "${global_base}/commands" \
-  -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data "$payload")
-
-if ! echo "$resp" | jq -e 'type == "array"' >/dev/null; then
-  echo "Failed to register global commands: $resp" >&2
-  exit 1
-fi
+# Back-to-back deploys (e.g. merging several PRs) can trip Discord's rate
+# limit on this endpoint; honor retry_after instead of failing the deploy.
+for attempt in 1 2 3; do
+  resp=$(curl -sS -X PUT "${global_base}/commands" \
+    -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "$payload")
+  if echo "$resp" | jq -e 'type == "array"' >/dev/null; then
+    break
+  fi
+  retry_after=$(echo "$resp" | jq -r '.retry_after // empty' 2>/dev/null)
+  if [ -n "$retry_after" ] && [ "$attempt" -lt 3 ]; then
+    wait_s=$(awk -v r="$retry_after" 'BEGIN { printf "%d", r + 2 }')
+    echo "Rate limited registering commands; retrying in ${wait_s}s (attempt ${attempt}/3)..."
+    sleep "$wait_s"
+  else
+    echo "Failed to register global commands: $resp" >&2
+    exit 1
+  fi
+done
 echo "Registered global slash commands successfully."
 
 if [ -n "${DISCORD_GUILD_ID:-}" ]; then
