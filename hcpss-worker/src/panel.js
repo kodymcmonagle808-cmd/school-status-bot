@@ -198,6 +198,38 @@ export function formatWorkerUpdates(list) {
   }).join('\n');
 }
 
+// Owner-only operational stats shown under the deploy list. Pure so tests can
+// exercise the drift warning and rate math without KV.
+export function buildOwnerStatsFields({ runningSha, updates, guildCount, scrapesTotal, scrapesFailed, consecutiveFailures, lastCheckTime, lastCheckLatencyMs }) {
+  const entries = Array.isArray(updates) ? updates.filter(e => e && e.sha) : [];
+  const okCount = entries.filter(e => e.ok).length;
+  const shortRunning = runningSha ? String(runningSha).slice(0, 7) : '';
+
+  let versionValue = shortRunning ? `\`${shortRunning}\`` : '(unknown)';
+  const latestOk = entries.find(e => e.ok);
+  if (shortRunning && latestOk && latestOk.sha !== shortRunning) {
+    versionValue += `\n⚠️ latest deploy is \`${latestOk.sha}\``;
+  }
+
+  const total = Number(scrapesTotal) || 0;
+  const failed = Number(scrapesFailed) || 0;
+  const rate = total > 0 ? ((total - failed) / total * 100).toFixed(1) : '100.0';
+
+  const checkValue = Number(lastCheckTime) > 0
+    ? `<t:${Math.floor(Number(lastCheckTime) / 1000)}:R>` +
+      (Number(lastCheckLatencyMs) > 0 ? ` · ${Math.round(Number(lastCheckLatencyMs))} ms` : '')
+    : '(none yet)';
+
+  return [
+    { name: '🏷️ Running version', value: versionValue, inline: true },
+    { name: '🚀 Deploys recorded', value: entries.length ? `${okCount}/${entries.length} succeeded` : '(none yet)', inline: true },
+    { name: '🌐 Servers', value: String(Number(guildCount) || 0), inline: true },
+    { name: '🔍 Scrapes (all-time)', value: total ? `${total} total · ${failed} failed · ${rate}% ok` : '(none yet)', inline: true },
+    { name: '📉 Consecutive scrape failures', value: String(Number(consecutiveFailures) || 0), inline: true },
+    { name: '⏱️ Last check', value: checkValue, inline: true }
+  ];
+}
+
 export async function buildWorkerUpdatesPayload(env) {
   let updates = [];
   try {
@@ -205,10 +237,44 @@ export async function buildWorkerUpdatesPayload(env) {
     if (raw) updates = JSON.parse(raw);
   } catch {}
 
+  // Every read degrades independently — this page must render even if a key
+  // is missing or corrupt.
+  let guildCount = 0;
+  try {
+    const rawIndex = await env.STATUS_KV.get('guild_index');
+    const index = rawIndex ? JSON.parse(rawIndex) : [];
+    if (Array.isArray(index)) guildCount = index.length;
+  } catch {}
+
+  let stats = {};
+  try {
+    const rawStats = await env.STATUS_KV.get('status_stats');
+    if (rawStats) stats = JSON.parse(rawStats) || {};
+  } catch {}
+
+  let consecutiveFailures = 0;
+  let lastCheckTime = 0;
+  let lastCheckLatencyMs = 0;
+  try {
+    consecutiveFailures = Number(await env.STATUS_KV.get('scraper_failures_count')) || 0;
+    lastCheckTime = Number(await env.STATUS_KV.get('last_check_time')) || 0;
+    lastCheckLatencyMs = Number(await env.STATUS_KV.get('last_check_latency')) || 0;
+  } catch {}
+
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
     color: 0x9B59B6,
     description: `### Recent deploys to \`main\`\n${formatWorkerUpdates(updates)}`,
+    fields: buildOwnerStatsFields({
+      runningSha: env.GIT_SHA || '',
+      updates,
+      guildCount,
+      scrapesTotal: stats.scrapes_total,
+      scrapesFailed: stats.scrapes_failed,
+      consecutiveFailures,
+      lastCheckTime,
+      lastCheckLatencyMs
+    }),
     timestamp: new Date().toISOString(),
     footer: { text: 'School Status · Worker Updates  •  visible to the bot owner only' }
   };

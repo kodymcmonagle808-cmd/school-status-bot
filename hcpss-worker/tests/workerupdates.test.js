@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatWorkerUpdates } from '../src/panel.js';
+import { formatWorkerUpdates, buildOwnerStatsFields } from '../src/panel.js';
 
 test('formatWorkerUpdates handles an empty or missing list', () => {
   assert.match(formatWorkerUpdates([]), /No worker updates recorded yet/);
@@ -32,4 +32,54 @@ test('formatWorkerUpdates skips malformed entries and caps at 15', () => {
 test('formatWorkerUpdates tolerates a missing timestamp', () => {
   const out = formatWorkerUpdates([{ sha: 'abc1234', ok: true }]);
   assert.match(out, /unknown time/);
+});
+
+function fieldValue(fields, name) {
+  const f = fields.find(x => x.name.includes(name));
+  assert.ok(f, `field ${name} present`);
+  return f.value;
+}
+
+test('buildOwnerStatsFields reports version, deploy rate, and scrape stats', () => {
+  const fields = buildOwnerStatsFields({
+    runningSha: 'abc1234def5678',
+    updates: [
+      { sha: 'abc1234', ok: true, ts: 1 },
+      { sha: 'ffff000', ok: false, ts: 2 }
+    ],
+    guildCount: 3,
+    scrapesTotal: 1000,
+    scrapesFailed: 5,
+    consecutiveFailures: 0,
+    lastCheckTime: 1752940800000,
+    lastCheckLatencyMs: 843
+  });
+  assert.equal(fieldValue(fields, 'Running version'), '`abc1234`');
+  assert.equal(fieldValue(fields, 'Deploys recorded'), '1/2 succeeded');
+  assert.equal(fieldValue(fields, 'Servers'), '3');
+  assert.equal(fieldValue(fields, 'Scrapes'), '1000 total · 5 failed · 99.5% ok');
+  assert.equal(fieldValue(fields, 'Last check'), '<t:1752940800:R> · 843 ms');
+});
+
+test('buildOwnerStatsFields warns when the running sha is behind the latest deploy', () => {
+  const fields = buildOwnerStatsFields({
+    runningSha: 'aaaaaaa1111',
+    updates: [
+      { sha: 'bbbbbbb', ok: true, ts: 3 },
+      { sha: 'aaaaaaa', ok: true, ts: 2 }
+    ],
+    guildCount: 0
+  });
+  const version = fieldValue(fields, 'Running version');
+  assert.match(version, /`aaaaaaa`/);
+  assert.match(version, /⚠️ latest deploy is `bbbbbbb`/);
+});
+
+test('buildOwnerStatsFields degrades cleanly with no data at all', () => {
+  const fields = buildOwnerStatsFields({});
+  assert.equal(fields.length, 6);
+  assert.equal(fieldValue(fields, 'Running version'), '(unknown)');
+  assert.equal(fieldValue(fields, 'Deploys recorded'), '(none yet)');
+  assert.equal(fieldValue(fields, 'Scrapes'), '(none yet)');
+  assert.equal(fieldValue(fields, 'Last check'), '(none yet)');
 });
