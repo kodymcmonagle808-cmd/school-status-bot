@@ -58,7 +58,7 @@ jobs:
           rm kv_backup.json
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kv-backup-${{ github.run_id }}
           path: kv_backup.json.enc
