@@ -1,11 +1,11 @@
 // The core check-and-post loop plus scraper health tracking (consecutive
 // failure alerts and recovery notices).
 
-import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, formatStatusDate, stormTickSlot, middayTickSlot } from './timeutil.js';
+import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, formatStatusDate, stormTickSlot, middayTickSlot, conversionTickSlot } from './timeutil.js';
 import { getStatusCards } from './scraper.js';
 import { getActiveWeatherAlerts, hasStormAlert } from './weather.js';
 import { getDistrictStatuses, getDistrictMeta, DISTRICT_STATUS_TO_KEY, DISTRICT_STATUS_LABELS } from './districts.js';
-import { trackStatusHistory } from './history.js';
+import { trackStatusHistory, getStatusHistory } from './history.js';
 import { notifySubscribers } from './subscriptions.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
@@ -13,6 +13,17 @@ import { postMessageToChannel, discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
+
+// True when the history records a 2-hour-delay announcement made today —
+// the signal that keeps conversion-watch checks running past the morning
+// window (delays regularly get upgraded to closures by ~9 AM). Pure;
+// exported for tests.
+export function delayAnnouncedToday(history, todayYmd) {
+  return (Array.isArray(history) ? history : []).some(h =>
+    h && h.status_key === 'schools_open_2_hours_late' &&
+    formatYmdNY(new Date(h.timestamp)) === todayYmd
+  );
+}
 
 // After this many consecutive failed posts to a guild's alert channel, warn
 // the log channel and DM the server owner — the most likely causes (deleted
@@ -227,29 +238,60 @@ export async function doCheckAndPost(env, options = {}) {
     // decision window (closings/delays) and the 10 AM-2 PM ET midday window
     // (early dismissals). Storm checks only post (and ping) if the status changed.
     if (activeGuildIds.length === 0) {
-      const stormSlot = stormTickSlot(currentEtStr) || middayTickSlot(currentEtStr);
+      let stormSlot = stormTickSlot(currentEtStr) || middayTickSlot(currentEtStr);
+      let isConversionWatch = false;
+
+      // Conversion watch: with a 2-hour delay announced this morning, keep
+      // checking 7:45-9:30 for the delay-to-closure upgrade. The delay itself
+      // is the signal — no storm alert required (it may have expired).
       if (!stormSlot) {
-        return { ok: true, skipped: true, message: 'No guilds scheduled for this time.' };
-      }
-      // An alert in the default (Howard) zone or in any guild's primary
-      // district's zone opens the window — a guild following Frederick still
-      // gets storm checks when only Frederick is under a warning.
-      let stormZoneAlert = hasStormAlert(await getActiveWeatherAlerts(env));
-      if (!stormZoneAlert) {
-        const zones = new Set();
-        for (const gid of targetGuildIds) {
-          const meta = getDistrictMeta((await getCfg(gid)).primary_district);
-          if (meta && meta.nwsZone) zones.add(meta.nwsZone);
-        }
-        for (const zone of zones) {
-          if (hasStormAlert(await getActiveWeatherAlerts(env, zone))) {
-            stormZoneAlert = true;
-            break;
+        const convSlot = conversionTickSlot(currentEtStr);
+        if (convSlot) {
+          let delayed = delayAnnouncedToday(await getStatusHistory(env), todayYmd);
+          if (!delayed) {
+            const primaries = new Set();
+            for (const gid of targetGuildIds) {
+              const p = (await getCfg(gid)).primary_district;
+              if (p && p !== 'hcpss') primaries.add(p);
+            }
+            for (const id of primaries) {
+              if (delayAnnouncedToday(await getStatusHistory(env, id), todayYmd)) {
+                delayed = true;
+                break;
+              }
+            }
+          }
+          if (delayed) {
+            stormSlot = convSlot;
+            isConversionWatch = true;
           }
         }
       }
-      if (!stormZoneAlert) {
-        return { ok: true, skipped: true, message: 'Storm window, but no storm alert active.' };
+
+      if (!stormSlot) {
+        return { ok: true, skipped: true, message: 'No guilds scheduled for this time.' };
+      }
+      if (!isConversionWatch) {
+        // An alert in the default (Howard) zone or in any guild's primary
+        // district's zone opens the window — a guild following Frederick still
+        // gets storm checks when only Frederick is under a warning.
+        let stormZoneAlert = hasStormAlert(await getActiveWeatherAlerts(env));
+        if (!stormZoneAlert) {
+          const zones = new Set();
+          for (const gid of targetGuildIds) {
+            const meta = getDistrictMeta((await getCfg(gid)).primary_district);
+            if (meta && meta.nwsZone) zones.add(meta.nwsZone);
+          }
+          for (const zone of zones) {
+            if (hasStormAlert(await getActiveWeatherAlerts(env, zone))) {
+              stormZoneAlert = true;
+              break;
+            }
+          }
+        }
+        if (!stormZoneAlert) {
+          return { ok: true, skipped: true, message: 'Storm window, but no storm alert active.' };
+        }
       }
       const slotVal = `${todayYmd} ${stormSlot}`;
       if (await env.STATUS_KV.get('last_storm_slot') === slotVal) {

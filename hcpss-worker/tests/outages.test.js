@@ -1,6 +1,68 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeOutageFeed, getCountyOutage, outagePercent, formatOutageLine, getBgeOutages } from '../src/outages.js';
+import {
+  summarizeOutageFeed,
+  getCountyOutage,
+  outagePercent,
+  formatOutageLine,
+  getBgeOutages,
+  summarizeKubraReport,
+  combineCountyOutages,
+  formatCombinedOutageLine,
+  COUNTY_UTILITIES
+} from '../src/outages.js';
+
+const KUBRA_REPORT = {
+  version: 'V2',
+  file_title: 'report_district.json',
+  file_data: {
+    areas: [
+      { key: 'district', name: 'MG', cust_a: { val: 1200 }, cust_s: 336070 },
+      { key: 'district', name: 'PG', cust_a: { val: 75 }, cust_s: 252651 },
+      { key: 'district', name: 'DC', cust_a: { val: 260 }, cust_s: 321452 },
+      { key: 'district', name: 'UNKNOWN', cust_a: { val: 5 }, cust_s: 10 }
+    ]
+  }
+};
+
+test('summarizeKubraReport maps area names and skips unmapped ones', () => {
+  const summary = summarizeKubraReport(KUBRA_REPORT, { MG: 'Montgomery', PG: "Prince George's" });
+  assert.deepEqual(summary.counties, {
+    Montgomery: { out: 1200, served: 336070 },
+    "Prince George's": { out: 75, served: 252651 }
+  });
+  assert.equal(summarizeKubraReport('not json', {}), null);
+  assert.equal(summarizeKubraReport({ file_data: {} }, {}), null);
+});
+
+test('combineCountyOutages sums overlapping utility territories', () => {
+  const bge = { counties: { Carroll: { out: 100, served: 20000 } } };
+  const pe = { counties: { Carroll: { out: 50, served: 16280 }, Frederick: { out: 9, served: 119965 } } };
+  const combined = combineCountyOutages([
+    { label: 'BGE', summary: bge },
+    { label: 'Potomac Edison', summary: pe }
+  ], 'Carroll');
+  assert.deepEqual(combined, { out: 150, served: 36280, providers: ['BGE', 'Potomac Edison'] });
+
+  const single = combineCountyOutages([{ label: 'Potomac Edison', summary: pe }], 'Frederick');
+  assert.deepEqual(single.providers, ['Potomac Edison']);
+  assert.equal(combineCountyOutages([{ label: 'BGE', summary: bge }], 'Frederick'), null);
+});
+
+test('formatCombinedOutageLine names the utility only when there is one', () => {
+  const single = formatCombinedOutageLine({ out: 9, served: 119965, providers: ['Potomac Edison'] }, 'Frederick');
+  assert.match(single, /Potomac Edison customers/);
+  const merged = formatCombinedOutageLine({ out: 150, served: 36280, providers: ['BGE', 'Potomac Edison'] }, 'Carroll');
+  assert.doesNotMatch(merged, /BGE customers/);
+  assert.match(merged, /\*\*150\*\* of 36,280 customers/);
+  assert.equal(formatCombinedOutageLine(null, 'Carroll'), '');
+});
+
+test('every followable county has a utility mapping', () => {
+  for (const county of ['Howard', 'Anne Arundel', 'Baltimore', 'Carroll', 'Frederick', 'Montgomery', "Prince George's"]) {
+    assert.ok(Array.isArray(COUNTY_UTILITIES[county]) && COUNTY_UTILITIES[county].length, `missing utilities for ${county}`);
+  }
+});
 
 const FEED = {
   stormmode: 'N',
@@ -69,7 +131,10 @@ function seedOutageCache(store, summary) {
   store.set('bge_outage_cache', JSON.stringify({ at: Date.now(), summary }));
 }
 
-test('runOutagesCommand pins the guild county first and totals the rest', async () => {
+test('runOutagesCommand pins the guild county first and totals the rest', async (t) => {
+  // The Kubra utility feeds are not seeded — block the live fetch so they
+  // degrade to unavailable and only the cached BGE numbers count.
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('offline'); });
   const kv = makeKv();
   seedOutageCache(kv.store, summarizeOutageFeed(FEED));
   const payload = await runOutagesCommand({ STATUS_KV: kv }, 'g1');
@@ -85,7 +150,8 @@ test('runOutagesCommand pins the guild county first and totals the rest', async 
   assert.equal(payload.flags, 64);
 });
 
-test('runOutagesCommand follows the guild primary district county', async () => {
+test('runOutagesCommand follows the guild primary district county', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('offline'); });
   const kv = makeKv();
   kv.store.set('config:g2', JSON.stringify({ primary_district: 'aacps' }));
   seedOutageCache(kv.store, summarizeOutageFeed(FEED));
@@ -93,7 +159,8 @@ test('runOutagesCommand follows the guild primary district county', async () => 
   assert.match(payload.embeds[0].description.split('\n')[0], /📍.*Anne Arundel/);
 });
 
-test('runOutagesCommand notes BGE storm mode', async () => {
+test('runOutagesCommand notes BGE storm mode', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('offline'); });
   const kv = makeKv();
   seedOutageCache(kv.store, summarizeOutageFeed({ ...FEED, stormmode: 'Y' }));
   const payload = await runOutagesCommand({ STATUS_KV: kv }, 'g1');

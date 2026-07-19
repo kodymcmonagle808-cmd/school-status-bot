@@ -70,6 +70,8 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_outages !== 'boolean') next.toggle_outages = true;
   if (typeof next.toggle_roads !== 'boolean') next.toggle_roads = true;
   if (typeof next.toggle_year_recap !== 'boolean') next.toggle_year_recap = true;
+  if (typeof next.toggle_aqi_alerts !== 'boolean') next.toggle_aqi_alerts = true;
+  if (typeof next.toggle_storm_recap !== 'boolean') next.toggle_storm_recap = true;
   if (!next.primary_district) next.primary_district = 'hcpss';
   return next;
 }

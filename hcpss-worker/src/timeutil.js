@@ -142,6 +142,17 @@ export function middayTickSlot(etStr) {
   return tickSlotInWindow(etStr, MIDDAY_WINDOW_START_MIN, MIDDAY_WINDOW_END_MIN);
 }
 
+// Conversion watch: districts regularly announce a 2-hour delay at 5 AM and
+// upgrade it to a full closure as conditions worsen. The morning storm window
+// ends at 7:30, so when a delay is on the books the 15-minute checks continue
+// through 9:30 to catch the upgrade.
+export const CONVERSION_WINDOW_START_MIN = 7 * 60 + 45;
+export const CONVERSION_WINDOW_END_MIN = 9 * 60 + 30;
+
+export function conversionTickSlot(etStr) {
+  return tickSlotInWindow(etStr, CONVERSION_WINDOW_START_MIN, CONVERSION_WINDOW_END_MIN);
+}
+
 // Evening watch: the heads-up fires at 7 PM, but the outlook keeps moving as
 // districts announce through the evening — these ticks let an escalation post
 // go out any quarter hour from 7:00 to 11:45 PM ET.

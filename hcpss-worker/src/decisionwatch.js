@@ -34,8 +34,29 @@ export function buildDecisionWatchEntries(districts, hcpssEntry, primaryId = 'hc
   return all;
 }
 
-export function buildDecisionWatchDescription(entries, primaryId = 'hcpss') {
-  const lines = formatDistrictLines(entries, { includeDetail: true }).split('\n');
+// Records when each district's announcement was first seen this morning
+// ("detected", not "announced" — the feeds are polled every 15 minutes).
+// Pure: returns a new { id: ms } map; a district's first non-quiet status
+// claims its time and keeps it even if the status is upgraded later.
+export function updateAnnouncementTimes(times, entries, nowMs) {
+  const next = { ...(times || {}) };
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || !e.id || next[e.id]) continue;
+    if (e.status && e.status !== 'none' && e.status !== 'unavailable') {
+      next[e.id] = nowMs;
+    }
+  }
+  return next;
+}
+
+export function buildDecisionWatchDescription(entries, primaryId = 'hcpss', times = {}) {
+  const lines = (Array.isArray(entries) ? entries : []).map(e => {
+    const rendered = formatDistrictLines([e], { includeDetail: true }).split('\n');
+    if (times && times[e.id]) {
+      rendered[0] += ` — detected <t:${Math.floor(times[e.id] / 1000)}:t>`;
+    }
+    return rendered.join('\n');
+  });
   // Pin marker on the guild's own district — always the first line when the
   // entries came from buildDecisionWatchEntries.
   if (lines.length && entries[0] && entries[0].id === primaryId) {
@@ -110,6 +131,24 @@ export async function maybeUpdateDecisionWatch(env) {
     }
   } catch {}
 
+  // Track first-detection times for every district's announcement, and keep a
+  // same-day snapshot of the whole board — the noon storm recap reads it.
+  let times = {};
+  try {
+    const raw = await env.STATUS_KV.get('decision_watch_times');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.ymd === todayYmd && parsed.times) times = parsed.times;
+    }
+  } catch {}
+  times = updateAnnouncementTimes(times, buildDecisionWatchEntries(districts, hcpssEntry), now.getTime());
+  await env.STATUS_KV.put('decision_watch_times', JSON.stringify({ ymd: todayYmd, times })).catch(() => {});
+  await env.STATUS_KV.put('decision_watch_data', JSON.stringify({
+    ymd: todayYmd,
+    districts,
+    hcpss: hcpssEntry
+  })).catch(() => {});
+
   let updated = 0;
   const token = env.DISCORD_BOT_TOKEN;
   for (const { gid, cfg } of wanting) {
@@ -125,7 +164,7 @@ export async function maybeUpdateDecisionWatch(env) {
         description:
           `Live board of this morning's closing and delay announcements. ` +
           `Updates every 15 minutes until 7:30 AM ET.\n\n` +
-          buildDecisionWatchDescription(entries, primaryId),
+          buildDecisionWatchDescription(entries, primaryId, times),
         timestamp: now.toISOString(),
         footer: { text: `${cfg.alert_embed_footer || 'School Status'} · Decision Watch` }
       };

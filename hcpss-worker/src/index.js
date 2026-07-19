@@ -13,6 +13,8 @@ import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
 import { maybeUpdateDecisionWatch } from './decisionwatch.js';
+import { maybeSendAqiAlerts } from './aqi.js';
+import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 
@@ -155,6 +157,17 @@ export default {
         await maybeTrackOutlookAccuracy(env);
       } catch (e) {
         console.error('Outlook accuracy run failed', e);
+      }
+      // After the accuracy grader, so the noon recap reads a graded prediction.
+      try {
+        await maybeSendStormRecap(env);
+      } catch (e) {
+        console.error('Storm recap run failed', e);
+      }
+      try {
+        await maybeSendAqiAlerts(env);
+      } catch (e) {
+        console.error('AQI alert run failed', e);
       }
       try {
         await maybeSendYearRecap(env);

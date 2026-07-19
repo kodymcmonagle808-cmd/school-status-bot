@@ -1,7 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { doCheckAndPost } from '../src/check.js';
+import { doCheckAndPost, delayAnnouncedToday } from '../src/check.js';
 import { getEasternTimeStr } from '../src/timeutil.js';
+
+test('delayAnnouncedToday only matches a same-day 2-hour-delay entry', () => {
+  const today = '2027-01-20';
+  const todayMs = Date.parse('2027-01-20T10:00:00Z'); // 5 AM ET Jan 20
+  assert.equal(delayAnnouncedToday([{ timestamp: todayMs, status_key: 'schools_open_2_hours_late' }], today), true);
+  assert.equal(delayAnnouncedToday([{ timestamp: todayMs, status_key: 'schools_closed' }], today), false);
+  const yesterdayMs = Date.parse('2027-01-19T10:00:00Z');
+  assert.equal(delayAnnouncedToday([{ timestamp: yesterdayMs, status_key: 'schools_open_2_hours_late' }], today), false);
+  assert.equal(delayAnnouncedToday([], today), false);
+  assert.equal(delayAnnouncedToday(null, today), false);
+});
 
 function makeKv(store = new Map()) {
   return {

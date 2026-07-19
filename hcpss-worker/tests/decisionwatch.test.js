@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDecisionWatchEntries, buildDecisionWatchDescription } from '../src/decisionwatch.js';
+import { buildDecisionWatchEntries, buildDecisionWatchDescription, updateAnnouncementTimes } from '../src/decisionwatch.js';
 
 const HCPSS = { id: 'hcpss', name: 'Howard Co. (HCPSS)', status: 'none', detail: '' };
 const DISTRICTS = [
@@ -35,6 +35,31 @@ test('buildDecisionWatchDescription pins the primary line with a marker', () => 
   assert.match(lines[0], /Howard Co\./);
   // Details render as quote lines for non-primary districts.
   assert.match(desc, /> All schools closed/);
+});
+
+test('updateAnnouncementTimes records first detection and never overwrites', () => {
+  const t1 = updateAnnouncementTimes({}, [
+    { id: 'aacps', status: 'closed' },
+    { id: 'bcps', status: 'none' },
+    { id: 'ccps', status: 'unavailable' }
+  ], 1000);
+  assert.deepEqual(t1, { aacps: 1000 });
+
+  // Later ticks add newcomers but keep the original detection time.
+  const t2 = updateAnnouncementTimes(t1, [
+    { id: 'aacps', status: 'delayed' },
+    { id: 'bcps', status: 'delayed' }
+  ], 2000);
+  assert.deepEqual(t2, { aacps: 1000, bcps: 2000 });
+});
+
+test('buildDecisionWatchDescription appends detection times on the status line', () => {
+  const entries = buildDecisionWatchEntries(DISTRICTS, HCPSS, 'hcpss');
+  const desc = buildDecisionWatchDescription(entries, 'hcpss', { aacps: 1700000000000 });
+  const aacpsLine = desc.split('\n').find(l => l.includes('Anne Arundel'));
+  assert.match(aacpsLine, /detected <t:1700000000:t>/);
+  // Detail quotes stay on their own lines below the status line.
+  assert.match(desc, /\n> All schools closed/);
 });
 
 test('buildDecisionWatchDescription skips the marker when the primary is missing', () => {

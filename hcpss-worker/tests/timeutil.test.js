@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot, eveningTickSlot, nextScheduledTime } from '../src/timeutil.js';
+import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot, eveningTickSlot, conversionTickSlot, nextScheduledTime } from '../src/timeutil.js';
 
 test('matchesScheduleTime fires on time and up to 5 minutes late', () => {
   assert.equal(matchesScheduleTime('5:20', '5:20'), true);
@@ -65,6 +65,16 @@ test('middayTickSlot covers the 10 AM-2 PM early-dismissal window', () => {
   assert.equal(middayTickSlot('14:15'), null);
   assert.equal(middayTickSlot('12:20'), null); // not a tick minute
   assert.equal(middayTickSlot('5:15'), null);  // morning window belongs to stormTickSlot
+});
+
+test('conversionTickSlot covers 7:45-9:30 AM for delay-to-closure upgrades', () => {
+  assert.equal(conversionTickSlot('7:45'), '7:45');
+  assert.equal(conversionTickSlot('8:30'), '8:30');
+  assert.equal(conversionTickSlot('9:30'), '9:30');
+  assert.equal(conversionTickSlot('9:31'), '9:30'); // cron delay grace
+  assert.equal(conversionTickSlot('7:30'), null); // still the storm window's tick
+  assert.equal(conversionTickSlot('9:45'), null);
+  assert.equal(conversionTickSlot('8:20'), null); // not a tick minute
 });
 
 test('eveningTickSlot covers 7:00-11:45 PM for the heads-up watch', () => {

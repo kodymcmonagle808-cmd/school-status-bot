@@ -6,8 +6,9 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 
 - Checks the status page on each guild's configured schedule (Eastern time) and posts the status embed, replacing the previous message instead of stacking.
 - Shows active NWS weather alerts for Howard County on status embeds, plus a Tomorrow Outlook on evening posts.
-- Storm mode: checks every 15 minutes during the early-morning decision window (closings/delays) and the 10 AM–2 PM midday window (early dismissals) when a storm or heat alert is active, posting only on real status changes.
-- Decision Watch: on storm mornings, one live board per server showing every district's closing/delay announcements, edited in place every 15 minutes through the 4:30–7:30 AM window.
+- Storm mode: checks every 15 minutes during the early-morning decision window (closings/delays) and the 10 AM–2 PM midday window (early dismissals) when a storm or heat alert is active, posting only on real status changes — and when a 2-hour delay is announced, the conversion watch keeps checking until 9:30 AM for the delay-to-closure upgrade.
+- Decision Watch: on storm mornings, one live board per server showing every district's closing/delay announcements (with when each was first detected), edited in place every 15 minutes through the 4:30–7:30 AM window.
+- Storm Recap: a noon summary after every Decision Watch morning — what the evening outlook predicted, what the district actually did, and how every neighboring district decided.
 - Closure Outlook: during storm/heat alerts, estimates the chance of a closing/delay from NWS alerts and nearby districts' announcements — and grades its own evening predictions so `/stats` shows the outlook's track record.
 - Snowfall Forecast: storm-time embeds include expected snow/ice accumulations from the NWS forecast.
 - Night-Before Heads-Up: 7:00 PM ET alert when the Closure Outlook hits High/Very High before HCPSS has announced anything — and the watch keeps running until 11:45 PM, posting an update if the outlook climbs a tier later in the evening.
@@ -15,7 +16,8 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Bus & Transportation Alerts: posts HCPSS News transportation service alerts (route suspensions, delays, restorations).
 - Activities & Athletics Alerts: posts after-school activity, athletics, and field trip cancellations that never reach the status page.
 - School-Specific Notices: surfaces single-building announcements (no pings) that district-wide filters skip — and members can register their building with `/myschool` to get a DM when a notice mentions it.
-- Power Outages: BGE county outage counts on storm embeds, feeding the Closure Outlook when widespread; `/outages` shows the county-by-county counts to any member, any time.
+- Power Outages: county outage counts on storm embeds from every utility serving the district's county — BGE, Pepco (Montgomery/Prince George's), and Potomac Edison (Frederick/Carroll) — feeding the Closure Outlook when widespread; `/outages` shows all utilities' county-by-county counts to any member, any time.
+- Air Quality Alerts: posts when AirNow reports Code Orange (AQI 101+) or worse for the district's area — the days outdoor athletics and recess get modified.
 - Road Conditions: active MD CHART road incidents for the county on storm embeds.
 - Primary District: any server can follow a neighboring district instead of HCPSS (per-server setting) — status posts, storm mode, the night-before heads-up, and `/history`/`/stats` all follow that district's own weather zone and announcements.
 - Cross-checks the HCPSS News feed and flags when it disagrees with the (sometimes lagging) status page.

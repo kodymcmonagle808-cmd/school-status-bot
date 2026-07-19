@@ -21,7 +21,7 @@ import {
 } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
-import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from './outages.js';
+import { getCountyOutagePicture } from './outages.js';
 import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
@@ -94,13 +94,12 @@ async function buildHeadsUpContext(env, districtId) {
     } catch {}
   }
 
-  const outageSummary = await getBgeOutages(env);
+  const outagePicture = await getCountyOutagePicture(env, county);
   const outlook = computeClosureOutlook(alerts, neighbors, {
-    outagePercent: outagePercent(getCountyOutage(outageSummary, county))
+    outagePercent: outagePicture.percent
   });
   if (!shouldSendHeadsUp(outlook, statusKey)) return null;
 
-  const outageCounty = getCountyOutage(outageSummary, county);
   return {
     outlook,
     name,
@@ -111,7 +110,7 @@ async function buildHeadsUpContext(env, districtId) {
     snowLines: formatSnowfallLines(await getSnowfallForecast(env)),
     alertLines: formatWeatherAlertLines(alerts),
     districtLines: formatDistrictLines(neighbors),
-    outageLine: outageCounty && outageCounty.out > 0 ? formatOutageLine(outageSummary, county) : '',
+    outageLine: outagePicture.line,
     roadLines: formatRoadLines(await getChartIncidents(env), county)
   };
 }

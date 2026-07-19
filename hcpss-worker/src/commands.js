@@ -14,7 +14,7 @@ import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
 import { getActiveWeatherAlerts, getCachedWeatherAlerts, formatWeatherAlertLines, hasStormAlert, DEFAULT_NWS_ZONE } from './weather.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
-import { getBgeOutages, getCountyOutage, outagePercent, formatOutageLine } from './outages.js';
+import { getBgeOutages, getCountyOutage, outagePercent, getCountyOutagePicture, getKubraUtilitySummaries } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { getOutlookPredictions, summarizeOutlookAccuracy, formatOutlookAccuracyLines } from './outlookaccuracy.js';
 import { computeSnowDayBudget } from './snowbudget.js';
@@ -422,12 +422,13 @@ export async function runOutagesCommand(env, guildId = '') {
   } catch {}
 
   const summary = await getBgeOutages(env);
-  if (!summary) {
+  const kubraSummaries = await getKubraUtilitySummaries(env);
+  if (!summary && !kubraSummaries.length) {
     return {
       embeds: [{
-        title: '🔌 BGE Power Outages',
+        title: '🔌 Power Outages',
         color: 0xE67E22,
-        description: 'The BGE outage feed is unavailable right now — try again in a few minutes, or check [BGE\'s outage map](https://outagemap.bge.com).',
+        description: 'The utility outage feeds are unavailable right now — try again in a few minutes, or check [BGE\'s outage map](https://outagemap.bge.com).',
         timestamp: checkedAt.toISOString(),
         footer: { text: 'School Status' }
       }],
@@ -435,38 +436,55 @@ export async function runOutagesCommand(env, guildId = '') {
     };
   }
 
-  // Guild's county first, then the rest by most customers out.
-  const names = Object.keys(summary.counties).sort((a, b) => {
-    if (a === county) return -1;
-    if (b === county) return 1;
-    return (summary.counties[b].out - summary.counties[a].out) || a.localeCompare(b);
-  });
-
-  // The guild's own county gets the exact storm-mode line; every county shows
-  // its exact count and percentage (down to 0.01%) — never rounded away.
   let totalOut = 0;
-  const lines = names.map(name => {
-    const c = summary.counties[name];
-    totalOut += c.out;
-    if (name === county) {
-      return `📍 ${formatOutageLine(summary, name)}`;
-    }
+  const sections = [];
+
+  // The guild's own county first, merged across every utility serving it.
+  const picture = await getCountyOutagePicture(env, county);
+  if (picture.entry) {
+    const pinnedLine = picture.line ||
+      `🔌 **0** of ${picture.entry.served.toLocaleString('en-US')} customers without power in ${county} County`;
+    sections.push(`📍 ${pinnedLine}`);
+  }
+
+  const countyLine = (name, c) => {
     const pct = outagePercent(c);
     const pctStr = c.out > 0 ? ` (${pct >= 0.1 ? pct.toFixed(1) : pct.toFixed(2)}%)` : '';
     const emoji = c.out === 0 ? '🟢' : pct >= 5 ? '🔴' : '🟠';
     return `${emoji} **${name}**: ${c.out.toLocaleString('en-US')} of ${c.served.toLocaleString('en-US')} customers out${pctStr}`;
-  });
+  };
 
-  const stormNote = summary.stormMode
-    ? '\n\n⚡ *BGE has activated storm mode — restoration estimates may be delayed.*'
-    : '';
+  // BGE's counties by most customers out, then the other utilities' counties.
+  if (summary) {
+    const names = Object.keys(summary.counties).sort((a, b) =>
+      (summary.counties[b].out - summary.counties[a].out) || a.localeCompare(b));
+    const lines = names.map(name => {
+      totalOut += summary.counties[name].out;
+      return countyLine(name, summary.counties[name]);
+    });
+    const stormNote = summary.stormMode
+      ? '\n⚡ *BGE has activated storm mode — restoration estimates may be delayed.*'
+      : '';
+    sections.push(`**BGE**\n${lines.join('\n')}${stormNote}`);
+  }
+
+  for (const { label, summary: s } of kubraSummaries) {
+    const names = Object.keys(s.counties).sort((a, b) =>
+      (s.counties[b].out - s.counties[a].out) || a.localeCompare(b));
+    if (!names.length) continue;
+    const lines = names.map(name => {
+      totalOut += s.counties[name].out;
+      return countyLine(name, s.counties[name]);
+    });
+    sections.push(`**${label}**\n${lines.join('\n')}`);
+  }
 
   return {
     embeds: [{
-      title: '🔌 BGE Power Outages by County',
+      title: '🔌 Power Outages by County',
       url: 'https://outagemap.bge.com',
       color: totalOut > 0 ? 0xE67E22 : 0x2ECC71,
-      description: `${lines.join('\n')}\n\n**Total**: ${totalOut.toLocaleString('en-US')} customers without power${stormNote}`,
+      description: `${sections.join('\n\n')}\n\n**Total**: ${totalOut.toLocaleString('en-US')} customers without power`,
       timestamp: checkedAt.toISOString(),
       footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
     }],

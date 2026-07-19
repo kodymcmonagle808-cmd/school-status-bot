@@ -24,7 +24,7 @@ import {
 } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines, closureOutlookTitle } from './outlook.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
-import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent } from './outages.js';
+import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent, getCountyOutagePicture } from './outages.js';
 import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
@@ -391,15 +391,14 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     }
   }
 
-  // BGE power outages (where BGE serves the county) and CHART road conditions.
+  // Power outages from every utility serving this county (BGE, Pepco, or
+  // Potomac Edison — merged where territories overlap) and CHART road conditions.
   const outagesEnabled = !config || config.toggle_outages !== false;
-  let outageSummary = null;
+  let outagePicture = null;
   if (outagesEnabled && stormActive && embeds[0]) {
-    outageSummary = await getBgeOutages(env);
-    const county = getCountyOutage(outageSummary, meta.county);
-    if (county && county.out > 0) {
-      const line = formatOutageLine(outageSummary, meta.county);
-      if (line) addField(embeds[0], `🔌 Power Outages — ${meta.county} County`, line);
+    outagePicture = await getCountyOutagePicture(env, meta.county);
+    if (outagePicture.line) {
+      addField(embeds[0], `🔌 Power Outages — ${meta.county} County`, outagePicture.line);
     }
   }
   const roadsEnabled = !config || config.toggle_roads !== false;
@@ -438,7 +437,7 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
   }
 
   if (outlookEnabled && stormActive && embeds[0] && statusKey === 'normal_operations') {
-    const pct = outagePercent(getCountyOutage(outageSummary, meta.county));
+    const pct = outagePicture ? outagePicture.percent : 0;
     const outlookText = formatOutlookLines(computeClosureOutlook(alerts, neighborList || [], { outagePercent: pct }));
     if (outlookText) {
       addField(embeds[0], closureOutlookTitle(alerts), outlookText);
