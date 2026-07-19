@@ -5,6 +5,13 @@ on:
   push:
     branches: [ main ]
 
+# Serialize deploys: stacked runs (e.g. merging several PRs) each re-register
+# Discord slash commands and can rate-limit each other. Superseded pending
+# runs are dropped; an in-progress deploy is never cancelled mid-flight.
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

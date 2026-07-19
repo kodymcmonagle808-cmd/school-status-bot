@@ -8,3 +8,9 @@ updates:
     directory: /hcpss-worker
     schedule:
       interval: weekly
+    # One combined PR so peer-coupled packages (eslint + @eslint/js) can't
+    # arrive as separate PRs where one fails npm ci on a peer-dep conflict.
+    groups:
+      npm-deps:
+        patterns:
+          - "*"
