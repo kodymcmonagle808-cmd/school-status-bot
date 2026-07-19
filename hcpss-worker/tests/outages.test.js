@@ -51,3 +51,56 @@ test('getBgeOutages serves from KV cache without fetching', async () => {
   assert.equal(s.stormMode, true);
   assert.equal(s.counties.Howard.out, 5);
 });
+
+// --- /outages member command ---
+
+const { runOutagesCommand } = await import('../src/commands.js');
+
+function makeKv(store = new Map()) {
+  return {
+    store,
+    async get(key) { return store.has(key) ? store.get(key) : null; },
+    async put(key, val) { store.set(key, val); },
+    async delete(key) { store.delete(key); }
+  };
+}
+
+function seedOutageCache(store, summary) {
+  store.set('bge_outage_cache', JSON.stringify({ at: Date.now(), summary }));
+}
+
+test('runOutagesCommand pins the guild county first and totals the rest', async () => {
+  const kv = makeKv();
+  seedOutageCache(kv.store, summarizeOutageFeed(FEED));
+  const payload = await runOutagesCommand({ STATUS_KV: kv }, 'g1');
+
+  const desc = payload.embeds[0].description;
+  const lines = desc.split('\n');
+  assert.match(lines[0], /📍.*Howard.*2,410.*130,377.*1\.8%/);
+  assert.ok(desc.includes("Prince George's"));
+  assert.match(desc, /\*\*Total\*\*: 2,427 customers without power/);
+  assert.equal(desc.includes('storm mode'), false);
+  assert.equal(payload.flags, 64);
+});
+
+test('runOutagesCommand follows the guild primary district county', async () => {
+  const kv = makeKv();
+  kv.store.set('config:g2', JSON.stringify({ primary_district: 'aacps' }));
+  seedOutageCache(kv.store, summarizeOutageFeed(FEED));
+  const payload = await runOutagesCommand({ STATUS_KV: kv }, 'g2');
+  assert.match(payload.embeds[0].description.split('\n')[0], /📍.*Anne Arundel/);
+});
+
+test('runOutagesCommand notes BGE storm mode', async () => {
+  const kv = makeKv();
+  seedOutageCache(kv.store, summarizeOutageFeed({ ...FEED, stormmode: 'Y' }));
+  const payload = await runOutagesCommand({ STATUS_KV: kv }, 'g1');
+  assert.ok(payload.embeds[0].description.includes('storm mode'));
+});
+
+test('runOutagesCommand degrades gracefully when the feed is unavailable', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('bge down'); });
+  const payload = await runOutagesCommand({ STATUS_KV: makeKv() }, 'g1');
+  assert.ok(payload.embeds[0].description.includes('unavailable'));
+  assert.equal(payload.flags, 64);
+});

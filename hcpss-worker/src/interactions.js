@@ -25,6 +25,7 @@ import {
   runCalendarCommand,
   runHistoryCommand,
   runDistrictsCommand,
+  runOutagesCommand,
   runStatsCommand,
   runEventsCommand,
   runTermsCommand,
@@ -117,6 +118,14 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'districts') {
       ctx.waitUntil((async () => {
         const payload = await runDistrictsCommand(env);
+        await updateInteractionOriginal(env, body.token, payload);
+      })());
+      return deferredInteractionResponse();
+    }
+
+    if (name === 'outages') {
+      ctx.waitUntil((async () => {
+        const payload = await runOutagesCommand(env, guildId);
         await updateInteractionOriginal(env, body.token, payload);
       })());
       return deferredInteractionResponse();

@@ -113,6 +113,7 @@ export function runHelpCommand() {
         '• `/calendar` — scheduled closures and events in the next 7 days\n' +
         '• `/history` — the last 10 operating status changes\n' +
         '• `/districts` — what neighboring school districts have announced\n' +
+        '• `/outages` — current BGE power outage counts by county\n' +
         '• `/stats` — closure days, delays, and scraper statistics\n' +
         '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
@@ -316,6 +317,67 @@ export async function runDistrictsCommand(env) {
       color: 3447003,
       description: formatDistrictLines(districts, { includeDetail: true }) ||
         'No district information available right now.',
+      timestamp: checkedAt.toISOString(),
+      footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+// Member command: current BGE outage counts for every county in the feed,
+// any time — not just when storm embeds happen to show them. The guild's own
+// county (from its primary district) is pinned to the top.
+export async function runOutagesCommand(env, guildId = '') {
+  const checkedAt = new Date();
+  let county = HCPSS_COUNTY;
+  try {
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    const meta = cfg.primary_district && cfg.primary_district !== 'hcpss' ? getDistrictMeta(cfg.primary_district) : null;
+    if (meta) county = meta.county;
+  } catch {}
+
+  const summary = await getBgeOutages(env);
+  if (!summary) {
+    return {
+      embeds: [{
+        title: '🔌 BGE Power Outages',
+        color: 0xE67E22,
+        description: 'The BGE outage feed is unavailable right now — try again in a few minutes, or check [BGE\'s outage map](https://outagemap.bge.com).',
+        timestamp: checkedAt.toISOString(),
+        footer: { text: 'School Status' }
+      }],
+      flags: EPHEMERAL_FLAG
+    };
+  }
+
+  // Guild's county first, then the rest by most customers out.
+  const names = Object.keys(summary.counties).sort((a, b) => {
+    if (a === county) return -1;
+    if (b === county) return 1;
+    return (summary.counties[b].out - summary.counties[a].out) || a.localeCompare(b);
+  });
+
+  let totalOut = 0;
+  const lines = names.map(name => {
+    const c = summary.counties[name];
+    totalOut += c.out;
+    const pct = outagePercent(c);
+    const pctStr = pct >= 0.05 ? ` (${pct.toFixed(1)}%)` : '';
+    const marker = name === county ? '📍 ' : '';
+    const emoji = c.out === 0 ? '🟢' : pct >= 5 ? '🔴' : '🟠';
+    return `${marker}${emoji} **${name}**: ${c.out.toLocaleString('en-US')} of ${c.served.toLocaleString('en-US')} customers out${pctStr}`;
+  });
+
+  const stormNote = summary.stormMode
+    ? '\n\n⚡ *BGE has activated storm mode — restoration estimates may be delayed.*'
+    : '';
+
+  return {
+    embeds: [{
+      title: '🔌 BGE Power Outages by County',
+      url: 'https://outagemap.bge.com',
+      color: totalOut > 0 ? 0xE67E22 : 0x2ECC71,
+      description: `${lines.join('\n')}\n\n**Total**: ${totalOut.toLocaleString('en-US')} customers without power${stormNote}`,
       timestamp: checkedAt.toISOString(),
       footer: { text: footerWithCheckedAt('School Status · Cached up to 10 min', checkedAt) }
     }],

@@ -189,6 +189,13 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "outages",
+    description: "Show current BGE power outage counts by county.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
     name: "setup",
     description: "Initial one-time setup for the status monitor.",
     type: 1,
