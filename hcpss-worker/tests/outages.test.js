@@ -76,8 +76,10 @@ test('runOutagesCommand pins the guild county first and totals the rest', async 
 
   const desc = payload.embeds[0].description;
   const lines = desc.split('\n');
-  assert.match(lines[0], /📍.*Howard.*2,410.*130,377.*1\.8%/);
-  assert.ok(desc.includes("Prince George's"));
+  // Pinned county uses the exact storm-mode line format.
+  assert.match(lines[0], /^📍 🔌 \*\*2,410\*\* of 130,377 BGE customers without power in Howard County \(1\.8%\)$/);
+  // Small outages keep their exact count and percentage instead of rounding away.
+  assert.match(desc, /Prince George's.*17 of 85,134 customers out \(0\.02%\)/);
   assert.match(desc, /\*\*Total\*\*: 2,427 customers without power/);
   assert.equal(desc.includes('storm mode'), false);
   assert.equal(payload.flags, 64);

@@ -13,7 +13,7 @@ import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
 import { getActiveWeatherAlerts, formatWeatherAlertLines } from './weather.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
-import { getBgeOutages, getCountyOutage, outagePercent } from './outages.js';
+import { getBgeOutages, getCountyOutage, outagePercent, formatOutageLine } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
 import { getOutlookPredictions, summarizeOutlookAccuracy, formatOutlookAccuracyLines } from './outlookaccuracy.js';
 import { toggleSubscriber, getSubscribers } from './subscriptions.js';
@@ -357,15 +357,19 @@ export async function runOutagesCommand(env, guildId = '') {
     return (summary.counties[b].out - summary.counties[a].out) || a.localeCompare(b);
   });
 
+  // The guild's own county gets the exact storm-mode line; every county shows
+  // its exact count and percentage (down to 0.01%) — never rounded away.
   let totalOut = 0;
   const lines = names.map(name => {
     const c = summary.counties[name];
     totalOut += c.out;
+    if (name === county) {
+      return `📍 ${formatOutageLine(summary, name)}`;
+    }
     const pct = outagePercent(c);
-    const pctStr = pct >= 0.05 ? ` (${pct.toFixed(1)}%)` : '';
-    const marker = name === county ? '📍 ' : '';
+    const pctStr = c.out > 0 ? ` (${pct >= 0.1 ? pct.toFixed(1) : pct.toFixed(2)}%)` : '';
     const emoji = c.out === 0 ? '🟢' : pct >= 5 ? '🔴' : '🟠';
-    return `${marker}${emoji} **${name}**: ${c.out.toLocaleString('en-US')} of ${c.served.toLocaleString('en-US')} customers out${pctStr}`;
+    return `${emoji} **${name}**: ${c.out.toLocaleString('en-US')} of ${c.served.toLocaleString('en-US')} customers out${pctStr}`;
   });
 
   const stormNote = summary.stormMode
