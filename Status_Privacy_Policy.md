@@ -1,6 +1,6 @@
 # Privacy Policy for School Status
 
-**Last Updated: July 18, 2026**
+**Last Updated: July 19, 2026**
 
 This Privacy Policy explains what information the "School Status" Discord bot ("the Bot," "we," "us," or "our") collects, how it is used, and your rights regarding that information.
 

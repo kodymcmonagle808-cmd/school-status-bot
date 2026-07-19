@@ -63,3 +63,14 @@ jobs:
           name: kv-backup-${{ github.run_id }}
           path: kv_backup.json.enc
           retention-days: 90
+
+      # Optional Discord staff-channel alert (DISCORD_OPS_WEBHOOK_URL secret).
+      - name: Notify Discord
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
+          jq -n --arg content "❌ **KV backup failed** — this week's export did not run.
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
+            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"

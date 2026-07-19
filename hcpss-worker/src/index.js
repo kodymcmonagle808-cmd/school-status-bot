@@ -17,6 +17,7 @@ import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
+import { statusPageResponse } from './statuspage.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -46,6 +47,15 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
+      if (url.pathname === '/') {
+        // Public read-only status page (the 60s scrape cache bounds load).
+        try {
+          return await statusPageResponse(env);
+        } catch (e) {
+          console.error('Status page failed:', e);
+          return new Response('Status page unavailable.', { status: 500 });
+        }
+      }
       if (url.pathname === '/terms') {
         return legalPageResponse('Terms and Conditions', TERMS_MD);
       }
@@ -78,6 +88,7 @@ export default {
         return jsonResponse({
           ok: true,
           worker: 'hcpss-worker',
+          gitSha: env.GIT_SHA || null,
           timestamp: new Date().toISOString(),
           manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN,
           guilds,

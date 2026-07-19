@@ -19,7 +19,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo npm install -g wrangler@4
+          # Pinned exactly so a bad wrangler release can't break deploys at
+          # random; Dependabot doesn't cover this, bump deliberately.
+          sudo npm install -g wrangler@4.112.0
           sudo apt-get update && sudo apt-get install -y jq
 
       - name: Lint
@@ -47,3 +49,14 @@ jobs:
         run: |
           chmod +x ./hcpss-worker/scripts/deploy_worker.sh
           ./hcpss-worker/scripts/deploy_worker.sh
+
+      # Optional Discord staff-channel alert (DISCORD_OPS_WEBHOOK_URL secret).
+      - name: Notify Discord
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
+          jq -n --arg content "❌ **Worker deploy failed** on main (${GITHUB_SHA::7}) — the bot is still running the previous version.
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
+            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"

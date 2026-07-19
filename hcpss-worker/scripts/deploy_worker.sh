@@ -46,6 +46,10 @@ fi
 echo "Patching wrangler.toml with KV id..."
 sed -i.bak -E "s/id = \"[^\"]*\"/id = \"${kv_id}\"/" "$toml_file"
 sed -i.bak -E "s/DISCORD_PUBLIC_KEY = \"[^\"]*\"/DISCORD_PUBLIC_KEY = \"${DISCORD_PUBLIC_KEY}\"/" "$toml_file"
+# Stamp the deployed commit so /health reports exactly what's running.
+if [ -n "${GITHUB_SHA:-}" ]; then
+  sed -i.bak -E "s/GIT_SHA = \"[^\"]*\"/GIT_SHA = \"${GITHUB_SHA}\"/" "$toml_file"
+fi
 if [ -n "${DISCORD_GUILD_ID:-}" ]; then
   sed -i.bak -E "s/DISCORD_GUILD_ID = \"[^\"]*\"/DISCORD_GUILD_ID = \"${DISCORD_GUILD_ID}\"/" "$toml_file"
 fi

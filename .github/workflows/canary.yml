@@ -54,3 +54,17 @@ jobs:
           else
             gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY_FILE"
           fi
+
+      # Optional: also ping a Discord staff channel. Set the
+      # DISCORD_OPS_WEBHOOK_URL secret to a channel webhook URL to enable.
+      - name: Notify Discord
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "DISCORD_OPS_WEBHOOK_URL not set — skipping."; exit 0; fi
+          FAILING=$(grep '^❌' hcpss-worker/canary.log 2>/dev/null | head -8 || true)
+          jq -n --arg content "❌ **Scraper canary failed** — a data source stopped parsing.
+          ${FAILING}
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" '{content: $content}' \
+            | curl -sS -H "Content-Type: application/json" -d @- "$WEBHOOK"

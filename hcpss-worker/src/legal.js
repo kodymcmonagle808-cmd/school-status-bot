@@ -18,7 +18,7 @@ export const TERMS_MD =
   "**10. Contact** — Questions can be directed to the bot developer through the support server or the contact method on the bot's official listing page.";
 
 export const PRIVACY_MD =
-  '**Last Updated: July 18, 2026**\n\n' +
+  '**Last Updated: July 19, 2026**\n\n' +
   '**1. What We Collect** — The minimum needed to function: server (guild) ID, configured channel IDs, optional ping role IDs, server-specific settings, the user/channel ID at the time a command is run (used only to process that command), and — only if a user opts in via `/myschool` — the school name they registered (used solely to match public notices for DM alerts; cleared with `/myschool clear`).\n\n' +
   '**We do NOT collect** message content outside of command interactions, private messages, personal information (names, emails, school enrollment data), or voice/audio data.\n\n' +
   '**2. How It Is Used** — Solely to deliver status updates to configured channels, ping configured roles, respond to commands, and maintain/troubleshoot the bot. Data is never sold, rented, or shared with third parties for advertising or marketing.\n\n' +
