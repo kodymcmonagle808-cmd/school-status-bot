@@ -131,6 +131,16 @@ test('buildKvUsageSection renders bars and the exact/best-effort note', () => {
   assert.ok(out.includes('■'), 'writes bar has filled segments');
 });
 
+test('buildKvUsageSection shows the reset in Eastern time, DST-aware', () => {
+  // Summer: 00:00 UTC = 8:00 PM EDT.
+  const summer = buildKvUsageSection(null, Date.UTC(2026, 6, 15, 18, 0, 0));
+  assert.match(summer, /resets 8:00\sPM EDT/);
+  // Winter: 00:00 UTC = 7:00 PM EST.
+  const winter = buildKvUsageSection(null, Date.UTC(2026, 0, 15, 18, 0, 0));
+  assert.match(winter, /resets 7:00\sPM EST/);
+  assert.ok(!summer.includes('UTC'));
+});
+
 test('buildKvUsageSection warns as the write budget fills', () => {
   const now = Date.UTC(2026, 0, 15, 12, 0, 0);
   const day = utcDay(now);

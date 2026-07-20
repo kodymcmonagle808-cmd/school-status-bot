@@ -239,6 +239,20 @@ function commas(n) {
   return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
+// The Cloudflare quota resets at 00:00 UTC; render that instant in Eastern
+// time (8:00 PM EDT / 7:00 PM EST) so it reads like the rest of the bot.
+// DST is handled by Intl, so this is correct year-round.
+function easternResetLabel(now) {
+  const d = new Date(now);
+  const nextUtcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(nextUtcMidnight);
+}
+
 // Owner-only KV free-plan budget bars for the Worker Updates page. Pure so
 // tests can pin thresholds and rollover text. Reads/lists are best-effort and
 // writes/deletes exact — see kvmeter.js for why.
@@ -261,9 +275,10 @@ export function buildKvUsageSection(usage, now = Date.now()) {
   });
 
   const writePct = KV_FREE_LIMITS.writes > 0 ? (val('writes') / KV_FREE_LIMITS.writes) * 100 : 0;
+  const resetAt = easternResetLabel(now);
   const header = fresh
-    ? 'Free-plan budget used today (resets 00:00 UTC):'
-    : 'No KV activity recorded yet today (resets 00:00 UTC).';
+    ? `Free-plan budget used today (resets ${resetAt}):`
+    : `No KV activity recorded yet today (resets ${resetAt}).`;
   const warn = writePct >= 90
     ? '\n⚠️ **Write budget nearly exhausted** — further writes may start failing.'
     : writePct >= 70
