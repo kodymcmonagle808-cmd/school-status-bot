@@ -22,6 +22,9 @@ GIT_SHA = ""
 DISCORD_APPLICATION_ID = "1524455676225785958"
 DISCORD_PUBLIC_KEY = "a720037cc985ff440f41cf7033bc953ce8f6fe60a3c4947d298cb63464b2e539"
 DISCORD_GUILD_ID = ""
+# Same id as the STATUS_KV binding below, as a plain var so the Worker can
+# query Cloudflare's KV analytics for the owner Worker Updates usage gauge.
+KV_NAMESPACE_ID = "f0ecd441d95a4cbca41035b619a94705"
 
 [[kv_namespaces]]
 binding = "STATUS_KV"

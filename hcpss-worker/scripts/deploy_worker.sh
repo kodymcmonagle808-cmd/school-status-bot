@@ -45,6 +45,9 @@ fi
 
 echo "Patching wrangler.toml with KV id..."
 sed -i.bak -E "s/id = \"[^\"]*\"/id = \"${kv_id}\"/" "$toml_file"
+# Keep the analytics var in sync with the actual namespace (uppercase name, so
+# the lowercase `id = ` patch above never touches it).
+sed -i.bak -E "s/KV_NAMESPACE_ID = \"[^\"]*\"/KV_NAMESPACE_ID = \"${kv_id}\"/" "$toml_file"
 sed -i.bak -E "s/DISCORD_PUBLIC_KEY = \"[^\"]*\"/DISCORD_PUBLIC_KEY = \"${DISCORD_PUBLIC_KEY}\"/" "$toml_file"
 # Stamp the deployed commit so /health reports exactly what's running.
 if [ -n "${GITHUB_SHA:-}" ]; then
@@ -71,6 +74,11 @@ if [ -n "${OWNER_ID:-}" ]; then
 else
   echo "OWNER_ID not set; the panel's Worker Updates page will stay locked."
 fi
+# CF creds (already required above) let the Worker read Cloudflare's KV
+# analytics for the owner Worker Updates usage gauge — no KV writes involved.
+secrets_json=$(printf '%s' "$secrets_json" | jq \
+  --arg tok "$CF_API_TOKEN" --arg acct "$CF_ACCOUNT_ID" \
+  '. + {CF_API_TOKEN: $tok, CF_ACCOUNT_ID: $acct}')
 
 secrets_uploaded=0
 for attempt in 1 2 3; do

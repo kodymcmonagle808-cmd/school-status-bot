@@ -20,7 +20,6 @@ import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
 import { recordWatcherError } from './watcherhealth.js';
-import { wrapKv, flushKvUsage } from './kvmeter.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -48,10 +47,6 @@ function validateManualTrigger(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-
-    // Meter every KV op this request makes; the flush on the write-heavy
-    // branches folds the tally into the daily counter.
-    env.STATUS_KV = wrapKv(env.STATUS_KV);
 
     if (request.method === 'GET') {
       if (url.pathname === '/') {
@@ -121,9 +116,7 @@ export default {
       if (!ok) return new Response('Invalid request signature', { status: 401 });
 
       const body = await request.json();
-      const resp = await handleInteraction(body, env, ctx);
-      ctx.waitUntil(flushKvUsage(env.STATUS_KV));
-      return resp;
+      return await handleInteraction(body, env, ctx);
     }
 
     const manualTriggerError = validateManualTrigger(request, env);
@@ -137,16 +130,11 @@ export default {
       return new Response('Scraper check failed: ' + result.error, { status: 500 });
     } catch (err) {
       return new Response('Error: ' + err.message, { status: 500 });
-    } finally {
-      ctx.waitUntil(flushKvUsage(env.STATUS_KV));
     }
   },
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
-      // Meter every KV op this tick makes, including the heartbeat below.
-      env.STATUS_KV = wrapKv(env.STATUS_KV);
-
       // Heartbeat for the external uptime monitor: proves the cron itself is
       // firing (a dead cron is otherwise invisible). Reads every tick but
       // writes only when the stored tick is ≥14 minutes old, keeping ~100
@@ -242,9 +230,6 @@ export default {
         console.error('Guild cleanup run failed', e);
         await recordWatcherError(env, 'cleanup', e);
       }
-      // Last: fold this tick's KV tally into the daily counter (only spends a
-      // write if the tick already did, so the meter stays inside its budget).
-      await flushKvUsage(env.STATUS_KV);
     })());
   }
 };

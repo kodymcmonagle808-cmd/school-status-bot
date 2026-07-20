@@ -18,7 +18,7 @@ import { listCalendarEvents } from './calendar.js';
 import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
 import { getBlockedGuilds } from './blocklist.js';
 import { discordFetch } from './discord.js';
-import { KV_FREE_LIMITS, USAGE_KEY, utcDay } from './kvmeter.js';
+import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -253,13 +253,19 @@ function easternResetLabel(now) {
   }).format(nextUtcMidnight);
 }
 
-// Owner-only KV free-plan budget bars for the Worker Updates page. Pure so
-// tests can pin thresholds and rollover text. Reads/lists are best-effort and
-// writes/deletes exact — see kvmeter.js for why.
+// Owner-only KV free-plan budget bars for the Worker Updates page. `usage`
+// comes from getKvUsage (Cloudflare analytics): either counts, a not-configured
+// state, or an error. Pure so tests can pin the thresholds and the states.
 export function buildKvUsageSection(usage, now = Date.now()) {
-  const fresh = usage && typeof usage === 'object' && usage.day === utcDay(now) ? usage : null;
-  const val = k => (fresh ? Number(fresh[k]) || 0 : 0);
+  if (!usage || usage.configured === false) {
+    const reason = usage && usage.reason ? ` ${usage.reason}` : '';
+    return `KV usage gauge not configured —${reason}\n> Reads Cloudflare's analytics; costs no KV writes.`;
+  }
+  if (usage.error) {
+    return `⚠️ KV analytics unavailable: ${usage.error}`;
+  }
 
+  const val = k => Number(usage[k]) || 0;
   const rows = [
     ['✍️', 'Writes', val('writes'), KV_FREE_LIMITS.writes],
     ['🗑️', 'Deletes', val('deletes'), KV_FREE_LIMITS.deletes],
@@ -275,16 +281,13 @@ export function buildKvUsageSection(usage, now = Date.now()) {
   });
 
   const writePct = KV_FREE_LIMITS.writes > 0 ? (val('writes') / KV_FREE_LIMITS.writes) * 100 : 0;
-  const resetAt = easternResetLabel(now);
-  const header = fresh
-    ? `Free-plan budget used today (resets ${resetAt}):`
-    : `No KV activity recorded yet today (resets ${resetAt}).`;
+  const header = `Free-plan budget used today (resets ${easternResetLabel(now)}):`;
   const warn = writePct >= 90
     ? '\n⚠️ **Write budget nearly exhausted** — further writes may start failing.'
     : writePct >= 70
       ? '\n🟡 Write budget running high — watch it on a busy storm day.'
       : '';
-  const note = '\n> Writes/deletes exact · reads/lists best-effort.';
+  const note = '\n> Source: Cloudflare analytics · today (UTC).';
 
   return `${header}\n${lines.join('\n')}${warn}${note}`;
 }
@@ -388,10 +391,7 @@ export async function buildWorkerUpdatesPayload(env) {
   const watcherErrors = await getWatcherErrors(env);
 
   let kvUsage = null;
-  try {
-    const rawUsage = await env.STATUS_KV.get(USAGE_KEY);
-    if (rawUsage) kvUsage = JSON.parse(rawUsage);
-  } catch {}
+  try { kvUsage = await getKvUsage(env); } catch {}
 
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
