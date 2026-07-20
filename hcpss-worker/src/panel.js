@@ -18,6 +18,7 @@ import { listCalendarEvents } from './calendar.js';
 import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
 import { getBlockedGuilds } from './blocklist.js';
 import { discordFetch } from './discord.js';
+import { KV_FREE_LIMITS, USAGE_KEY, utcDay } from './kvmeter.js';
 
 const BAR_SEGMENTS = 20;
 
@@ -234,6 +235,45 @@ export function buildOwnerStatsFields({ runningSha, updates, guildCount, scrapes
   ];
 }
 
+function commas(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// Owner-only KV free-plan budget bars for the Worker Updates page. Pure so
+// tests can pin thresholds and rollover text. Reads/lists are best-effort and
+// writes/deletes exact — see kvmeter.js for why.
+export function buildKvUsageSection(usage, now = Date.now()) {
+  const fresh = usage && typeof usage === 'object' && usage.day === utcDay(now) ? usage : null;
+  const val = k => (fresh ? Number(fresh[k]) || 0 : 0);
+
+  const rows = [
+    ['✍️', 'Writes', val('writes'), KV_FREE_LIMITS.writes],
+    ['🗑️', 'Deletes', val('deletes'), KV_FREE_LIMITS.deletes],
+    ['📖', 'Reads', val('reads'), KV_FREE_LIMITS.reads],
+    ['📃', 'Lists', val('lists'), KV_FREE_LIMITS.lists]
+  ];
+  const lines = rows.map(([emoji, label, used, limit]) => {
+    const pct = limit > 0 ? (used / limit) * 100 : 0;
+    const dot = pct >= 90 ? '🔴' : pct >= 70 ? '🟡' : '🟢';
+    const pctStr = pct >= 10 ? pct.toFixed(0) : pct.toFixed(1);
+    return `${dot} ${emoji} **${label}** — ${commas(used)} / ${commas(limit)} · ${pctStr}%\n` +
+      barFromFilled(filledCount(used, limit));
+  });
+
+  const writePct = KV_FREE_LIMITS.writes > 0 ? (val('writes') / KV_FREE_LIMITS.writes) * 100 : 0;
+  const header = fresh
+    ? 'Free-plan budget used today (resets 00:00 UTC):'
+    : 'No KV activity recorded yet today (resets 00:00 UTC).';
+  const warn = writePct >= 90
+    ? '\n⚠️ **Write budget nearly exhausted** — further writes may start failing.'
+    : writePct >= 70
+      ? '\n🟡 Write budget running high — watch it on a busy storm day.'
+      : '';
+  const note = '\n> Writes/deletes exact · reads/lists best-effort.';
+
+  return `${header}\n${lines.join('\n')}${warn}${note}`;
+}
+
 // Server list line rendering, pure for tests. blockedIds: string array.
 export function buildServerLines(servers, blockedIds, homeGuildId) {
   const list = Array.isArray(servers) ? servers : [];
@@ -332,6 +372,12 @@ export async function buildWorkerUpdatesPayload(env) {
 
   const watcherErrors = await getWatcherErrors(env);
 
+  let kvUsage = null;
+  try {
+    const rawUsage = await env.STATUS_KV.get(USAGE_KEY);
+    if (rawUsage) kvUsage = JSON.parse(rawUsage);
+  } catch {}
+
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
     color: 0x9B59B6,
@@ -346,6 +392,7 @@ export async function buildWorkerUpdatesPayload(env) {
       lastCheckTime,
       lastCheckLatencyMs
     }).concat([
+      { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false },
       { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false },
       { name: '🌐 Servers', value: buildServerLines(servers, blockedIds, env.DISCORD_GUILD_ID || ''), inline: false }
     ]),

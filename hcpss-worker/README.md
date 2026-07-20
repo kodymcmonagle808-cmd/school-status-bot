@@ -44,6 +44,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Caches status scrapes for 60 seconds, so member-triggered `/status` checks can't hammer the HCPSS site.
 - Warns the log channel and DMs the server owner after 3 consecutive failed posts to the alert channel (deleted channel, missing permissions), and resets the streak on the next successful post.
 - Discord API calls retry once on rate limits (honoring `retry_after`) and transient 5xx errors, and embeds are clamped to Discord's field/total size limits so a burst-heavy storm morning can't drop a guild's post.
+- Meters daily KV usage against the Cloudflare free-plan limits and shows it as budget bars on the owner-only Worker Updates panel page (writes/deletes counted exactly, reads/lists best-effort), with a warning banner as the write budget fills — the metering flush itself only spends a write on ticks that already wrote, so it stays inside the budget it measures.
 - Exposes `GET /health` for a lightweight health check, including the served-guild count, current scraper failure streak, and the last status-change timestamp.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 
