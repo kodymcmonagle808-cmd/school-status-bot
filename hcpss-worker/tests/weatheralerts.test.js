@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isSchoolImpactIssuance, summarizeWeatherAlerts } from '../src/weather.js';
-import { pickNewAlerts, formatIssuanceLines, issuanceEmbedColor } from '../src/weatheralerts.js';
+import { isSchoolImpactIssuance, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
+import { pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET } from '../src/weatheralerts.js';
+import worker from '../src/index.js';
 
 test('isSchoolImpactIssuance matches winter and heat watch/warning/advisory events', () => {
   assert.ok(isSchoolImpactIssuance({ event: 'Winter Storm Warning', severity: 'Severe' }));
@@ -90,4 +91,76 @@ test('issuanceEmbedColor escalates with severity', () => {
   assert.equal(issuanceEmbedColor([{ severity: 'Minor' }]), 0xF1C40F);
   assert.equal(issuanceEmbedColor([{ severity: 'Severe' }]), 0xE67E22);
   assert.equal(issuanceEmbedColor([{ severity: 'Severe' }, { severity: 'Extreme' }]), 0xE74C3C);
+});
+
+test('shouldScanThisMinute polls every 10 minutes without the push hook', () => {
+  assert.ok(shouldScanThisMinute(SCAN_MINUTE_OFFSET, false));
+  assert.ok(shouldScanThisMinute(SCAN_MINUTE_OFFSET + 10, false));
+  assert.ok(shouldScanThisMinute(SCAN_MINUTE_OFFSET + 50, false));
+  assert.ok(!shouldScanThisMinute(SCAN_MINUTE_OFFSET + 1, false));
+});
+
+test('shouldScanThisMinute drops to hourly when the push hook is configured', () => {
+  assert.ok(shouldScanThisMinute(SCAN_MINUTE_OFFSET, true));
+  assert.ok(!shouldScanThisMinute(SCAN_MINUTE_OFFSET + 10, true));
+  assert.ok(!shouldScanThisMinute(SCAN_MINUTE_OFFSET + 30, true));
+});
+
+function kvStub(seed = {}) {
+  const map = new Map(Object.entries(seed));
+  return {
+    map,
+    async get(key) { return map.has(key) ? map.get(key) : null; },
+    async put(key, value) { map.set(key, value); },
+    async delete(key) { map.delete(key); }
+  };
+}
+
+function hookRequest(token, body) {
+  return new Request('https://worker.example/nws-hook', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : {},
+    body: JSON.stringify(body)
+  });
+}
+
+test('/nws-hook rejects when the secret is missing or wrong', async () => {
+  const ctx = { waitUntil() {} };
+  const disabled = await worker.fetch(hookRequest('anything', { zone: 'MDC027' }), { STATUS_KV: kvStub() }, ctx);
+  assert.equal(disabled.status, 403);
+
+  const env = { NWS_HOOK_SECRET: 'right', STATUS_KV: kvStub() };
+  const wrong = await worker.fetch(hookRequest('wrong', { zone: 'MDC027' }), env, ctx);
+  assert.equal(wrong.status, 403);
+});
+
+test('/nws-hook validates the zone and clears its alert cache', async () => {
+  const kv = kvStub({
+    weather_alerts_cache: '[]',
+    'weather_alerts_cache:MDC031': '[]'
+  });
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv };
+
+  const bad = await worker.fetch(hookRequest('s3cret', { zone: 'not-a-zone' }), env, ctx);
+  assert.equal(bad.status, 400);
+
+  const defaultZone = await worker.fetch(hookRequest('s3cret', { zone: 'mdc027' }), env, ctx);
+  assert.equal(defaultZone.status, 200);
+  assert.deepEqual(await defaultZone.json(), { ok: true, zone: 'MDC027' });
+  assert.ok(!kv.map.has('weather_alerts_cache'), 'default zone cache cleared');
+
+  const districtZone = await worker.fetch(hookRequest('s3cret', { zone: 'MDC031' }), env, ctx);
+  assert.equal(districtZone.status, 200);
+  assert.ok(!kv.map.has('weather_alerts_cache:MDC031'), 'district zone cache cleared');
+
+  // The forced scan runs in waitUntil; with an empty guild index it must
+  // finish without touching the network.
+  await Promise.all(waited);
+});
+
+test('clearWeatherAlertCache never throws without KV', async () => {
+  await clearWeatherAlertCache(null, 'MDC027');
+  await clearWeatherAlertCache({}, 'MDC031');
 });

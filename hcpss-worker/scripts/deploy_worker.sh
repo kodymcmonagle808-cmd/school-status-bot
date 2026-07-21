@@ -74,6 +74,11 @@ if [ -n "${OWNER_ID:-}" ]; then
 else
   echo "OWNER_ID not set; the panel's Worker Updates page will stay locked."
 fi
+if [ -n "${NWS_HOOK_SECRET:-}" ]; then
+  secrets_json=$(printf '%s' "$secrets_json" | jq --arg n "$NWS_HOOK_SECRET" '. + {NWS_HOOK_SECRET: $n}')
+else
+  echo "NWS_HOOK_SECRET not set; /nws-hook stays disabled and the NWS alert scan keeps its 10-minute cron cadence."
+fi
 # CF creds (already required above) let the Worker read Cloudflare's KV
 # analytics for the owner Worker Updates usage gauge — no KV writes involved.
 secrets_json=$(printf '%s' "$secrets_json" | jq \

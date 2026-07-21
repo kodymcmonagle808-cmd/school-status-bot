@@ -15,6 +15,7 @@ import { maybeRefreshStormEmbeds } from './stormrefresh.js';
 import { maybeUpdateDecisionWatch } from './decisionwatch.js';
 import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
+import { clearWeatherAlertCache } from './weather.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -108,6 +109,36 @@ export default {
 
     if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405 });
+    }
+
+    // Push hook for the external NWS poller (gas/nws-alert-watcher.js): it
+    // watches the alert feeds on Google's free timed triggers and calls here
+    // only when a zone's alert set changes, which lets the cron scan in
+    // weatheralerts.js drop to an hourly safety net. Same bearer-token shape
+    // as the manual trigger, separate secret.
+    if (url.pathname === '/nws-hook') {
+      if (!env.NWS_HOOK_SECRET) {
+        return new Response('NWS hook disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
+      }
+      const provided = getManualTriggerToken(request);
+      if (!provided || provided !== env.NWS_HOOK_SECRET) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      let zone = '';
+      try {
+        const body = await request.json();
+        if (body && typeof body.zone === 'string') zone = body.zone.trim().toUpperCase();
+      } catch {}
+      if (!/^[A-Z]{3}\d{3}$/.test(zone)) {
+        return jsonResponse({ ok: false, error: 'zone must be a NWS zone code like MDC027' }, 400);
+      }
+      await clearWeatherAlertCache(env, zone);
+      // The forced pass refetches the zone live (its cache was just dropped);
+      // quiet hours and per-guild dedupe still apply inside.
+      ctx.waitUntil(maybeSendWeatherAlertNotices(env, new Date(), { force: true }).catch(e => {
+        console.error('NWS hook scan failed', e);
+      }));
+      return jsonResponse({ ok: true, zone });
     }
 
     const sig = request.headers.get('x-signature-ed25519');

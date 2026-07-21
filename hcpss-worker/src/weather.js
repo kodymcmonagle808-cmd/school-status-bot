@@ -108,6 +108,16 @@ export function alertsLikelyTomorrowMorning(alerts, nowMs, horizonMs = 9 * 60 * 
   );
 }
 
+// Drops a zone's cached alert list so the next reader fetches live. Used by
+// the /nws-hook push endpoint when the external poller reports a change —
+// without this, a forced scan could serve the pre-change cache for 10 minutes.
+export async function clearWeatherAlertCache(env, zone = DEFAULT_NWS_ZONE) {
+  const cacheKey = zone === DEFAULT_NWS_ZONE ? WEATHER_CACHE_KEY : `${WEATHER_CACHE_KEY}:${zone}`;
+  try {
+    if (env && env.STATUS_KV) await env.STATUS_KV.delete(cacheKey);
+  } catch {}
+}
+
 // Cache-only read for surfaces that must never wait on an NWS fetch (the
 // control panel renders inside an interaction deadline). Returns [] on a miss.
 export async function getCachedWeatherAlerts(env, zone = DEFAULT_NWS_ZONE) {

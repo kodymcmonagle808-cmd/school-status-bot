@@ -24,6 +24,16 @@ const SEEN_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
 // Offset staggers this scan away from the other watchers' gate minutes.
 export const SCAN_MINUTE_OFFSET = 6;
 
+// When the external push poller is wired up (NWS_HOOK_SECRET set, see
+// gas/nws-alert-watcher.js and the /nws-hook route), it detects changes within
+// minutes and this cron scan becomes an hourly safety net; without it, the
+// scan is the only detector and keeps its 10-minute cadence. Pure for tests.
+export function shouldScanThisMinute(minuteOfHour, hookConfigured) {
+  return hookConfigured
+    ? minuteOfHour === SCAN_MINUTE_OFFSET
+    : minuteOfHour % 10 === SCAN_MINUTE_OFFSET;
+}
+
 // Quiet hours: alerts issued overnight wait for 6 AM ET (storm mode already
 // covers the early-morning window; a 3 AM ping helps nobody sleep).
 const POST_FROM_MIN = 6 * 60;
@@ -63,13 +73,15 @@ export function issuanceEmbedColor(alerts) {
   return 0xF1C40F;
 }
 
-// Runs from the per-minute cron. Never throws.
-export async function maybeSendWeatherAlertNotices(env, now = new Date()) {
+// Runs from the per-minute cron, or with { force: true } from the /nws-hook
+// push endpoint (skips the minute gate; quiet hours and the per-guild seen
+// map still apply, so a repeated ping can't double-post). Never throws.
+export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts = {}) {
   if (!env || !env.STATUS_KV) return { sent: 0 };
   const [h, m] = getEasternTimeStr(now).split(':').map(Number);
   const nowMin = h * 60 + m;
   if (nowMin < POST_FROM_MIN || nowMin >= POST_UNTIL_MIN) return { sent: 0 };
-  if (m % 10 !== SCAN_MINUTE_OFFSET) return { sent: 0 };
+  if (!opts.force && !shouldScanThisMinute(m, !!env.NWS_HOOK_SECRET)) return { sent: 0 };
 
   let guildIds = [];
   const rawIndex = await env.STATUS_KV.get('guild_index');

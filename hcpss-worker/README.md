@@ -60,6 +60,7 @@ Add these repository secrets under GitHub repo `Settings` > `Secrets and variabl
 - `DISCORD_PUBLIC_KEY`
 - `DISCORD_GUILD_ID` optional, recommended so `/post-status` and `/config` appear immediately
 - `MANUAL_TRIGGER_TOKEN` optional, but required if you want manual public POST triggers
+- `NWS_HOOK_SECRET` optional, enables the `/nws-hook` push endpoint for the external NWS poller (see below)
 
 Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
 
@@ -100,6 +101,18 @@ You can also use the explicit header:
 $headers = @{ "x-manual-trigger-token" = "YOUR_MANUAL_TRIGGER_TOKEN" }
 Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
 ```
+
+## Push-Based NWS Alerts (optional)
+
+By default the Worker's cron scans the NWS alert feeds every 10 minutes. A free
+Google Apps Script (`gas/nws-alert-watcher.js` at the repo root) can take over
+the polling on Google's timed triggers instead: it fingerprints each county
+zone's active alerts every 5 minutes and POSTs to `POST /nws-hook` (bearer
+`NWS_HOOK_SECRET`) only when a zone's alert set changes. The Worker then drops
+that zone's cache and runs the issuance-notice pass immediately — alerts land
+faster, and once `NWS_HOOK_SECRET` is configured the cron scan automatically
+drops to an hourly safety net so alerts still flow if the script ever dies.
+Setup steps are in the comment at the top of the script file.
 
 ## Health Check
 
