@@ -17,6 +17,7 @@ import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
 import { handleEmailHook } from './emailhook.js';
+import { clearOutageCaches } from './outages.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -116,7 +117,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -135,6 +136,20 @@ export default {
       try { payload = await request.json(); } catch {}
       const result = await handleEmailHook(env, payload || {});
       return jsonResponse(result, result.ok ? 200 : 400);
+    }
+
+    // Outage numbers (or other storm context) changed: refresh the posted
+    // storm embeds now with live data. The refresh keeps its power-threat
+    // requirement and a 5-minute dedupe bucket, so quiet-day blips and ping
+    // bursts cost nothing.
+    if (url.pathname === '/refresh-hook') {
+      ctx.waitUntil((async () => {
+        await clearOutageCaches(env);
+        await maybeRefreshStormEmbeds(env, new Date(), { force: true });
+      })().catch(e => {
+        console.error('Refresh hook failed', e);
+      }));
+      return jsonResponse({ ok: true });
     }
 
     // The status page changed: run a change-only check pass now. Posts land
@@ -159,10 +174,17 @@ export default {
       }
       await clearWeatherAlertCache(env, zone);
       // The forced pass refetches the zone live (its cache was just dropped);
-      // quiet hours and per-guild dedupe still apply inside.
-      ctx.waitUntil(maybeSendWeatherAlertNotices(env, new Date(), { force: true }).catch(e => {
-        console.error('NWS hook scan failed', e);
-      }));
+      // quiet hours and per-guild dedupe still apply inside. A changed alert
+      // set also refreshes any posted storm embeds so their weather lines
+      // stay current (no-op unless a power-threat warning is active).
+      ctx.waitUntil((async () => {
+        await maybeSendWeatherAlertNotices(env, new Date(), { force: true }).catch(e => {
+          console.error('NWS hook scan failed', e);
+        });
+        await maybeRefreshStormEmbeds(env, new Date(), { force: true }).catch(e => {
+          console.error('NWS hook storm refresh failed', e);
+        });
+      })());
       return jsonResponse({ ok: true, zone });
     }
 

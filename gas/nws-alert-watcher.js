@@ -1,6 +1,6 @@
 // Google Apps Script: external change watcher for school-status-bot.
 //
-// Three watchers on one free 5-minute Google trigger:
+// Four watchers on one free 5-minute Google trigger:
 //   1. NWS alerts — polls the active-alerts feed for every county zone the
 //      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
 //      zone's alert set changes. The Worker's own cron scan drops to an
@@ -11,7 +11,12 @@
 //      posts only to guilds whose status actually changed, so a cosmetic
 //      page edit never posts anything. Panel-scheduled posts keep firing at
 //      their configured times no matter what.
-//   3. HCPSS emails — watches this Google account's Gmail for HCPSS
+//   3. Power outages — polls the BGE/Pepco/Potomac Edison outage feeds and
+//      POSTs to /refresh-hook when the county picture changes (bucketed to
+//      the nearest 100 customers), so posted storm embeds refresh their
+//      outage/roads/weather context within minutes during a storm instead
+//      of on the 15-minute cron. Quiet days never ping.
+//   4. HCPSS emails — watches this Google account's Gmail for HCPSS
 //      announcement emails (the ones that never reach the status page) and
 //      POSTs them to /email-hook, which forwards them into each guild's
 //      alert channel. Needs the Gmail permission — after pasting this
@@ -32,9 +37,10 @@
 //   5. Done — runWatchers() now runs every 5 minutes. Executions page
 //      shows each run; testPing() verifies the Worker connection.
 //
-// Quota math: (7 zones + 1 status page) x 288 runs/day ≈ 2,300 URL
-// fetches/day, well under the consumer Apps Script limit of 20,000/day. The
-// Worker is only called when something changed, which on most days is zero.
+// Quota math: (7 zones + 1 status page + 5 outage feeds) x 288 runs/day ≈
+// 3,750 URL fetches/day, well under the consumer Apps Script limit of
+// 20,000/day. The Worker is only called when something changed, which on
+// most days is zero.
 
 // Keep in sync with DEFAULT_NWS_ZONE (weather.js) and the nwsZone values in
 // districts.js: Howard + the six neighboring districts guilds can follow.
@@ -59,6 +65,28 @@ var HCPSS_STATUS_URL = 'https://status.hcpss.org';
 var EMAIL_LABEL = 'school-status-bot-forwarded';
 var DEFAULT_EMAIL_QUERY = 'from:(hcpss.org OR hcpssnews.com)';
 
+// Power-outage feeds (same sources the Worker's outage context uses). Counts
+// are bucketed to the nearest 100 customers before fingerprinting so meter
+// noise doesn't ping; the Worker additionally caps forced refreshes at one
+// per 5 minutes and only edits embeds while a power-threat warning is active.
+var BGE_COUNTIES_URL = 'https://bge-prod.ifactornotifi.com/report/datafeed/counties';
+var KUBRA_UTILITIES = [
+  {
+    id: 'pepco',
+    apiBase: 'https://phi-pepco.ifactornotifi.com/bpu/sc5',
+    instanceId: 'bac68083-1c42-44ee-bb3c-6d1c1c026f52',
+    viewId: 'ebc719f2-1185-46c2-8bf6-d0a2876c537f',
+    reportId: '3a6114a2-76f8-4f13-820e-fef1610dd2d6'
+  },
+  {
+    id: 'pe',
+    apiBase: 'https://kubra.io',
+    instanceId: '6c715f0e-bbec-465f-98cc-0b81623744be',
+    viewId: '5ed3ddf1-3a6f-4cfd-8957-eba54b5baaad',
+    reportId: 'f168325d-ae23-407f-8134-b18e1946bf41'
+  }
+];
+
 // Entry point for the timed trigger: all watchers, each shielded so one
 // failing never blocks the others.
 function runWatchers() {
@@ -73,10 +101,90 @@ function runWatchers() {
     console.error('NWS alerts check failed: ' + e);
   }
   try {
+    checkOutages();
+  } catch (e) {
+    console.error('Outage check failed: ' + e);
+  }
+  try {
     checkHcpssEmails();
   } catch (e) {
     console.error('HCPSS email check failed: ' + e);
   }
+}
+
+// Watches the outage feeds and pings /refresh-hook when the picture changes,
+// so posted storm embeds update their outage/roads/weather context within
+// minutes instead of on the 15-minute cron. Skips the run when any feed is
+// unreadable (a missing utility would look like a change).
+function checkOutages() {
+  var props = PropertiesService.getScriptProperties();
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+  }
+
+  var parts = [];
+
+  var bge = UrlFetchApp.fetch(BGE_COUNTIES_URL, {
+    headers: { 'User-Agent': NWS_USER_AGENT, Accept: 'application/json' },
+    muteHttpExceptions: true
+  });
+  if (bge.getResponseCode() !== 200) return;
+  var bgeData = JSON.parse(bge.getContentText()) || {};
+  (bgeData.counties || []).forEach(function (c) {
+    if (c && c.county) parts.push('bge:' + c.county + '=' + bucket(c.customersOut));
+  });
+
+  for (var i = 0; i < KUBRA_UTILITIES.length; i++) {
+    var u = KUBRA_UTILITIES[i];
+    var cs = UrlFetchApp.fetch(
+      u.apiBase + '/stormcenter/api/v1/stormcenters/' + u.instanceId + '/views/' + u.viewId + '/currentState',
+      { headers: { 'User-Agent': NWS_USER_AGENT, Accept: 'application/json' }, muteHttpExceptions: true }
+    );
+    if (cs.getResponseCode() !== 200) return;
+    var igd = ((JSON.parse(cs.getContentText()) || {}).data || {}).interval_generation_data;
+    if (!igd) return;
+    var rep = UrlFetchApp.fetch('https://kubra.io/' + igd + '/public/reports/' + u.reportId + '_report.json', {
+      headers: { 'User-Agent': NWS_USER_AGENT, Accept: 'application/json' },
+      muteHttpExceptions: true
+    });
+    if (rep.getResponseCode() !== 200) return;
+    var areas = (((JSON.parse(rep.getContentText()) || {}).file_data) || {}).areas || [];
+    areas.forEach(function (a) {
+      if (a && a.name) parts.push(u.id + ':' + a.name + '=' + bucket(a.cust_a && a.cust_a.val));
+    });
+  }
+
+  var fingerprint = md5Hex(parts.sort().join('|'));
+  var previous = props.getProperty('fp_outages');
+  if (previous === fingerprint) return;
+
+  if (previous === null) {
+    props.setProperty('fp_outages', fingerprint); // first run: baseline only
+    return;
+  }
+
+  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/refresh-hook', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: '{}',
+    muteHttpExceptions: true
+  });
+  var code = ping.getResponseCode();
+  if (code >= 200 && code < 300) {
+    props.setProperty('fp_outages', fingerprint);
+    console.log('Pinged worker: outage picture changed.');
+  } else {
+    console.error('Refresh hook ping failed: ' + code + ' ' + ping.getContentText());
+  }
+}
+
+// Rounds an outage count to the nearest 100 so meter noise never fingerprints
+// as a change.
+function bucket(n) {
+  return Math.round((Number(n) || 0) / 100) * 100;
 }
 
 // Forwards HCPSS announcement emails from this Google account's inbox to the

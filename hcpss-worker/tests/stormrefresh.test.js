@@ -155,6 +155,48 @@ test('off-gate minutes bail before any KV reads or writes', async (t) => {
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
+test('forced refresh skips the minute gate and dedupes on a 5-minute bucket', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  // 12:07 is off-gate for the cron, but a push-hook force runs anyway.
+  const offGate = new Date('2026-01-15T12:07:00Z');
+  const first = await maybeRefreshStormEmbeds(env, offGate, { force: true });
+  assert.equal(first.updated, 1);
+  assert.equal(patches.length, 1);
+
+  // Another ping in the same 5-minute bucket: deduped.
+  const second = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:08:00Z'), { force: true });
+  assert.equal(second.updated, 0);
+  assert.equal(patches.length, 1);
+
+  // Next 5-minute bucket: refreshes again.
+  const third = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:12:00Z'), { force: true });
+  assert.equal(third.updated, 1);
+  assert.equal(patches.length, 2);
+});
+
+test('forced refresh still requires an active power threat', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+});
+
 test('guilds with all storm sections disabled are skipped', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store);

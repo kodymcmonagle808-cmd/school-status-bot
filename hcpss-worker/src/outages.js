@@ -57,6 +57,18 @@ export const COUNTY_UTILITIES = {
   "Prince George's": ['pepco', 'bge']
 };
 
+// Drops every cached outage summary so the next reader fetches live. Used by
+// the /refresh-hook push path — the external watcher just saw the numbers
+// change, and a forced embed refresh must not rebuild from the pre-change
+// cache. Never throws.
+export async function clearOutageCaches(env) {
+  if (!env || !env.STATUS_KV) return;
+  const keys = [OUTAGE_CACHE_KEY, ...Object.values(KUBRA_UTILITIES).map(u => u.cacheKey)];
+  for (const key of keys) {
+    try { await env.STATUS_KV.delete(key); } catch {}
+  }
+}
+
 function timeoutSignal(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms);

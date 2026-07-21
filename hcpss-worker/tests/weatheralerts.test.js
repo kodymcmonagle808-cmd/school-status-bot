@@ -134,7 +134,9 @@ test('/nws-hook rejects when the secret is missing or wrong', async () => {
   assert.equal(wrong.status, 403);
 });
 
-test('/nws-hook validates the zone and clears its alert cache', async () => {
+test('/nws-hook validates the zone and clears its alert cache', async (t) => {
+  // The hook's background passes may refetch the cleared zone — keep them offline.
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
   const kv = kvStub({
     weather_alerts_cache: '[]',
     'weather_alerts_cache:MDC031': '[]'
@@ -160,7 +162,8 @@ test('/nws-hook validates the zone and clears its alert cache', async () => {
   await Promise.all(waited);
 });
 
-test('/status-hook requires the shared secret and acks a valid ping', async () => {
+test('/status-hook requires the shared secret and acks a valid ping', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
   const waited = [];
   const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
   const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kvStub() };
@@ -179,6 +182,32 @@ test('/status-hook requires the shared secret and acks a valid ping', async () =
   // The change-only check runs in waitUntil; with no guilds registered it
   // must finish without touching the network.
   await Promise.all(waited);
+});
+
+test('/refresh-hook clears the outage caches and acks', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
+  const kv = kvStub({
+    bge_outage_cache: 'x',
+    pepco_outage_cache: 'x',
+    pe_outage_cache: 'x'
+  });
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv };
+  const req = (token) => new Request('https://worker.example/refresh-hook', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: '{}'
+  });
+
+  assert.equal((await worker.fetch(req('wrong'), env, ctx)).status, 403);
+
+  const ok = await worker.fetch(req('s3cret'), env, ctx);
+  assert.equal(ok.status, 200);
+  await Promise.all(waited);
+  assert.ok(!kv.map.has('bge_outage_cache'));
+  assert.ok(!kv.map.has('pepco_outage_cache'));
+  assert.ok(!kv.map.has('pe_outage_cache'));
 });
 
 test('clearWeatherAlertCache never throws without KV', async () => {

@@ -13,6 +13,10 @@ import { discordFetch } from './discord.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+// Push-hook (forced) refreshes dedupe on a finer bucket: a storm's outage
+// numbers move constantly, and the external watcher pings on every real
+// change — this caps embed edits at one per 5 minutes.
+const FORCED_INTERVAL_MS = 5 * 60 * 1000;
 
 async function readGuildIds(env) {
   let guildIds = [];
@@ -33,12 +37,18 @@ async function readGuildIds(env) {
 // hour — a clock gate costs zero KV ops, where the old probe-slot key spent
 // ~96 writes/day pacing the quiet-weather path year-round. The slot key still
 // dedupes the refresh itself in case a delayed tick lands in the same bucket.
+// { force: true } (the /refresh-hook push path — the external watcher saw
+// outage or alert data change) skips the minute gate and dedupes on a
+// 5-minute bucket instead; the power-threat requirement always applies.
 // Never throws.
-export async function maybeRefreshStormEmbeds(env, now = new Date()) {
+export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) {
   if (!env || !env.STATUS_KV) return { updated: 0 };
-  if (now.getUTCMinutes() % 15 !== 0) return { updated: 0 };
+  const force = opts.force === true;
+  if (!force && now.getUTCMinutes() % 15 !== 0) return { updated: 0 };
 
-  const slot = String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
+  const slot = force
+    ? `f${Math.floor(now.getTime() / FORCED_INTERVAL_MS)}`
+    : String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
   if (await env.STATUS_KV.get(SLOT_KEY) === slot) return { updated: 0 };
 
   // Weather is checked before claiming the slot so quiet days cost no writes,

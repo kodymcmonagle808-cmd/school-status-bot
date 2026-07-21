@@ -118,6 +118,12 @@ Every 5 minutes it checks two sources and pings the Worker (bearer
   status actually changed (cosmetic page edits stay silent, and guilds that
   disabled storm mode keep posts to their scheduled times only). The
   panel-scheduled posts keep firing at their configured times regardless.
+- **Power outages** → `POST /refresh-hook`. When the BGE/Pepco/Potomac Edison
+  county picture changes (bucketed to the nearest 100 customers), the Worker
+  drops its outage caches and force-refreshes the posted storm embeds so
+  outage/roads/weather context stays current within minutes during a storm —
+  still gated on an active power-threat warning and capped at one edit per 5
+  minutes. NWS zone changes trigger the same refresh.
 - **HCPSS emails** → `POST /email-hook`. Announcement emails in the owner's
   Gmail that never reach the status page are forwarded into each guild's
   alert channel (per-guild `toggle_email_alerts`, HCPSS-primary guilds only,
