@@ -154,11 +154,12 @@ async function handleScraperSuccessOrFailure(env, scrapeFailed, error, targetGui
 export async function doCheckAndPost(env, options = {}) {
   const start = Date.now();
   const isScheduled = options.source === 'scheduled';
-  // 'hook': the external page watcher (gas/nws-alert-watcher.js) saw the
-  // status page change. Skips schedule matching, bypasses the 60s scrape
-  // cache, and — like a storm check — posts only where the status changed.
-  // Panel-scheduled posts still fire at their times regardless of change.
-  const isHook = options.source === 'hook';
+  // Change-only mode: the external page watcher (source 'hook') or a member
+  // check that spotted a difference (changeOnly: true). Skips schedule
+  // matching, bypasses the 60s scrape cache, and — like a storm check —
+  // posts only where the status changed. Panel-scheduled posts still fire
+  // at their times regardless of change.
+  const isHook = options.source === 'hook' || options.changeOnly === true;
 
   // Guild configs are needed in up to four places per run (schedule matching,
   // storm-zone probe, primary-district map, posting) — read each one once.
@@ -530,7 +531,7 @@ export async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `${isStale ? '⚠️' : isStormCheck ? '🌨️' : isHook ? '📡' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : isStormCheck ? ' (storm mode detected a status change)' : isHook ? ' (page watcher detected a status change)' : ''} (source: ${sourceLabel}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
+        `${isStale ? '⚠️' : isStormCheck ? '🌨️' : isHook ? '📡' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : isStormCheck ? ' (storm mode detected a status change)' : isHook ? ' (off-schedule change detected)' : ''} (source: ${sourceLabel}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
         { latency },
         guildId
       );
@@ -574,4 +575,28 @@ export async function doCheckAndPost(env, options = {}) {
     error: liveStatusResult.error && liveStatusResult.error.message,
     message: `Processed ${targetGuildIds.length} guilds. Success: ${successCount}, Failures: ${failureCount}`
   };
+}
+
+// A member's private /status or Check-again click just rendered the current
+// page; if what they saw differs from the tracked status, run the change-only
+// pass so the channel posts go out now instead of waiting for the next poll.
+// The pass re-verifies against a live scrape and dedupes, so a stale view or
+// a race between two clicks still can't double-post. Never throws.
+export async function maybePushMemberCheckChange(env, builtStatus, guildId) {
+  try {
+    if (!env || !env.STATUS_KV || !builtStatus || builtStatus.isOverride || builtStatus.isError) return;
+    const config = getEffectiveConfig(await getConfig(env, guildId));
+    // District-primary guilds see their district's announcements — the HCPSS
+    // text comparison below only fits HCPSS views. (The change-only pass does
+    // track district changes, but it needs an HCPSS-side trigger signal.)
+    if (config.primary_district && config.primary_district !== 'hcpss') return;
+    const first = builtStatus.payload && Array.isArray(builtStatus.payload.embeds) ? builtStatus.payload.embeds[0] : null;
+    const text = first ? (first.description || '') : '';
+    if (!text) return;
+    const last = await env.STATUS_KV.get('last_known_status');
+    if (last === null || last === text) return;
+    await doCheckAndPost(env, { source: 'member-check', changeOnly: true });
+  } catch (e) {
+    console.error('Member-check change push failed:', e);
+  }
 }

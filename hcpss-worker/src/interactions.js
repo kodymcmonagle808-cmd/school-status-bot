@@ -20,6 +20,7 @@ import {
 import { toggleSubscriber } from './subscriptions.js';
 import { getConfig, getEffectiveConfig, canUseCommands, canConfigure } from './config.js';
 import { buildStatusPayload } from './embeds.js';
+import { maybePushMemberCheckChange } from './check.js';
 import { buildControlPanelPayload, applyConfigUpdate } from './panel.js';
 import {
   runCalendarCommand,
@@ -495,6 +496,9 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
     const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId });
+    // If this member's re-check just revealed a status change, push the
+    // channel posts out in the background instead of waiting for the next poll.
+    ctx.waitUntil(maybePushMemberCheckChange(env, builtStatus, guildId));
     return interactionResponse({
       content: '',
       embeds: builtStatus.payload.embeds,

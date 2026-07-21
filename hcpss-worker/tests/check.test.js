@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { doCheckAndPost, delayAnnouncedToday } from '../src/check.js';
+import { doCheckAndPost, delayAnnouncedToday, maybePushMemberCheckChange } from '../src/check.js';
+import { buildStatusPayload } from '../src/embeds.js';
 import { getEasternTimeStr } from '../src/timeutil.js';
 
 test('delayAnnouncedToday only matches a same-day 2-hour-delay entry', () => {
@@ -212,6 +213,33 @@ test('hook check respects a guild\'s storm-mode opt-out', async (t) => {
 
   assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, 1);
   assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g2/')).length, 0);
+});
+
+test('a member check that sees a change pushes the channel posts', async (t) => {
+  const html = { value: statusHtml('Normal Operations', 'All systems normal.') };
+  const calls = mockFetch(t, { html });
+  const env = makeEnv();
+  seedGuild(env, 'g1');
+
+  // Baseline post records last_known_status.
+  await doCheckAndPost(env, { source: 'manual', guildId: 'g1' });
+  const baseline = calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length;
+
+  // Member re-check with the same status: no extra channel post.
+  const sameView = await buildStatusPayload(env, { guildId: 'g1' });
+  await maybePushMemberCheckChange(env, sameView, 'g1');
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, baseline);
+
+  // Page flips and a member's private check sees it first: the channel post
+  // goes out through the change-only pass.
+  html.value = statusHtml('Schools Closed', 'All schools are closed today.');
+  env.STATUS_KV.store.delete('last_good_scrape'); // member views honor the 60s cache
+  const changedView = await buildStatusPayload(env, { guildId: 'g1' });
+  await maybePushMemberCheckChange(env, changedView, 'g1');
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, baseline + 1);
+
+  const history = JSON.parse(env.STATUS_KV.store.get('status_history'));
+  assert.equal(history[0].status_key, 'schools_closed');
 });
 
 test('a failed alert-channel post is reported and tracked as a failure streak', async (t) => {

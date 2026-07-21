@@ -9,7 +9,7 @@ import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './deci
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
 import { postLog } from './panel.js';
-import { doCheckAndPost } from './check.js';
+import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
 import { getActiveWeatherAlerts, getCachedWeatherAlerts, formatWeatherAlertLines, hasStormAlert, DEFAULT_NWS_ZONE } from './weather.js';
@@ -102,6 +102,9 @@ export async function runStatusCommand(body, env) {
     content: '',
     embeds: builtStatus.payload.embeds
   });
+  // If this member's check just revealed a status change, push the channel
+  // posts out now instead of waiting for the next poll.
+  await maybePushMemberCheckChange(env, builtStatus, guildId);
 }
 
 export function runHelpCommand() {
