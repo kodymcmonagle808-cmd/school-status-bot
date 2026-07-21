@@ -1,6 +1,6 @@
 # Privacy Policy for School Status
 
-**Last Updated: July 19, 2026**
+**Last Updated: July 21, 2026**
 
 This Privacy Policy explains what information the "School Status" Discord bot ("the Bot," "we," "us," or "our") collects, how it is used, and your rights regarding that information.
 
@@ -9,7 +9,7 @@ This Privacy Policy explains what information the "School Status" Discord bot ("
 School Status is designed to collect the **minimum data necessary** to function. This typically includes:
 
 **Server (Guild) Configuration Data:**
-- Discord Server (Guild) ID
+- Discord Server (Guild) ID and server name
 - Designated status-announcement Channel ID
 - Optional Role ID(s) configured to be pinged on alerts
 - Server-specific settings (e.g., which alert types are enabled)

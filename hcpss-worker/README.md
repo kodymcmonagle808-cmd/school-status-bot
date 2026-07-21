@@ -45,6 +45,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Warns the log channel and DMs the server owner after 3 consecutive failed posts to the alert channel (deleted channel, missing permissions), and resets the streak on the next successful post.
 - Discord API calls retry once on rate limits (honoring `retry_after`) and transient 5xx errors, and embeds are clamped to Discord's field/total size limits so a burst-heavy storm morning can't drop a guild's post.
 - Shows the day's KV usage against the Cloudflare free-plan limits as budget bars on the owner-only Worker Updates panel page, with a warning banner as the write budget fills. Counts come from Cloudflare's GraphQL analytics API (read-only, no KV writes of its own), cached ~5 minutes; needs `CF_API_TOKEN`, `CF_ACCOUNT_ID`, and `KV_NAMESPACE_ID` (all wired by the deploy) and degrades to a clear "not configured / unavailable" note otherwise.
+- Watches the bot's own server membership (every 30 minutes) and posts join/leave notices to the home log channel, so a stranger's server can be vetted and locked down the day it appears.
 - Exposes `GET /health` for a lightweight health check, including the served-guild count, current scraper failure streak, and the last status-change timestamp.
 - Protects unsigned manual `POST` triggers with `MANUAL_TRIGGER_TOKEN`.
 

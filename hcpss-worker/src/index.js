@@ -17,6 +17,7 @@ import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
+import { maybeWatchServerMembership } from './serverwatch.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
 import { recordWatcherError } from './watcherhealth.js';
@@ -229,6 +230,12 @@ export default {
       } catch (e) {
         console.error('Guild cleanup run failed', e);
         await recordWatcherError(env, 'cleanup', e);
+      }
+      try {
+        await maybeWatchServerMembership(env);
+      } catch (e) {
+        console.error('Server membership watch failed', e);
+        await recordWatcherError(env, 'serverwatch', e);
       }
     })());
   }
