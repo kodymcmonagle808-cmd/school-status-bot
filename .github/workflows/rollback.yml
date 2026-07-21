@@ -58,6 +58,7 @@ jobs:
           DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
           MANUAL_TRIGGER_TOKEN: ${{ secrets.MANUAL_TRIGGER_TOKEN }}
           OWNER_ID: ${{ secrets.OWNER_ID }}
+          NWS_HOOK_SECRET: ${{ secrets.NWS_HOOK_SECRET }}
           GITHUB_SHA: ${{ steps.target.outputs.full_sha }}
         run: |
           chmod +x ./hcpss-worker/scripts/deploy_worker.sh
