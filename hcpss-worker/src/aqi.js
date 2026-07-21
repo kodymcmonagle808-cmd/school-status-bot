@@ -24,6 +24,11 @@ export const AQI_ALERT_UNTIL_MIN = 20 * 60;
 
 export const AQI_ALERT_THRESHOLD = 101; // Unhealthy for Sensitive Groups
 
+// The cron fires every minute; scan on one fixed minute of every fifteen. A
+// clock gate costs zero KV ops, unlike the old cooldown key (~50 writes/day).
+// Offset staggers this scan away from the other watchers' gate minutes.
+export const SCAN_MINUTE_OFFSET = 4;
+
 // AirNow reporting area for each county the bot can follow (verified against
 // AirNow's own point lookups). Prince George's reports under the DC area, so
 // both MD and DC state feeds are fetched.
@@ -114,17 +119,12 @@ async function fetchStateRecords(env, stateCode) {
 }
 
 // Runs from the per-minute cron. Never throws.
-export async function maybeSendAqiAlerts(env) {
+export async function maybeSendAqiAlerts(env, now = new Date()) {
   if (!env || !env.STATUS_KV) return { sent: 0 };
-  const now = new Date();
   const [h, m] = getEasternTimeStr(now).split(':').map(Number);
   const nowMin = h * 60 + m;
   if (nowMin < AQI_ALERT_FROM_MIN || nowMin >= AQI_ALERT_UNTIL_MIN) return { sent: 0 };
-
-  // The cron fires every minute; scan at most once per 15 so quiet days cost
-  // one cached KV read per minute.
-  if (await env.STATUS_KV.get('aqi_scan_cooldown')) return { sent: 0 };
-  await env.STATUS_KV.put('aqi_scan_cooldown', '1', { expirationTtl: 900 }).catch(() => {});
+  if (m % 15 !== SCAN_MINUTE_OFFSET) return { sent: 0 };
 
   let guildIds = [];
   const rawIndex = await env.STATUS_KV.get('guild_index');

@@ -17,6 +17,9 @@ function makeKv(store = new Map()) {
 
 const STORM_ALERT = [{ event: 'Winter Storm Warning', severity: 'Severe', endsMs: 0 }];
 
+// The refresh only runs on :00/:15/:30/:45 minutes — pin a gate-passing time.
+const GATE_NOW = new Date('2026-01-15T12:00:00Z');
+
 function seedGuild(store, gid, { tracked = true } = {}) {
   store.set(`config:${gid}`, JSON.stringify({ alert_channel_id: `chan-${gid}` }));
   if (tracked) {
@@ -56,14 +59,14 @@ test('storm refresh PATCHes tracked messages and dedupes its 15-minute slot', as
   mockFetch(t, patches);
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  const first = await maybeRefreshStormEmbeds(env);
+  const first = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(first.updated, 1);
   assert.equal(patches.length, 1);
   assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
   assert.ok(kv.store.has('last_storm_refresh_slot'));
 
   // Same 15-minute slot: no second refresh.
-  const second = await maybeRefreshStormEmbeds(env);
+  const second = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(second.updated, 0);
   assert.equal(patches.length, 1);
 });
@@ -78,7 +81,7 @@ test('no storm alert means no refresh and no slot claim', async (t) => {
   mockFetch(t, patches);
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  const result = await maybeRefreshStormEmbeds(env);
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
@@ -98,7 +101,7 @@ test('advisory-level winter alerts do not trigger the refresh', async (t) => {
   mockFetch(t, patches);
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  const result = await maybeRefreshStormEmbeds(env);
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
@@ -124,29 +127,32 @@ test('a power threat in a primary district\'s own zone triggers the refresh', as
   mockFetch(t, patches);
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  const result = await maybeRefreshStormEmbeds(env);
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 1);
   assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
 });
 
-test('the district-zone probe runs at most once per 15-minute slot', async (t) => {
+test('off-gate minutes bail before any KV reads or writes', async (t) => {
   const kv = makeKv();
-  seedCommon(kv.store, { storm: false });
+  seedCommon(kv.store);
   seedGuild(kv.store, 'g1');
   kv.store.set('guild_index', JSON.stringify(['g1']));
 
   const patches = [];
   mockFetch(t, patches);
 
-  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  await maybeRefreshStormEmbeds(env);
-  assert.ok(kv.store.has('last_storm_probe_slot'));
-  // Second quiet tick in the same slot bails before any config reads.
   const reads = [];
   const origGet = kv.get.bind(kv);
   kv.get = async (key) => { reads.push(key); return origGet(key); };
-  await maybeRefreshStormEmbeds(env);
-  assert.equal(reads.includes('config:g1'), false);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  // 12:07 is not a :00/:15/:30/:45 minute — the whole run is skipped even
+  // though a storm alert is active.
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'));
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+  assert.equal(reads.length, 0);
+  assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
 test('guilds with all storm sections disabled are skipped', async (t) => {
@@ -166,7 +172,7 @@ test('guilds with all storm sections disabled are skipped', async (t) => {
   mockFetch(t, patches);
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
-  const result = await maybeRefreshStormEmbeds(env);
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
 });

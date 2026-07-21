@@ -21,8 +21,6 @@ import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 import { notifySchoolSubscribers } from './schoolsubs.js';
 
-const SCAN_COOLDOWN_KEY = 'bus_alert_scan_cooldown';
-const SCAN_COOLDOWN_TTL_SECONDS = 600;
 const LAST_POSTED_KEY = 'bus_alert_last_ms';
 const ACTIVITY_LAST_KEY = 'activity_alert_last_ms';
 const SCHOOL_NOTICE_LAST_KEY = 'school_notice_last_ms';
@@ -76,20 +74,30 @@ export function isWithinBusAlertHours(etStr) {
   return Number.isFinite(h) && h >= BUS_ALERT_START_HOUR && h < BUS_ALERT_END_HOUR;
 }
 
+// The cron fires every minute; scan on one fixed minute of every ten. A clock
+// gate costs zero KV ops — the old cooldown key (get + TTL put) spent ~100
+// writes/day of the 1,000/day free budget just pacing itself. Offset staggers
+// this scan away from the other watchers' gate minutes.
+export const SCAN_MINUTE_OFFSET = 2;
+
+export function isBusScanMinute(etStr) {
+  const m = Number(String(etStr).split(':')[1]);
+  return Number.isFinite(m) && m % 10 === SCAN_MINUTE_OFFSET;
+}
+
 function timeoutSignal(ms) {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), ms);
   return controller.signal;
 }
 
-// Scans the news feed (at most once per 10 minutes) and posts any new
-// transportation alerts to every opted-in guild. Never throws.
-export async function maybeSendBusAlerts(env) {
+// Scans the news feed (once per 10 minutes, on the clock-gate minute) and
+// posts any new transportation alerts to every opted-in guild. Never throws.
+export async function maybeSendBusAlerts(env, now = new Date()) {
   if (!env || !env.STATUS_KV) return { sent: 0 };
-  if (!isWithinBusAlertHours(getEasternTimeStr(new Date()))) return { sent: 0 };
-
-  if (await env.STATUS_KV.get(SCAN_COOLDOWN_KEY)) return { sent: 0 };
-  await env.STATUS_KV.put(SCAN_COOLDOWN_KEY, '1', { expirationTtl: SCAN_COOLDOWN_TTL_SECONDS }).catch(() => {});
+  const etStr = getEasternTimeStr(now);
+  if (!isWithinBusAlertHours(etStr)) return { sent: 0 };
+  if (!isBusScanMinute(etStr)) return { sent: 0 };
 
   let items = [];
   try {

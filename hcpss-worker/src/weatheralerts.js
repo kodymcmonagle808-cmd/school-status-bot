@@ -2,7 +2,8 @@
 // Weather Service issues a school-impacting alert (winter/heat watch,
 // warning, or advisory) for the guild's county — the moment parents start
 // wondering about tomorrow. Uses the same 10-minute alert cache as the
-// status embeds, so quiet days cost one cached KV read per scan.
+// status embeds; quiet zones are fetched live (the cache only stores
+// active alerts, so a quiet scan costs an NWS fetch and no KV writes).
 //
 // Dedupe is per guild by event name: each event posts once and is considered
 // "seen" until that alert's end time passes (24h fallback when NWS gives no
@@ -16,9 +17,12 @@ import { getActiveWeatherAlerts, isSchoolImpactIssuance, DEFAULT_NWS_ZONE } from
 import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
-const SCAN_COOLDOWN_KEY = 'nws_alert_scan_cooldown';
-const SCAN_COOLDOWN_TTL_SECONDS = 600;
 const SEEN_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
+
+// The cron fires every minute; scan on one fixed minute of every ten. A clock
+// gate costs zero KV ops, unlike the old cooldown key (~100 writes/day).
+// Offset staggers this scan away from the other watchers' gate minutes.
+export const SCAN_MINUTE_OFFSET = 6;
 
 // Quiet hours: alerts issued overnight wait for 6 AM ET (storm mode already
 // covers the early-morning window; a 3 AM ping helps nobody sleep).
@@ -60,15 +64,12 @@ export function issuanceEmbedColor(alerts) {
 }
 
 // Runs from the per-minute cron. Never throws.
-export async function maybeSendWeatherAlertNotices(env) {
+export async function maybeSendWeatherAlertNotices(env, now = new Date()) {
   if (!env || !env.STATUS_KV) return { sent: 0 };
-  const now = new Date();
   const [h, m] = getEasternTimeStr(now).split(':').map(Number);
   const nowMin = h * 60 + m;
   if (nowMin < POST_FROM_MIN || nowMin >= POST_UNTIL_MIN) return { sent: 0 };
-
-  if (await env.STATUS_KV.get(SCAN_COOLDOWN_KEY)) return { sent: 0 };
-  await env.STATUS_KV.put(SCAN_COOLDOWN_KEY, '1', { expirationTtl: SCAN_COOLDOWN_TTL_SECONDS }).catch(() => {});
+  if (m % 10 !== SCAN_MINUTE_OFFSET) return { sent: 0 };
 
   let guildIds = [];
   const rawIndex = await env.STATUS_KV.get('guild_index');

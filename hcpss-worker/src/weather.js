@@ -148,7 +148,12 @@ export async function getActiveWeatherAlerts(env, zone = DEFAULT_NWS_ZONE) {
     if (!r.ok) throw new Error('NWS fetch failed ' + r.status);
     const data = await r.json();
     const alerts = summarizeWeatherAlerts(data && data.features);
-    if (env && env.STATUS_KV) {
+    // Only cache when there ARE active alerts. Callers are clock-gated, so a
+    // quiet zone costs a few NWS fetches per hour and zero KV writes — the
+    // old always-write-with-TTL pattern spent ~144 writes/day per zone
+    // rewriting an empty array all summer. A cache miss and an empty list
+    // mean the same thing to every reader.
+    if (env && env.STATUS_KV && alerts.length > 0) {
       await env.STATUS_KV.put(cacheKey, JSON.stringify(alerts), { expirationTtl: WEATHER_CACHE_TTL_SECONDS }).catch(() => {});
     }
     return alerts;

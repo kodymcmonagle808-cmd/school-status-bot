@@ -12,7 +12,6 @@ import { buildStatusPayload } from './embeds.js';
 import { discordFetch } from './discord.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
-const PROBE_SLOT_KEY = 'last_storm_probe_slot';
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 async function readGuildIds(env) {
@@ -30,27 +29,27 @@ async function readGuildIds(env) {
   return guildIds;
 }
 
-// Runs from the per-minute cron; the first tick of each 15-minute bucket does
-// the refresh, so cron drift can't cause skips or doubles. Never throws.
-export async function maybeRefreshStormEmbeds(env) {
+// Runs from the per-minute cron, gated to the :00/:15/:30/:45 minute of each
+// hour — a clock gate costs zero KV ops, where the old probe-slot key spent
+// ~96 writes/day pacing the quiet-weather path year-round. The slot key still
+// dedupes the refresh itself in case a delayed tick lands in the same bucket.
+// Never throws.
+export async function maybeRefreshStormEmbeds(env, now = new Date()) {
   if (!env || !env.STATUS_KV) return { updated: 0 };
+  if (now.getUTCMinutes() % 15 !== 0) return { updated: 0 };
 
-  const slot = String(Math.floor(Date.now() / REFRESH_INTERVAL_MS));
+  const slot = String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
   if (await env.STATUS_KV.get(SLOT_KEY) === slot) return { updated: 0 };
 
-  // Weather is checked before claiming the slot so quiet days cost one cached
-  // read, and the first storm-time tick still runs the refresh.
+  // Weather is checked before claiming the slot so quiet days cost no writes,
+  // and the first storm-time tick still runs the refresh.
   const alerts = await getActiveWeatherAlerts(env);
   let threat = hasPowerThreatAlert(alerts);
 
   let guildIds = null;
   if (!threat) {
     // No threat in the default (Howard) zone: probe the zones of guilds whose
-    // primary district is a neighboring county. This costs config reads, so it
-    // runs at most once per 15-minute bucket via its own slot key.
-    if (await env.STATUS_KV.get(PROBE_SLOT_KEY) === slot) return { updated: 0 };
-    await env.STATUS_KV.put(PROBE_SLOT_KEY, slot);
-
+    // primary district is a neighboring county.
     guildIds = await readGuildIds(env);
     const zones = new Set();
     for (const gid of guildIds) {
