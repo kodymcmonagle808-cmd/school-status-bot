@@ -495,15 +495,19 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {
-    const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId });
-    // If this member's re-check just revealed a status change, push the
-    // channel posts out in the background instead of waiting for the next poll.
-    ctx.waitUntil(maybePushMemberCheckChange(env, builtStatus, guildId));
-    return interactionResponse({
-      content: '',
-      embeds: builtStatus.payload.embeds,
-      flags: EPHEMERAL_FLAG
-    });
+    // Building the private view scrapes live pages and can outrun Discord's
+    // 3-second interaction deadline — ack immediately, then edit the reply.
+    ctx.waitUntil((async () => {
+      const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId });
+      await updateInteractionOriginal(env, body.token, {
+        content: '',
+        embeds: builtStatus.payload.embeds
+      });
+      // If this member's re-check just revealed a status change, push the
+      // channel posts out now instead of waiting for the next poll.
+      await maybePushMemberCheckChange(env, builtStatus, guildId);
+    })());
+    return deferredInteractionResponse();
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'setup_cancel') {

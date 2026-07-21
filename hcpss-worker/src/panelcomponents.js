@@ -50,9 +50,17 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     if (selected === 'worker_updates') {
       const ownerId = String(env.OWNER_ID || '').trim();
       const isOwner = ownerId && getInvokerId(body) === ownerId;
+      // Ack instantly (type 6 — deferred update) so slow page builds can't
+      // hit Discord's 3-second deadline, then reset the shared panel to its
+      // stored page (un-sticking the select) and deliver the owner page — or
+      // the lock notice — as an ephemeral follow-up.
       ctx.waitUntil((async () => {
-        // Give Discord a beat to process the type-7 ack before the follow-up.
-        await delay(300);
+        try {
+          const panelPayload = await buildControlPanelPayload(env, guildId);
+          await updateInteractionOriginal(env, body.token, panelPayload);
+        } catch (e) {
+          console.error('Panel reset after worker_updates select failed:', e);
+        }
         if (!isOwner) {
           await followupInteractionMessage(env, body.token, {
             content: '🔒 Worker Updates is only visible to the bot owner.',
@@ -70,8 +78,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
           });
         }
       })());
-      const payload = await buildControlPanelPayload(env, guildId);
-      return jsonResponse({ type: 7, data: payload });
+      return jsonResponse({ type: 6 });
     }
 
     const target = PANEL_NAV_TABS.some(t => t.value === selected) ? selected : 'dashboard';
