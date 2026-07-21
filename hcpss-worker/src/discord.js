@@ -136,6 +136,17 @@ export async function updateInteractionOriginal(env, interactionToken, payload) 
   }).catch(() => {});
 }
 
+export async function followupInteractionMessage(env, interactionToken, payload) {
+  const applicationId = env.DISCORD_APPLICATION_ID;
+  if (!applicationId || !interactionToken) return;
+
+  await discordFetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).catch(() => {});
+}
+
 export async function createGuildRole(guildId, roleName, token) {
   const url = `https://discord.com/api/v10/guilds/${guildId}/roles`;
   const response = await fetch(url, {

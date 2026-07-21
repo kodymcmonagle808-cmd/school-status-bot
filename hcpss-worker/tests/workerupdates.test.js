@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatWorkerUpdates, buildOwnerStatsFields } from '../src/panel.js';
+import { formatWorkerUpdates, buildOwnerStatsFields, buildWorkerUpdatesPayload } from '../src/panel.js';
 
 test('formatWorkerUpdates handles an empty or missing list', () => {
   assert.match(formatWorkerUpdates([]), /No worker updates recorded yet/);
@@ -73,6 +73,51 @@ test('buildOwnerStatsFields warns when the running sha is behind the latest depl
   const version = fieldValue(fields, 'Running version');
   assert.match(version, /`aaaaaaa`/);
   assert.match(version, /⚠️ latest deploy is `bbbbbbb`/);
+});
+
+function kvStub(seed = {}) {
+  const map = new Map(Object.entries(seed));
+  return {
+    async get(key) { return map.has(key) ? map.get(key) : null; },
+    async put(key, value) { map.set(key, value); },
+    async delete(key) { map.delete(key); }
+  };
+}
+
+test('buildWorkerUpdatesPayload uses the newest per-guild check time', async () => {
+  // Checks are recorded per guild; the owner page must surface the most
+  // recent one (and its latency), not the long-dead global key.
+  const env = {
+    STATUS_KV: kvStub({
+      guild_index: JSON.stringify(['111', '222']),
+      guild_names_cache: JSON.stringify({ 111: 'Alpha', 222: 'Beta' }),
+      'last_check_time:111': '1752940800000',
+      'last_check_latency:111': '843',
+      'last_check_time:222': '1752000000000',
+      'last_check_latency:222': '99'
+    }),
+    GIT_SHA: '',
+    DISCORD_GUILD_ID: '',
+    DISCORD_BOT_TOKEN: 'token'
+  };
+  const payload = await buildWorkerUpdatesPayload(env);
+  const fields = payload.embeds[0].fields;
+  assert.equal(fieldValue(fields, 'Last check'), '<t:1752940800:R> · 843 ms');
+});
+
+test('buildWorkerUpdatesPayload shows (none yet) when no guild has checked', async () => {
+  const env = {
+    STATUS_KV: kvStub({
+      guild_index: JSON.stringify(['111']),
+      guild_names_cache: JSON.stringify({ 111: 'Alpha' })
+    }),
+    GIT_SHA: '',
+    DISCORD_GUILD_ID: '',
+    DISCORD_BOT_TOKEN: 'token'
+  };
+  const payload = await buildWorkerUpdatesPayload(env);
+  const fields = payload.embeds[0].fields;
+  assert.equal(fieldValue(fields, 'Last check'), '(none yet)');
 });
 
 test('buildOwnerStatsFields degrades cleanly with no data at all', () => {

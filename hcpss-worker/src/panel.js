@@ -384,8 +384,23 @@ export async function buildWorkerUpdatesPayload(env) {
   let lastCheckLatencyMs = 0;
   try {
     consecutiveFailures = Number(await env.STATUS_KV.get('scraper_failures_count')) || 0;
-    lastCheckTime = Number(await env.STATUS_KV.get('last_check_time')) || 0;
-    lastCheckLatencyMs = Number(await env.STATUS_KV.get('last_check_latency')) || 0;
+    // Checks are recorded per guild (`last_check_time:${guildId}`); the old
+    // global key stopped updating when checks went multi-server, so the
+    // fleet-wide "last check" is the newest per-guild timestamp.
+    const perGuild = await Promise.all(indexIds.map(async gid => ({
+      gid,
+      ts: Number(await env.STATUS_KV.get(`last_check_time:${gid}`)) || 0
+    })));
+    let newestGuild = '';
+    for (const { gid, ts } of perGuild) {
+      if (ts > lastCheckTime) {
+        lastCheckTime = ts;
+        newestGuild = gid;
+      }
+    }
+    if (newestGuild) {
+      lastCheckLatencyMs = Number(await env.STATUS_KV.get(`last_check_latency:${newestGuild}`)) || 0;
+    }
   } catch {}
 
   const watcherErrors = await getWatcherErrors(env);

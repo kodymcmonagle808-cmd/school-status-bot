@@ -16,6 +16,7 @@ import {
   interactionResponse,
   deferredInteractionResponse,
   updateInteractionOriginal,
+  followupInteractionMessage,
   getInvokerId
 } from './discord.js';
 import { delay, formatScheduleTimeLabel } from './timeutil.js';
@@ -41,19 +42,36 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   if (customId === 'panel_nav_select') {
     const selected = Array.isArray(body.data.values) && body.data.values[0];
 
-    // Owner-only page: replies ephemerally (never rendered into the shared
-    // panel message) and the panel stays on its current page. OWNER_ID is a
-    // worker secret; unset means the page is locked for everyone.
+    // Owner-only page: delivered ephemerally (never rendered into the shared
+    // panel message). The initial response is a type-7 re-render of the
+    // panel's stored page so the nav select doesn't stay stuck on "Worker
+    // Updates"; the actual content goes out as an ephemeral follow-up.
+    // OWNER_ID is a worker secret; unset means the page is locked for everyone.
     if (selected === 'worker_updates') {
       const ownerId = String(env.OWNER_ID || '').trim();
-      if (!ownerId || getInvokerId(body) !== ownerId) {
-        return interactionResponse({
-          content: '🔒 Worker Updates is only visible to the bot owner.',
-          flags: EPHEMERAL_FLAG
-        });
-      }
-      const payload = await buildWorkerUpdatesPayload(env);
-      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+      const isOwner = ownerId && getInvokerId(body) === ownerId;
+      ctx.waitUntil((async () => {
+        // Give Discord a beat to process the type-7 ack before the follow-up.
+        await delay(300);
+        if (!isOwner) {
+          await followupInteractionMessage(env, body.token, {
+            content: '🔒 Worker Updates is only visible to the bot owner.',
+            flags: EPHEMERAL_FLAG
+          });
+          return;
+        }
+        try {
+          const ownerPayload = await buildWorkerUpdatesPayload(env);
+          await followupInteractionMessage(env, body.token, { ...ownerPayload, flags: EPHEMERAL_FLAG });
+        } catch {
+          await followupInteractionMessage(env, body.token, {
+            content: '⚠️ Could not build the Worker Updates page — try again in a minute.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+      })());
+      const payload = await buildControlPanelPayload(env, guildId);
+      return jsonResponse({ type: 7, data: payload });
     }
 
     const target = PANEL_NAV_TABS.some(t => t.value === selected) ? selected : 'dashboard';
