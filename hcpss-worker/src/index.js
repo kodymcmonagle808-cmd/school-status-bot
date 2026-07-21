@@ -16,6 +16,7 @@ import { maybeUpdateDecisionWatch } from './decisionwatch.js';
 import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
+import { handleEmailHook } from './emailhook.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -115,7 +116,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -123,6 +124,17 @@ export default {
       if (!provided || provided !== env.NWS_HOOK_SECRET) {
         return new Response('Forbidden', { status: 403 });
       }
+    }
+
+    // An HCPSS announcement email arrived in the owner's inbox that may never
+    // reach the status page: forward it to every eligible guild's alert
+    // channel. Posted inline (no waitUntil) so the Apps Script only marks the
+    // email as forwarded after a real 2xx.
+    if (url.pathname === '/email-hook') {
+      let payload = null;
+      try { payload = await request.json(); } catch {}
+      const result = await handleEmailHook(env, payload || {});
+      return jsonResponse(result, result.ok ? 200 : 400);
     }
 
     // The status page changed: run a change-only check pass now. Posts land

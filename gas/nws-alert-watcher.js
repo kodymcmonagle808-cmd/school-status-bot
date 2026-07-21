@@ -1,6 +1,6 @@
 // Google Apps Script: external change watcher for school-status-bot.
 //
-// Two watchers on one free 5-minute Google trigger:
+// Three watchers on one free 5-minute Google trigger:
 //   1. NWS alerts — polls the active-alerts feed for every county zone the
 //      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
 //      zone's alert set changes. The Worker's own cron scan drops to an
@@ -11,6 +11,14 @@
 //      posts only to guilds whose status actually changed, so a cosmetic
 //      page edit never posts anything. Panel-scheduled posts keep firing at
 //      their configured times no matter what.
+//   3. HCPSS emails — watches this Google account's Gmail for HCPSS
+//      announcement emails (the ones that never reach the status page) and
+//      POSTs them to /email-hook, which forwards them into each guild's
+//      alert channel. Needs the Gmail permission — after pasting this
+//      version, run runWatchers() once manually and approve the new consent
+//      prompt. If your HCPSS mail arrives at a different address, forward it
+//      to this Gmail, and if the sender isn't @hcpss.org set an EMAIL_QUERY
+//      script property (e.g. from:someschoolsender.com).
 //
 // Setup (one time, ~5 minutes):
 //   1. Go to https://script.google.com → New project, name it "nws-alert-watcher".
@@ -44,8 +52,15 @@ var NWS_USER_AGENT = 'school-status-bot gas watcher (github.com/kodymcmonagle808
 
 var HCPSS_STATUS_URL = 'https://status.hcpss.org';
 
-// Entry point for the timed trigger: both watchers, each shielded so one
-// failing never blocks the other.
+// Gmail label marking already-forwarded HCPSS emails, and the search query
+// for finding them. Override the query with an EMAIL_QUERY script property if
+// your HCPSS emails come from a different sender (check the From address on
+// one of them).
+var EMAIL_LABEL = 'school-status-bot-forwarded';
+var DEFAULT_EMAIL_QUERY = 'from:(hcpss.org OR hcpssnews.com)';
+
+// Entry point for the timed trigger: all watchers, each shielded so one
+// failing never blocks the others.
 function runWatchers() {
   try {
     checkHcpssStatus();
@@ -57,6 +72,71 @@ function runWatchers() {
   } catch (e) {
     console.error('NWS alerts check failed: ' + e);
   }
+  try {
+    checkHcpssEmails();
+  } catch (e) {
+    console.error('HCPSS email check failed: ' + e);
+  }
+}
+
+// Forwards HCPSS announcement emails from this Google account's inbox to the
+// Worker's /email-hook, which posts them to the Discord alert channels.
+// Threads are labeled only after the Worker acks, so a failed delivery is
+// retried next run; the Worker dedupes by Gmail message id, so a retry can
+// never double-post. First run labels existing matches without forwarding
+// (baseline), so installing this never replays old mail.
+function checkHcpssEmails() {
+  var props = PropertiesService.getScriptProperties();
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+  }
+
+  var label = GmailApp.getUserLabelByName(EMAIL_LABEL) || GmailApp.createLabel(EMAIL_LABEL);
+  var query = '(' + (props.getProperty('EMAIL_QUERY') || DEFAULT_EMAIL_QUERY) + ')' +
+    ' newer_than:2d -label:' + EMAIL_LABEL;
+  var threads = GmailApp.search(query, 0, 10);
+  if (!threads.length) return;
+
+  var baselineDone = props.getProperty('email_baseline_done') === 'yes';
+  if (!baselineDone) {
+    threads.forEach(function (t) { t.addLabel(label); });
+    props.setProperty('email_baseline_done', 'yes');
+    console.log('Email baseline recorded: ' + threads.length + ' existing thread(s) labeled, not forwarded.');
+    return;
+  }
+
+  threads.forEach(function (thread) {
+    try {
+      var allOk = true;
+      thread.getMessages().forEach(function (msg) {
+        var resp = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/email-hook', {
+          method: 'post',
+          contentType: 'application/json',
+          headers: { Authorization: 'Bearer ' + secret },
+          payload: JSON.stringify({
+            id: msg.getId(),
+            subject: msg.getSubject(),
+            body: msg.getPlainBody().trim().slice(0, 3500),
+            receivedAt: msg.getDate().getTime()
+          }),
+          muteHttpExceptions: true
+        });
+        var code = resp.getResponseCode();
+        if (code < 200 || code >= 300) {
+          allOk = false;
+          console.error('Email hook ping failed: ' + code + ' ' + resp.getContentText());
+        }
+      });
+      if (allOk) {
+        thread.addLabel(label);
+        console.log('Forwarded email thread: ' + thread.getFirstMessageSubject());
+      }
+    } catch (e) {
+      console.error('Email thread forward failed: ' + e);
+    }
+  });
 }
 
 // Watches the HCPSS status page. Fingerprints the status-block section (the

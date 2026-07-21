@@ -118,6 +118,11 @@ Every 5 minutes it checks two sources and pings the Worker (bearer
   status actually changed (cosmetic page edits stay silent, and guilds that
   disabled storm mode keep posts to their scheduled times only). The
   panel-scheduled posts keep firing at their configured times regardless.
+- **HCPSS emails** → `POST /email-hook`. Announcement emails in the owner's
+  Gmail that never reach the status page are forwarded into each guild's
+  alert channel (per-guild `toggle_email_alerts`, HCPSS-primary guilds only,
+  deduped by Gmail message id). Needs the Gmail permission granted in the
+  Apps Script.
 
 Setup steps are in the comment at the top of the script file.
 
