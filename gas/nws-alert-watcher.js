@@ -68,10 +68,19 @@ var HCPSS_STATUS_URL = 'https://status.hcpss.org';
 var EMAIL_LABEL = 'school-status-bot-forwarded';
 var DEFAULT_EMAIL_QUERY = 'from:(hcpss.org OR hcpssnews.com)';
 
+// The only counties the bot can serve — every fingerprint below is filtered
+// to these, so a crash in Garrett County or an outage in Delaware never
+// pings the Worker. Keep in sync with districts.js counties.
+var WATCHED_COUNTIES = [
+  'Howard', 'Anne Arundel', 'Baltimore', 'Carroll',
+  'Frederick', 'Montgomery', "Prince George's"
+];
+
 // Power-outage feeds (same sources the Worker's outage context uses). Counts
 // are bucketed to the nearest 100 customers before fingerprinting so meter
 // noise doesn't ping; the Worker additionally caps forced refreshes at one
-// per 5 minutes and only edits embeds while a power-threat warning is active.
+// per 5 minutes and only edits embeds while an alert is active. Each
+// utility's `keep` lists that feed's names for the watched counties.
 var BGE_COUNTIES_URL = 'https://bge-prod.ifactornotifi.com/report/datafeed/counties';
 var KUBRA_UTILITIES = [
   {
@@ -79,14 +88,16 @@ var KUBRA_UTILITIES = [
     apiBase: 'https://phi-pepco.ifactornotifi.com/bpu/sc5',
     instanceId: 'bac68083-1c42-44ee-bb3c-6d1c1c026f52',
     viewId: 'ebc719f2-1185-46c2-8bf6-d0a2876c537f',
-    reportId: '3a6114a2-76f8-4f13-820e-fef1610dd2d6'
+    reportId: '3a6114a2-76f8-4f13-820e-fef1610dd2d6',
+    keep: ['MG', 'PG']
   },
   {
     id: 'pe',
     apiBase: 'https://kubra.io',
     instanceId: '6c715f0e-bbec-465f-98cc-0b81623744be',
     viewId: '5ed3ddf1-3a6f-4cfd-8957-eba54b5baaad',
-    reportId: 'f168325d-ae23-407f-8134-b18e1946bf41'
+    reportId: 'f168325d-ae23-407f-8134-b18e1946bf41',
+    keep: ['FREDERICK', 'CARROLL', 'MONTGOMERY', 'HOWARD']
   }
 ];
 
@@ -141,7 +152,9 @@ function checkOutages() {
   if (bge.getResponseCode() !== 200) return;
   var bgeData = JSON.parse(bge.getContentText()) || {};
   (bgeData.counties || []).forEach(function (c) {
-    if (c && c.county) parts.push('bge:' + c.county + '=' + bucket(c.customersOut));
+    if (c && c.county && WATCHED_COUNTIES.indexOf(c.county) !== -1) {
+      parts.push('bge:' + c.county + '=' + bucket(c.customersOut));
+    }
   });
 
   for (var i = 0; i < KUBRA_UTILITIES.length; i++) {
@@ -160,7 +173,9 @@ function checkOutages() {
     if (rep.getResponseCode() !== 200) return;
     var areas = (((JSON.parse(rep.getContentText()) || {}).file_data) || {}).areas || [];
     areas.forEach(function (a) {
-      if (a && a.name) parts.push(u.id + ':' + a.name + '=' + bucket(a.cust_a && a.cust_a.val));
+      if (a && a.name && u.keep.indexOf(a.name) !== -1) {
+        parts.push(u.id + ':' + a.name + '=' + bucket(a.cust_a && a.cust_a.val));
+      }
     });
   }
 
@@ -197,7 +212,7 @@ function bucket(n) {
 
 // Watches Maryland CHART road incidents (same feed and meaningful-incident
 // filter as the Worker's roads context) and pings /refresh-hook when the
-// county set of open incidents changes.
+// watched counties' set of open incidents changes.
 var CHART_INCIDENTS_URL = 'https://chart.maryland.gov/DataFeeds/GetIncidentXml';
 var ROAD_TYPE_RE = /weather|closure|collision|injury|damage|debris|flood/i;
 var ROAD_DESC_RE = /\b(snow|ice|icy|sleet|flood(?:ed|ing)?|closed|closure|crash|collision|jack-?knif\w*|overturn\w*|downed (?:tree|wire|pole)|tree down|wires? down)\b/i;
@@ -230,6 +245,9 @@ function checkRoads() {
     var desc = tag('description').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     var alertFlag = tag('trafficAlert') === 'true';
     if (!county || !desc) return;
+    // Only the counties the bot serves — statewide incidents churn constantly
+    // and would ping on nearly every run.
+    if (WATCHED_COUNTIES.indexOf(county) === -1) return;
     if (!alertFlag && !ROAD_TYPE_RE.test(type) && !ROAD_DESC_RE.test(desc)) return;
     parts.push(county + '|' + type + '|' + desc.slice(0, 120));
   });

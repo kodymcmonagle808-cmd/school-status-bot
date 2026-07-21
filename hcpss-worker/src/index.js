@@ -17,8 +17,6 @@ import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
 import { handleEmailHook } from './emailhook.js';
-import { clearOutageCaches } from './outages.js';
-import { clearRoadsCache } from './roads.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -140,14 +138,15 @@ export default {
     }
 
     // Outage numbers or road conditions changed: refresh the posted embeds
-    // now with live data. Forced refreshes dedupe on a 5-minute bucket, so
-    // ping bursts cost at most one edit per 5 minutes.
+    // with live data — but only while an alert is active (that's when those
+    // sections are shown), and at most one edit per 5 minutes. On a quiet
+    // day this ping costs a couple of KV reads and nothing else.
     if (url.pathname === '/refresh-hook') {
-      ctx.waitUntil((async () => {
-        await clearOutageCaches(env);
-        await clearRoadsCache(env);
-        await maybeRefreshStormEmbeds(env, new Date(), { force: true });
-      })().catch(e => {
+      ctx.waitUntil(maybeRefreshStormEmbeds(env, new Date(), {
+        force: true,
+        requireActiveAlerts: true,
+        refreshContextCaches: true
+      }).catch(e => {
         console.error('Refresh hook failed', e);
       }));
       return jsonResponse({ ok: true });

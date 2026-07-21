@@ -197,6 +197,54 @@ test('forced refresh runs even without a power threat (the hook saw a real chang
   assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
 });
 
+test('requireActiveAlerts skips the forced refresh on a quiet day', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+  kv.store.set('bge_outage_cache', 'x');
+  kv.store.set('chart_incidents_cache', 'x');
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), {
+    force: true, requireActiveAlerts: true, refreshContextCaches: true
+  });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+  // Skipped runs must not churn the data caches either.
+  assert.ok(kv.store.has('bge_outage_cache'));
+  assert.ok(kv.store.has('chart_incidents_cache'));
+});
+
+test('requireActiveAlerts refreshes and clears context caches when an alert is cached', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store); // any active alert qualifies, not just power threats
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: 0 }
+  ]));
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+  kv.store.set('bge_outage_cache', 'x');
+  kv.store.set('chart_incidents_cache', 'x');
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), {
+    force: true, requireActiveAlerts: true, refreshContextCaches: true
+  });
+  assert.equal(result.updated, 1);
+  assert.equal(patches.length, 1);
+  // The stale caches were dropped; the rebuild re-fetched and re-cached, so
+  // the old values must be gone.
+  assert.notEqual(kv.store.get('bge_outage_cache'), 'x', 'outage cache replaced by a live fetch');
+  assert.notEqual(kv.store.get('chart_incidents_cache'), 'x', 'roads cache replaced by a live fetch');
+});
+
 test('cron refresh still requires an active power threat', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store, { storm: false });

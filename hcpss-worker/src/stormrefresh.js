@@ -5,11 +5,13 @@
 // existing message in place — no new posts, no pings. Advisory-level events
 // don't trigger it.
 
-import { getActiveWeatherAlerts, hasPowerThreatAlert } from './weather.js';
+import { getActiveWeatherAlerts, getCachedWeatherAlerts, hasPowerThreatAlert } from './weather.js';
 import { getDistrictMeta } from './districts.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { discordFetch } from './discord.js';
+import { clearOutageCaches } from './outages.js';
+import { clearRoadsCache } from './roads.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -53,6 +55,28 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
   if (await env.STATUS_KV.get(SLOT_KEY) === slot) return { updated: 0 };
 
   let guildIds = null;
+  if (force && opts.requireActiveAlerts) {
+    // Data-context pings (outages, roads) only matter while some alert is
+    // active — that's when the embed shows those sections. Cache-only reads:
+    // the weather cache exists only while alerts are active, so a quiet day
+    // costs a couple of KV reads and no fetches, edits, or cache churn.
+    let active = (await getCachedWeatherAlerts(env)).length > 0;
+    if (!active) {
+      guildIds = await readGuildIds(env);
+      const zones = new Set();
+      for (const gid of guildIds) {
+        const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+        if (meta && meta.nwsZone) zones.add(meta.nwsZone);
+      }
+      for (const zone of zones) {
+        if ((await getCachedWeatherAlerts(env, zone)).length > 0) {
+          active = true;
+          break;
+        }
+      }
+    }
+    if (!active) return { updated: 0 };
+  }
   if (!force) {
     // Cron path: refresh only while a power-threatening storm is active.
     // Weather is checked before claiming the slot so quiet days cost no
@@ -79,6 +103,14 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
     }
   }
   await env.STATUS_KV.put(SLOT_KEY, slot);
+
+  // Only once a refresh is definitely happening: drop the data caches the
+  // caller flagged as stale, so the rebuild fetches live. Clearing before
+  // the gates would churn writes on refreshes that never run.
+  if (opts.refreshContextCaches) {
+    await clearOutageCaches(env);
+    await clearRoadsCache(env);
+  }
 
   if (!guildIds) guildIds = await readGuildIds(env);
 

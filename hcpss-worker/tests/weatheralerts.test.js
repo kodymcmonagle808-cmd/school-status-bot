@@ -184,7 +184,7 @@ test('/status-hook requires the shared secret and acks a valid ping', async (t) 
   await Promise.all(waited);
 });
 
-test('/refresh-hook clears the outage caches and acks', async (t) => {
+test('/refresh-hook acks but touches nothing when no alert is active', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
   const kv = kvStub({
     bge_outage_cache: 'x',
@@ -205,9 +205,10 @@ test('/refresh-hook clears the outage caches and acks', async (t) => {
   const ok = await worker.fetch(req('s3cret'), env, ctx);
   assert.equal(ok.status, 200);
   await Promise.all(waited);
-  assert.ok(!kv.map.has('bge_outage_cache'));
-  assert.ok(!kv.map.has('pepco_outage_cache'));
-  assert.ok(!kv.map.has('pe_outage_cache'));
+  // Quiet day (no cached alerts): the refresh skips entirely — caches stay.
+  assert.ok(kv.map.has('bge_outage_cache'));
+  assert.ok(kv.map.has('pepco_outage_cache'));
+  assert.ok(kv.map.has('pe_outage_cache'));
 });
 
 test('clearWeatherAlertCache never throws without KV', async () => {
