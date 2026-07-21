@@ -18,6 +18,7 @@ import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
 import { handleEmailHook } from './emailhook.js';
 import { clearOutageCaches } from './outages.js';
+import { clearRoadsCache } from './roads.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -138,13 +139,13 @@ export default {
       return jsonResponse(result, result.ok ? 200 : 400);
     }
 
-    // Outage numbers (or other storm context) changed: refresh the posted
-    // storm embeds now with live data. The refresh keeps its power-threat
-    // requirement and a 5-minute dedupe bucket, so quiet-day blips and ping
-    // bursts cost nothing.
+    // Outage numbers or road conditions changed: refresh the posted embeds
+    // now with live data. Forced refreshes dedupe on a 5-minute bucket, so
+    // ping bursts cost at most one edit per 5 minutes.
     if (url.pathname === '/refresh-hook') {
       ctx.waitUntil((async () => {
         await clearOutageCaches(env);
+        await clearRoadsCache(env);
         await maybeRefreshStormEmbeds(env, new Date(), { force: true });
       })().catch(e => {
         console.error('Refresh hook failed', e);

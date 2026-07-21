@@ -37,10 +37,11 @@ async function readGuildIds(env) {
 // hour — a clock gate costs zero KV ops, where the old probe-slot key spent
 // ~96 writes/day pacing the quiet-weather path year-round. The slot key still
 // dedupes the refresh itself in case a delayed tick lands in the same bucket.
-// { force: true } (the /refresh-hook push path — the external watcher saw
-// outage or alert data change) skips the minute gate and dedupes on a
-// 5-minute bucket instead; the power-threat requirement always applies.
-// Never throws.
+// { force: true } (the push-hook paths — the external watcher saw alert,
+// outage, or road data actually change) skips both the minute gate and the
+// power-threat probe: something on the embed is known-stale, so refresh it
+// whatever the weather. Forced runs dedupe on a 5-minute bucket, capping the
+// edit rate during a busy storm. Never throws.
 export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) {
   if (!env || !env.STATUS_KV) return { updated: 0 };
   const force = opts.force === true;
@@ -51,28 +52,31 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
     : String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
   if (await env.STATUS_KV.get(SLOT_KEY) === slot) return { updated: 0 };
 
-  // Weather is checked before claiming the slot so quiet days cost no writes,
-  // and the first storm-time tick still runs the refresh.
-  const alerts = await getActiveWeatherAlerts(env);
-  let threat = hasPowerThreatAlert(alerts);
-
   let guildIds = null;
-  if (!threat) {
-    // No threat in the default (Howard) zone: probe the zones of guilds whose
-    // primary district is a neighboring county.
-    guildIds = await readGuildIds(env);
-    const zones = new Set();
-    for (const gid of guildIds) {
-      const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
-      if (meta && meta.nwsZone) zones.add(meta.nwsZone);
-    }
-    for (const zone of zones) {
-      if (hasPowerThreatAlert(await getActiveWeatherAlerts(env, zone))) {
-        threat = true;
-        break;
+  if (!force) {
+    // Cron path: refresh only while a power-threatening storm is active.
+    // Weather is checked before claiming the slot so quiet days cost no
+    // writes, and the first storm-time tick still runs the refresh.
+    const alerts = await getActiveWeatherAlerts(env);
+    let threat = hasPowerThreatAlert(alerts);
+
+    if (!threat) {
+      // No threat in the default (Howard) zone: probe the zones of guilds whose
+      // primary district is a neighboring county.
+      guildIds = await readGuildIds(env);
+      const zones = new Set();
+      for (const gid of guildIds) {
+        const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+        if (meta && meta.nwsZone) zones.add(meta.nwsZone);
       }
+      for (const zone of zones) {
+        if (hasPowerThreatAlert(await getActiveWeatherAlerts(env, zone))) {
+          threat = true;
+          break;
+        }
+      }
+      if (!threat) return { updated: 0 };
     }
-    if (!threat) return { updated: 0 };
   }
   await env.STATUS_KV.put(SLOT_KEY, slot);
 

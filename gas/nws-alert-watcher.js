@@ -1,6 +1,6 @@
 // Google Apps Script: external change watcher for school-status-bot.
 //
-// Four watchers on one free 5-minute Google trigger:
+// Five watchers on one free 5-minute Google trigger:
 //   1. NWS alerts — polls the active-alerts feed for every county zone the
 //      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
 //      zone's alert set changes. The Worker's own cron scan drops to an
@@ -16,7 +16,10 @@
 //      the nearest 100 customers), so posted storm embeds refresh their
 //      outage/roads/weather context within minutes during a storm instead
 //      of on the 15-minute cron. Quiet days never ping.
-//   4. HCPSS emails — watches this Google account's Gmail for HCPSS
+//   4. Road conditions — polls the Maryland CHART incident feed and pings
+//      /refresh-hook when the set of meaningful open incidents changes, so
+//      the roads lines on posted embeds stay current too.
+//   5. HCPSS emails — watches this Google account's Gmail for HCPSS
 //      announcement emails (the ones that never reach the status page) and
 //      POSTs them to /email-hook, which forwards them into each guild's
 //      alert channel. Needs the Gmail permission — after pasting this
@@ -37,10 +40,10 @@
 //   5. Done — runWatchers() now runs every 5 minutes. Executions page
 //      shows each run; testPing() verifies the Worker connection.
 //
-// Quota math: (7 zones + 1 status page + 5 outage feeds) x 288 runs/day ≈
-// 3,750 URL fetches/day, well under the consumer Apps Script limit of
-// 20,000/day. The Worker is only called when something changed, which on
-// most days is zero.
+// Quota math: (7 zones + 1 status page + 5 outage feeds + 1 roads feed) x
+// 288 runs/day ≈ 4,000 URL fetches/day, well under the consumer Apps Script
+// limit of 20,000/day. The Worker is only called when something changed,
+// which on most days is zero.
 
 // Keep in sync with DEFAULT_NWS_ZONE (weather.js) and the nwsZone values in
 // districts.js: Howard + the six neighboring districts guilds can follow.
@@ -104,6 +107,11 @@ function runWatchers() {
     checkOutages();
   } catch (e) {
     console.error('Outage check failed: ' + e);
+  }
+  try {
+    checkRoads();
+  } catch (e) {
+    console.error('Roads check failed: ' + e);
   }
   try {
     checkHcpssEmails();
@@ -185,6 +193,70 @@ function checkOutages() {
 // as a change.
 function bucket(n) {
   return Math.round((Number(n) || 0) / 100) * 100;
+}
+
+// Watches Maryland CHART road incidents (same feed and meaningful-incident
+// filter as the Worker's roads context) and pings /refresh-hook when the
+// county set of open incidents changes.
+var CHART_INCIDENTS_URL = 'https://chart.maryland.gov/DataFeeds/GetIncidentXml';
+var ROAD_TYPE_RE = /weather|closure|collision|injury|damage|debris|flood/i;
+var ROAD_DESC_RE = /\b(snow|ice|icy|sleet|flood(?:ed|ing)?|closed|closure|crash|collision|jack-?knif\w*|overturn\w*|downed (?:tree|wire|pole)|tree down|wires? down)\b/i;
+
+function checkRoads() {
+  var props = PropertiesService.getScriptProperties();
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+  }
+
+  var resp = UrlFetchApp.fetch(CHART_INCIDENTS_URL, {
+    headers: { 'User-Agent': NWS_USER_AGENT },
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() !== 200) return;
+  var xml = resp.getContentText();
+
+  var parts = [];
+  var blocks = xml.match(/<Incident>[\s\S]*?<\/Incident>/g) || [];
+  blocks.forEach(function (block) {
+    function tag(name) {
+      var m = block.match(new RegExp('<' + name + '>([\\s\\S]*?)</' + name + '>'));
+      return m ? m[1].trim() : '';
+    }
+    if (tag('closed') === 'true') return;
+    var county = tag('county');
+    var type = tag('incidentType');
+    var desc = tag('description').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    var alertFlag = tag('trafficAlert') === 'true';
+    if (!county || !desc) return;
+    if (!alertFlag && !ROAD_TYPE_RE.test(type) && !ROAD_DESC_RE.test(desc)) return;
+    parts.push(county + '|' + type + '|' + desc.slice(0, 120));
+  });
+
+  var fingerprint = md5Hex(parts.sort().join('~'));
+  var previous = props.getProperty('fp_roads');
+  if (previous === fingerprint) return;
+
+  if (previous === null) {
+    props.setProperty('fp_roads', fingerprint); // first run: baseline only
+    return;
+  }
+
+  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/refresh-hook', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: '{}',
+    muteHttpExceptions: true
+  });
+  var code = ping.getResponseCode();
+  if (code >= 200 && code < 300) {
+    props.setProperty('fp_roads', fingerprint);
+    console.log('Pinged worker: road incidents changed.');
+  } else {
+    console.error('Roads refresh ping failed: ' + code + ' ' + ping.getContentText());
+  }
 }
 
 // Forwards HCPSS announcement emails from this Google account's inbox to the

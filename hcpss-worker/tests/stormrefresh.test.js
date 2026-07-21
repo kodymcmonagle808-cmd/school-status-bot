@@ -182,7 +182,7 @@ test('forced refresh skips the minute gate and dedupes on a 5-minute bucket', as
   assert.equal(patches.length, 2);
 });
 
-test('forced refresh still requires an active power threat', async (t) => {
+test('forced refresh runs even without a power threat (the hook saw a real change)', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store, { storm: false });
   seedGuild(kv.store, 'g1');
@@ -193,6 +193,21 @@ test('forced refresh still requires an active power threat', async (t) => {
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
   const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 1);
+  assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
+});
+
+test('cron refresh still requires an active power threat', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
 });

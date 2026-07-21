@@ -20,6 +20,15 @@ function timeoutSignal(ms) {
   return controller.signal;
 }
 
+// Drops the cached incident list so the next reader fetches live. Used by the
+// /refresh-hook push path — a forced embed refresh must not rebuild from the
+// pre-change cache. Never throws.
+export async function clearRoadsCache(env) {
+  try {
+    if (env && env.STATUS_KV) await env.STATUS_KV.delete(ROADS_CACHE_KEY);
+  } catch {}
+}
+
 function tagValue(block, tag) {
   const m = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
   return m ? m[1].trim() : '';
