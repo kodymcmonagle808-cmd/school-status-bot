@@ -30,8 +30,11 @@ const FRESH_CACHE_MS = 60 * 1000;
 // Fetches and parses the live status page. On success the parsed cards are
 // cached in KV; on failure the last good scrape (if recent enough) is returned
 // with stale=true so callers can post a "last known status" instead of an error.
-export async function getStatusCards(env) {
-  if (env && env.STATUS_KV) {
+// bypassFreshCache skips the 60s cache read (the /status-hook push path must
+// see the post-change page even if a scheduled check cached it seconds ago)
+// while keeping the last-good scrape intact as the stale fallback.
+export async function getStatusCards(env, { bypassFreshCache = false } = {}) {
+  if (!bypassFreshCache && env && env.STATUS_KV) {
     try {
       const raw = await env.STATUS_KV.get(LAST_GOOD_SCRAPE_KEY);
       if (raw) {

@@ -154,6 +154,11 @@ async function handleScraperSuccessOrFailure(env, scrapeFailed, error, targetGui
 export async function doCheckAndPost(env, options = {}) {
   const start = Date.now();
   const isScheduled = options.source === 'scheduled';
+  // 'hook': the external page watcher (gas/nws-alert-watcher.js) saw the
+  // status page change. Skips schedule matching, bypasses the 60s scrape
+  // cache, and — like a storm check — posts only where the status changed.
+  // Panel-scheduled posts still fire at their times regardless of change.
+  const isHook = options.source === 'hook';
 
   // Guild configs are needed in up to four places per run (schedule matching,
   // storm-zone probe, primary-district map, posting) — read each one once.
@@ -172,8 +177,9 @@ export async function doCheckAndPost(env, options = {}) {
   } else {
     // Scheduled runs fire every minute, so read the cached guild index instead of
     // doing a KV list operation (list ops are limited to 1,000/day on the free plan).
+    // Hook runs use it too — they can burst on a stormy day.
     let haveIndex = false;
-    if (isScheduled) {
+    if (isScheduled || isHook) {
       const rawIndex = await env.STATUS_KV.get('guild_index');
       if (rawIndex) {
         try {
@@ -314,8 +320,9 @@ export async function doCheckAndPost(env, options = {}) {
   }
 
   // 1. Fetch HTML and extract cards once (falls back to the cached last-good
-  // scrape when the live page is unreachable).
-  const fetched = await getStatusCards(env);
+  // scrape when the live page is unreachable). A hook run must see the
+  // post-change page, so it skips the 60s fresh cache.
+  const fetched = await getStatusCards(env, { bypassFreshCache: isHook });
   const cards = fetched.cards;
   const error = fetched.cards ? null : fetched.error;
   const isStale = fetched.stale;
@@ -401,11 +408,13 @@ export async function doCheckAndPost(env, options = {}) {
     }
   }
 
-  // Storm checks are silent unless the status actually changed — no reposts,
-  // no pings, just fast detection of a new closing/delay announcement.
-  if (isStormCheck && !statusChanged && changedDistricts.size === 0) {
+  // Storm checks and hook runs are silent unless the status actually changed —
+  // no reposts, no pings, just fast detection of a new announcement. (A hook
+  // ping for a page change that doesn't alter the parsed status — markup
+  // tweaks, typo fixes — ends here.)
+  if ((isStormCheck || isHook) && !statusChanged && changedDistricts.size === 0) {
     await handleScraperSuccessOrFailure(env, scrapeFailed, fetched.error, targetGuildIds);
-    return { ok: true, skipped: true, message: 'Storm check: status unchanged.' };
+    return { ok: true, skipped: true, message: `${isHook ? 'Hook' : 'Storm'} check: status unchanged.` };
   }
 
   const results = [];
@@ -413,13 +422,16 @@ export async function doCheckAndPost(env, options = {}) {
 
   for (const guildId of activeGuildIds) {
     const config = await getCfg(guildId);
-    if (isStormCheck && config.toggle_storm_mode === false) {
+    // The storm-mode toggle covers hook posts too: both are "off-schedule
+    // posts when the status changes", and a guild that turned that off wants
+    // its posts only at the panel-scheduled times.
+    if ((isStormCheck || isHook) && config.toggle_storm_mode === false) {
       results.push({ guildId, ok: true, skipped: true, reason: 'Storm mode disabled' });
       continue;
     }
     const primary = guildPrimaries.get(guildId) || config.primary_district || 'hcpss';
     const guildSourceChanged = primary === 'hcpss' ? statusChanged : changedDistricts.has(primary);
-    if (isStormCheck && !guildSourceChanged) {
+    if ((isStormCheck || isHook) && !guildSourceChanged) {
       results.push({ guildId, ok: true, skipped: true, reason: 'Storm check: no change for this guild\'s district' });
       continue;
     }
@@ -474,8 +486,9 @@ export async function doCheckAndPost(env, options = {}) {
 
     // Every check posts the latest status, changed or not (the previous status
     // message is deleted after the new one goes out). The only exception is a
-    // scraper error during a scheduled run — the failure alert system covers that.
-    const shouldPostAlert = !isScheduled || !builtStatus.isError;
+    // scraper error during a scheduled or hook run — the failure alert system
+    // covers that; only explicit manual checks show the error embed.
+    const shouldPostAlert = (!isScheduled && !isHook) || !builtStatus.isError;
 
     let postedMessageId = null;
     if (shouldPostAlert) {
@@ -517,7 +530,7 @@ export async function doCheckAndPost(env, options = {}) {
       await postLog(
         env,
         logChannelId,
-        `${isStale ? '⚠️' : isStormCheck ? '🌨️' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : isStormCheck ? ' (storm mode detected a status change)' : ''} (source: ${sourceLabel}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
+        `${isStale ? '⚠️' : isStormCheck ? '🌨️' : isHook ? '📡' : '✅'} HCPSS status check posted${isStale ? ' (stale fallback — live page unreachable)' : isStormCheck ? ' (storm mode detected a status change)' : isHook ? ' (page watcher detected a status change)' : ''} (source: ${sourceLabel}${options.invokerId ? `, by: <@${options.invokerId}>` : ''}) to <#${channelId}>. [Jump to Message](https://discord.com/channels/${guildId}/${channelId}/${postedMessageId})`,
         { latency },
         guildId
       );

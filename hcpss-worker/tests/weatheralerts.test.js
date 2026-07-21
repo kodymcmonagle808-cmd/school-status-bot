@@ -160,6 +160,27 @@ test('/nws-hook validates the zone and clears its alert cache', async () => {
   await Promise.all(waited);
 });
 
+test('/status-hook requires the shared secret and acks a valid ping', async () => {
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kvStub() };
+  const req = (token) => new Request('https://worker.example/status-hook', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: '{}'
+  });
+
+  assert.equal((await worker.fetch(req('wrong'), env, ctx)).status, 403);
+  assert.equal((await worker.fetch(req(null), env, ctx)).status, 403);
+
+  const ok = await worker.fetch(req('s3cret'), env, ctx);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { ok: true });
+  // The change-only check runs in waitUntil; with no guilds registered it
+  // must finish without touching the network.
+  await Promise.all(waited);
+});
+
 test('clearWeatherAlertCache never throws without KV', async () => {
   await clearWeatherAlertCache(null, 'MDC027');
   await clearWeatherAlertCache({}, 'MDC031');

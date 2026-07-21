@@ -1,10 +1,16 @@
-// Google Apps Script: NWS alert change watcher for school-status-bot.
+// Google Apps Script: external change watcher for school-status-bot.
 //
-// Polls the NWS active-alerts feed for every county zone the bot can serve
-// and POSTs to the Worker's /nws-hook endpoint only when a zone's alert set
-// actually changes. Google runs the timed trigger for free, so the Worker's
-// own cron scan can drop to an hourly safety net (it does automatically once
-// NWS_HOOK_SECRET is configured on the Worker).
+// Two watchers on one free 5-minute Google trigger:
+//   1. NWS alerts — polls the active-alerts feed for every county zone the
+//      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
+//      zone's alert set changes. The Worker's own cron scan drops to an
+//      hourly safety net automatically once NWS_HOOK_SECRET is configured.
+//   2. HCPSS status page — polls https://status.hcpss.org and POSTs to
+//      /status-hook when the status block changes. The Worker then runs a
+//      change-only check immediately: it re-scrapes with its real parser and
+//      posts only to guilds whose status actually changed, so a cosmetic
+//      page edit never posts anything. Panel-scheduled posts keep firing at
+//      their configured times no matter what.
 //
 // Setup (one time, ~5 minutes):
 //   1. Go to https://script.google.com → New project, name it "nws-alert-watcher".
@@ -13,13 +19,14 @@
 //        WORKER_URL       = https://hcpss-worker.kodymcmonagle808.workers.dev
 //        NWS_HOOK_SECRET  = <the same secret you set on the Worker/GitHub>
 //   4. In the editor, run setupTriggers() once and grant the permissions
-//      it asks for (external requests + triggers).
-//   5. Done — checkNwsAlerts() now runs every 5 minutes. Executions page
+//      it asks for (external requests + triggers). Re-run it after pasting
+//      an updated copy of this file — it replaces the old triggers.
+//   5. Done — runWatchers() now runs every 5 minutes. Executions page
 //      shows each run; testPing() verifies the Worker connection.
 //
-// Quota math: 7 zones x 288 runs/day ≈ 2,016 URL fetches/day, well under the
-// consumer Apps Script limit of 20,000/day. The Worker is only called when
-// something changed, which on most days is zero times.
+// Quota math: (7 zones + 1 status page) x 288 runs/day ≈ 2,300 URL
+// fetches/day, well under the consumer Apps Script limit of 20,000/day. The
+// Worker is only called when something changed, which on most days is zero.
 
 // Keep in sync with DEFAULT_NWS_ZONE (weather.js) and the nwsZone values in
 // districts.js: Howard + the six neighboring districts guilds can follow.
@@ -35,7 +42,84 @@ var NWS_ZONES = [
 
 var NWS_USER_AGENT = 'school-status-bot gas watcher (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
-// Entry point for the timed trigger. Each zone is independent: a bad fetch
+var HCPSS_STATUS_URL = 'https://status.hcpss.org';
+
+// Entry point for the timed trigger: both watchers, each shielded so one
+// failing never blocks the other.
+function runWatchers() {
+  try {
+    checkHcpssStatus();
+  } catch (e) {
+    console.error('HCPSS status check failed: ' + e);
+  }
+  try {
+    checkNwsAlerts();
+  } catch (e) {
+    console.error('NWS alerts check failed: ' + e);
+  }
+}
+
+// Watches the HCPSS status page. Fingerprints the status-block section (the
+// exact region the Worker's scraper parses); if the site redesigns and that
+// section disappears, falls back to the page's visible text so changes are
+// still caught — worst case that pings more often, and the Worker re-checks
+// with its real parser and stays silent unless the parsed status changed.
+function checkHcpssStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+  }
+
+  var resp = UrlFetchApp.fetch(HCPSS_STATUS_URL, {
+    headers: { 'User-Agent': NWS_USER_AGENT },
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() !== 200) {
+    console.error('HCPSS status fetch returned ' + resp.getResponseCode());
+    return; // transient; try again next run
+  }
+  var html = resp.getContentText();
+
+  var section = html.match(/<section[^>]+id=["']status-block["'][^>]*>([\s\S]*?)<\/section>/i);
+  var content = section
+    ? section[1]
+    : html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+  var text = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  var fingerprint = md5Hex(text);
+
+  var previous = props.getProperty('fp_hcpss_status');
+  if (previous === fingerprint) return;
+
+  if (previous === null) {
+    // First run: baseline only, no ping (the current status was already posted).
+    props.setProperty('fp_hcpss_status', fingerprint);
+    return;
+  }
+
+  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/status-hook', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: '{}',
+    muteHttpExceptions: true
+  });
+  var code = ping.getResponseCode();
+  if (code >= 200 && code < 300) {
+    props.setProperty('fp_hcpss_status', fingerprint);
+    console.log('Pinged worker: HCPSS status page changed.');
+  } else {
+    console.error('Status hook ping failed: ' + code + ' ' + ping.getContentText());
+  }
+}
+
+function md5Hex(text) {
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, text);
+  return digest.map(function (b) { return ((b + 256) % 256).toString(16); }).join('');
+}
+
+// NWS watcher below. Each zone is independent: a bad fetch
 // for one zone never blocks the others, and the stored fingerprint is only
 // advanced after the Worker acknowledges the ping (so a Worker outage means
 // a retry on the next run, not a lost alert).
@@ -90,8 +174,7 @@ function fetchZoneFingerprint(zone) {
     var p = (f && f.properties) || {};
     return (f.id || p.id || p.event || '?') + '@' + (p.sent || '');
   }).sort();
-  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, parts.join('|'));
-  return digest.map(function (b) { return ((b + 256) % 256).toString(16); }).join('');
+  return md5Hex(parts.join('|'));
 }
 
 // Tells the Worker this zone's alerts changed. Returns true on a 2xx ack.
@@ -116,8 +199,8 @@ function pingWorker(workerUrl, secret, zone) {
 // triggers for this script so re-running never stacks duplicates).
 function setupTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('checkNwsAlerts').timeBased().everyMinutes(5).create();
-  console.log('Trigger installed: checkNwsAlerts every 5 minutes.');
+  ScriptApp.newTrigger('runWatchers').timeBased().everyMinutes(5).create();
+  console.log('Trigger installed: runWatchers (NWS alerts + HCPSS status) every 5 minutes.');
 }
 
 // Optional: run manually to verify the Worker URL + secret are right.

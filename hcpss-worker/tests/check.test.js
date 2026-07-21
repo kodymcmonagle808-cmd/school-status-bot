@@ -171,6 +171,49 @@ test('a status change DMs subscribers; a repost of the same status does not', as
   assert.equal(dmOpens[0].body.recipient_id, 'user9');
 });
 
+test('hook check bypasses the fresh scrape cache and posts only on a real change', async (t) => {
+  const html = { value: statusHtml('Normal Operations', 'All systems normal.') };
+  const calls = mockFetch(t, { html });
+  const env = makeEnv();
+  seedGuild(env, 'g1');
+
+  // Baseline post; also leaves a fresh (<60s) scrape cache behind.
+  await doCheckAndPost(env, { source: 'manual', guildId: 'g1' });
+  const baseline = calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length;
+
+  // Hook ping with an unchanged page: silent.
+  const unchanged = await doCheckAndPost(env, { source: 'hook' });
+  assert.equal(unchanged.skipped, true);
+  assert.match(unchanged.message, /Hook check: status unchanged/);
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, baseline);
+
+  // Page flips. The fresh cache still holds the old page — the hook must
+  // bypass it and see the closure immediately.
+  html.value = statusHtml('Schools Closed', 'All schools are closed today.');
+  const changed = await doCheckAndPost(env, { source: 'hook' });
+  assert.equal(changed.ok, true);
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, baseline + 1);
+
+  const history = JSON.parse(env.STATUS_KV.store.get('status_history'));
+  assert.equal(history[0].status_key, 'schools_closed');
+});
+
+test('hook check respects a guild\'s storm-mode opt-out', async (t) => {
+  const html = { value: statusHtml('Normal Operations', 'All systems normal.') };
+  const calls = mockFetch(t, { html });
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({ alert_channel_id: 'chan-g1' }));
+  env.STATUS_KV.store.set('config:g2', JSON.stringify({ alert_channel_id: 'chan-g2', toggle_storm_mode: false }));
+  env.STATUS_KV.store.set('guild_index', JSON.stringify(['g1', 'g2']));
+
+  await doCheckAndPost(env, { source: 'hook' }); // baseline observation
+  html.value = statusHtml('Schools Closed', 'All schools are closed today.');
+  await doCheckAndPost(env, { source: 'hook' });
+
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g1/')).length, 1);
+  assert.equal(calls.posts.filter(p => p.url.includes('/channels/chan-g2/')).length, 0);
+});
+
 test('a failed alert-channel post is reported and tracked as a failure streak', async (t) => {
   const html = { value: statusHtml('Normal Operations', 'All systems normal.') };
   let idCounter = 0;

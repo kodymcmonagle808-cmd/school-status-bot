@@ -111,19 +111,32 @@ export default {
       return new Response('Method not allowed', { status: 405 });
     }
 
-    // Push hook for the external NWS poller (gas/nws-alert-watcher.js): it
-    // watches the alert feeds on Google's free timed triggers and calls here
-    // only when a zone's alert set changes, which lets the cron scan in
-    // weatheralerts.js drop to an hourly safety net. Same bearer-token shape
-    // as the manual trigger, separate secret.
-    if (url.pathname === '/nws-hook') {
+    // Push hooks for the external poller (gas/nws-alert-watcher.js): it
+    // watches the NWS alert feeds and the HCPSS status page on Google's free
+    // timed triggers and calls here only when something changes. Same
+    // bearer-token shape as the manual trigger, separate shared secret.
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook') {
       if (!env.NWS_HOOK_SECRET) {
-        return new Response('NWS hook disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
+        return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
       const provided = getManualTriggerToken(request);
       if (!provided || provided !== env.NWS_HOOK_SECRET) {
         return new Response('Forbidden', { status: 403 });
       }
+    }
+
+    // The status page changed: run a change-only check pass now. Posts land
+    // only in guilds whose source status actually changed (the parsed status
+    // is re-verified, so cosmetic page edits stay silent), while the
+    // panel-scheduled posts keep firing at their times regardless.
+    if (url.pathname === '/status-hook') {
+      ctx.waitUntil(doCheckAndPost(env, { source: 'hook' }).catch(e => {
+        console.error('Status hook check failed', e);
+      }));
+      return jsonResponse({ ok: true });
+    }
+
+    if (url.pathname === '/nws-hook') {
       let zone = '';
       try {
         const body = await request.json();

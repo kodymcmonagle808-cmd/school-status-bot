@@ -102,16 +102,23 @@ $headers = @{ "x-manual-trigger-token" = "YOUR_MANUAL_TRIGGER_TOKEN" }
 Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
 ```
 
-## Push-Based NWS Alerts (optional)
+## Push-Based Watchers (optional)
 
-By default the Worker's cron scans the NWS alert feeds every 10 minutes. A free
-Google Apps Script (`gas/nws-alert-watcher.js` at the repo root) can take over
-the polling on Google's timed triggers instead: it fingerprints each county
-zone's active alerts every 5 minutes and POSTs to `POST /nws-hook` (bearer
-`NWS_HOOK_SECRET`) only when a zone's alert set changes. The Worker then drops
-that zone's cache and runs the issuance-notice pass immediately — alerts land
-faster, and once `NWS_HOOK_SECRET` is configured the cron scan automatically
-drops to an hourly safety net so alerts still flow if the script ever dies.
+A free Google Apps Script (`gas/nws-alert-watcher.js` at the repo root) can do
+the recurring polling on Google's timed triggers instead of the Worker's cron.
+Every 5 minutes it checks two sources and pings the Worker (bearer
+`NWS_HOOK_SECRET`) only when something changed:
+
+- **NWS alerts** → `POST /nws-hook` with the changed zone. The Worker drops
+  that zone's cache and runs the issuance-notice pass immediately; once the
+  secret is configured, the cron scan automatically drops to an hourly safety
+  net so alerts still flow if the script ever dies.
+- **HCPSS status page** → `POST /status-hook`. The Worker re-scrapes with its
+  real parser and runs a change-only check: posts land only in guilds whose
+  status actually changed (cosmetic page edits stay silent, and guilds that
+  disabled storm mode keep posts to their scheduled times only). The
+  panel-scheduled posts keep firing at their configured times regardless.
+
 Setup steps are in the comment at the top of the script file.
 
 ## Health Check
