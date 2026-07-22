@@ -16,7 +16,7 @@ function makeKv(store = new Map()) {
 }
 
 function makeEnv(store) {
-  return { STATUS_KV: makeKv(store), DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  return { STATUS_KV: makeKv(store), DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '', DISCORD_APPLICATION_ID: 'app1' };
 }
 
 const ctx = { waitUntil() {} };
@@ -182,4 +182,57 @@ test('unknown interactions fall through to a generic ack', async () => {
   const out = await json(handleInteraction(component('something_unknown'), makeEnv(), ctx));
   assert.equal(out.type, 4);
   assert.match(out.data.content, /Interaction received/);
+});
+
+// A ctx that captures the deferred work so tests can await it.
+function capturingCtx() {
+  const waited = [];
+  return { waited, waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+}
+
+test('panel navigation acks instantly (type 6) so a slow render cannot miss the deadline', async (t) => {
+  // updateInteractionOriginal PATCHes the webhook; capture it instead of hitting the network.
+  const patchUrls = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
+    if ((opts.method || 'GET') === 'PATCH') patchUrls.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+
+  const env = makeEnv();
+  const cctx = capturingCtx();
+
+  // The nav dropdown to Bot Health — the page that was timing out.
+  const out = await json(handleInteraction(
+    component('panel_nav_select', { member: member({ admin: true }), values: ['dashboard_bot_status'] }), env, cctx));
+
+  // Immediate ack: a deferred message update, no payload built on the hot path.
+  assert.equal(out.type, 6);
+  assert.equal(out.data, undefined);
+
+  // The real work runs in waitUntil: persist the page and edit the panel in place.
+  await Promise.all(cctx.waited);
+  assert.equal(env.STATUS_KV.store.get('panel_page:g1'), 'dashboard_bot_status');
+  assert.equal(patchUrls.length, 1);
+  assert.match(patchUrls[0], /\/messages\/@original$/);
+});
+
+test('panel nav buttons also defer with type 6', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
+  const env = makeEnv();
+  const cctx = capturingCtx();
+
+  const out = await json(handleInteraction(
+    component('panel_to_config_toggles', { member: member({ admin: true }) }), env, cctx));
+  assert.equal(out.type, 6);
+  await Promise.all(cctx.waited);
+  assert.equal(env.STATUS_KV.store.get('panel_page:g1'), 'config_toggles');
+});
+
+test('panel navigation is still gated behind command permission', async () => {
+  const env = makeEnv();
+  // A plain member (no admin, no staff role) may not drive the panel.
+  const out = await json(handleInteraction(
+    component('panel_nav_select', { member: member(), values: ['dashboard_bot_status'] }), env, ctx));
+  assert.equal(out.type, 4);
+  assert.match(out.data.content, /permission/i);
 });

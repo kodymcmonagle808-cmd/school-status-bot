@@ -98,17 +98,23 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
   const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
 
-  const latencyRaw = await env.STATUS_KV.get(latencyKey);
+  // These four keys are independent — read them in one round trip so a
+  // slow-KV moment doesn't stack four latencies before the panel renders.
+  const [latencyRaw, checkTimeRaw, rawStats, failuresRaw] = await Promise.all([
+    env.STATUS_KV.get(latencyKey),
+    env.STATUS_KV.get(checkTimeKey),
+    env.STATUS_KV.get('status_stats'),
+    env.STATUS_KV.get('scraper_failures_count')
+  ]);
   const latencyMs = latencyRaw ? Number(latencyRaw) : null;
-  const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
+  const lastCheckTime = Number(checkTimeRaw) || Date.now();
 
-  const rawStats = await env.STATUS_KV.get('status_stats');
   let stats = {};
   try { if (rawStats) stats = JSON.parse(rawStats) || {}; } catch {}
   const scrapesTotal = stats.scrapes_total || 0;
   const scrapesFailed = stats.scrapes_failed || 0;
   const successRate = scrapesTotal > 0 ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100) : 100;
-  const scraperFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
+  const scraperFailures = Number(failuresRaw || 0);
 
   let pingLabel, pingFilled, pingEmoji;
   if (latencyMs === null) {
@@ -1158,22 +1164,35 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   const latencyKey = guildId ? `last_check_latency:${guildId}` : 'last_check_latency';
   const checkTimeKey = guildId ? `last_check_time:${guildId}` : 'last_check_time';
 
-  const latency = await env.STATUS_KV.get(latencyKey) || 'N/A';
-  const lastCheckTime = Number(await env.STATUS_KV.get(checkTimeKey)) || Date.now();
-
-  // Gather extra debug data
-  const scraperFailures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
-  const scraperFailureAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
-  const activeOverride = await getActiveOverride(env, guildId);
-  const lastMessageId = await env.STATUS_KV.get(`last_message_id:${guildId}`);
-  const lastChannelId = await env.STATUS_KV.get(`last_channel_id:${guildId}`);
-  const rawStats = await env.STATUS_KV.get('status_stats');
+  // The dashboard is the default page (every /panel open and "Back to
+  // Dashboard" lands here) and reads ten independent keys — fan them out in
+  // one round trip so a slow-KV moment can't stack ten latencies. The panel
+  // navigation defers, so this can't miss Discord's deadline, but a fast
+  // render keeps the visible "thinking" gap short.
+  const [
+    latencyRaw, checkTimeRaw, failuresRaw, failureAlertedRaw, activeOverride,
+    lastMessageId, lastChannelId, rawStats, panelMsgId, cachedAlerts
+  ] = await Promise.all([
+    env.STATUS_KV.get(latencyKey),
+    env.STATUS_KV.get(checkTimeKey),
+    env.STATUS_KV.get('scraper_failures_count'),
+    env.STATUS_KV.get('scraper_failure_alerted'),
+    getActiveOverride(env, guildId),
+    env.STATUS_KV.get(`last_message_id:${guildId}`),
+    env.STATUS_KV.get(`last_channel_id:${guildId}`),
+    env.STATUS_KV.get('status_stats'),
+    env.STATUS_KV.get(`log_panel_message_id:${guildId}`),
+    getCachedWeatherAlerts(env)
+  ]);
+  const latency = latencyRaw || 'N/A';
+  const lastCheckTime = Number(checkTimeRaw) || Date.now();
+  const scraperFailures = Number(failuresRaw || 0);
+  const scraperFailureAlerted = failureAlertedRaw === 'true';
   let stats = {};
   try { if (rawStats) stats = JSON.parse(rawStats) || {}; } catch {}
   const scrapesTotal = stats.scrapes_total || 0;
   const scrapesFailed = stats.scrapes_failed || 0;
   const successRate = scrapesTotal > 0 ? ((scrapesTotal - scrapesFailed) / scrapesTotal * 100).toFixed(1) : '100.0';
-  const panelMsgId = await env.STATUS_KV.get(`log_panel_message_id:${guildId}`);
   const kvConnected = '`STATUS_KV` (Connected)';
 
   const overrideStr = activeOverride
@@ -1191,7 +1210,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     : '*(no message posted yet)*';
 
   // Storm-mode indicator from the cached weather alerts (no NWS call on panel render)
-  const stormAlertActive = hasStormAlert(await getCachedWeatherAlerts(env));
+  const stormAlertActive = hasStormAlert(cachedAlerts);
   const stormEnabled = config.toggle_storm_mode !== false;
   const inStormWindow = isInStormWindow(getEasternTimeStr(new Date()));
   const stormModeStr = !stormEnabled
