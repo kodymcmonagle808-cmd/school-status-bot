@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDecisionWatchEntries, buildDecisionWatchDescription, updateAnnouncementTimes } from '../src/decisionwatch.js';
+import { buildDecisionWatchEntries, buildDecisionWatchDescription, updateAnnouncementTimes, decisionWatchCleanupDue } from '../src/decisionwatch.js';
 
 const HCPSS = { id: 'hcpss', name: 'Howard Co. (HCPSS)', status: 'none', detail: '' };
 const DISTRICTS = [
@@ -66,4 +66,14 @@ test('buildDecisionWatchDescription skips the marker when the primary is missing
   const entries = buildDecisionWatchEntries(DISTRICTS, null, 'hcpss');
   const desc = buildDecisionWatchDescription(entries, 'hcpss');
   assert.doesNotMatch(desc.split('\n')[0], /^📍 /);
+});
+
+test('decisionWatchCleanupDue only fires between 8 and 10 AM ET', () => {
+  assert.equal(decisionWatchCleanupDue('07:59'), false);
+  assert.equal(decisionWatchCleanupDue('08:00'), true);
+  assert.equal(decisionWatchCleanupDue('9:17'), true);
+  assert.equal(decisionWatchCleanupDue('10:00'), true);
+  assert.equal(decisionWatchCleanupDue('10:01'), false);
+  assert.equal(decisionWatchCleanupDue('4:45'), false);
+  assert.equal(decisionWatchCleanupDue('garbage'), false);
 });

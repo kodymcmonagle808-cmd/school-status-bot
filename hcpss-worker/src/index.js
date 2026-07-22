@@ -12,7 +12,7 @@ import { checkNewMembersAndDM } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
-import { maybeUpdateDecisionWatch } from './decisionwatch.js';
+import { maybeUpdateDecisionWatch, maybeCleanupDecisionWatch } from './decisionwatch.js';
 import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
@@ -270,6 +270,12 @@ export default {
         await maybeUpdateDecisionWatch(env);
       } catch (e) {
         console.error('Decision watch run failed', e);
+        await recordWatcherError(env, 'decisionwatch', e);
+      }
+      try {
+        await maybeCleanupDecisionWatch(env);
+      } catch (e) {
+        console.error('Decision watch cleanup run failed', e);
         await recordWatcherError(env, 'decisionwatch', e);
       }
       try {

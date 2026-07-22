@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { doCheckAndPost } from '../src/check.js';
-import { maybeUpdateDecisionWatch } from '../src/decisionwatch.js';
+import { maybeUpdateDecisionWatch, maybeCleanupDecisionWatch } from '../src/decisionwatch.js';
 import { maybeSendStormRecap } from '../src/stormrecap.js';
 
 function makeKv(store = new Map()) {
@@ -58,6 +58,7 @@ test('full storm morning: board, delay, closure upgrade, recap', async (t) => {
 
   let currentHtml = statusHtml('Normal Operations', 'Schools are operating on a normal schedule.');
   const discordPosts = [];
+  const discordDeletes = [];
   let messageCounter = 0;
   t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
     const u = String(url);
@@ -69,6 +70,10 @@ test('full storm morning: board, delay, closure upgrade, recap', async (t) => {
       if (method === 'POST' && /channels\/[^/]+\/messages$/.test(u)) {
         discordPosts.push({ url: u, body: JSON.parse(opts.body) });
         return new Response(JSON.stringify({ id: `m${++messageCounter}` }), { status: 200 });
+      }
+      if (method === 'DELETE') {
+        discordDeletes.push(u);
+        return new Response(null, { status: 204 });
       }
       return new Response('{}', { status: 200 });
     }
@@ -106,6 +111,18 @@ test('full storm morning: board, delay, closure upgrade, recap', async (t) => {
   const closurePost = alertPosts().find(p => p.body.embeds &&
     (p.body.embeds[0].description || '').includes('now closed'));
   assert.ok(closurePost, 'conversion watch posted the closure upgrade');
+
+  // Still 8:15 — the cleanup pass deletes the board message and its KV record.
+  const boardRecord = JSON.parse(kv.store.get('decision_watch:g1'));
+  const cleanupResult = await maybeCleanupDecisionWatch(env);
+  assert.equal(cleanupResult.deleted, 1);
+  assert.ok(
+    discordDeletes.some(u => u.endsWith(`/messages/${boardRecord.messageId}`)),
+    'board message deleted via Discord API'
+  );
+  assert.equal(kv.store.has('decision_watch:g1'), false);
+  // Second tick the same morning is a no-op (day-key dedupe).
+  assert.equal((await maybeCleanupDecisionWatch(env)).deleted, 0);
 
   const history = JSON.parse(kv.store.get('status_history'));
   assert.equal(history[0].status_key, 'schools_closed');

@@ -18,6 +18,7 @@ import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 
 const SLOT_KEY = 'last_decision_watch_slot';
+const CLEANUP_DAY_KEY = 'last_decision_watch_cleanup_day';
 
 function boardKey(guildId) {
   return `decision_watch:${guildId}`;
@@ -163,7 +164,7 @@ export async function maybeUpdateDecisionWatch(env) {
         color: 0x3498DB,
         description:
           `Live board of this morning's closing and delay announcements. ` +
-          `Updates every 15 minutes until 7:30 AM ET.\n\n` +
+          `Updates every 15 minutes until 7:30 AM ET; the board is removed after 8 AM.\n\n` +
           buildDecisionWatchDescription(entries, primaryId, times),
         timestamp: now.toISOString(),
         footer: { text: `${cfg.alert_embed_footer || 'School Status'} · Decision Watch` }
@@ -216,4 +217,64 @@ export async function maybeUpdateDecisionWatch(env) {
     }
   }
   return { updated };
+}
+
+// The board is live morning coverage, not a permanent record — once the
+// window is over it's channel clutter (the noon storm recap is the record).
+// True from 8:00 through 10:00 AM ET; the wide window covers missed ticks.
+export function decisionWatchCleanupDue(etStr) {
+  const [h, m] = String(etStr).split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return false;
+  const mins = h * 60 + m;
+  return mins >= 8 * 60 && mins <= 10 * 60;
+}
+
+// Runs from the per-minute cron; deletes every guild's board message on the
+// first tick at/after 8 AM ET. Never throws.
+export async function maybeCleanupDecisionWatch(env) {
+  if (!env || !env.STATUS_KV) return { deleted: 0 };
+  const now = new Date();
+  if (!decisionWatchCleanupDue(getEasternTimeStr(now))) return { deleted: 0 };
+  const todayYmd = formatYmdNY(now);
+  if (await env.STATUS_KV.get(CLEANUP_DAY_KEY) === todayYmd) return { deleted: 0 };
+  await env.STATUS_KV.put(CLEANUP_DAY_KEY, todayYmd);
+
+  let guildIds = [];
+  const rawIndex = await env.STATUS_KV.get('guild_index');
+  if (rawIndex) {
+    try {
+      const parsed = JSON.parse(rawIndex);
+      if (Array.isArray(parsed)) guildIds = parsed.filter(Boolean);
+    } catch {}
+  }
+  if (env.DISCORD_GUILD_ID && !guildIds.includes(env.DISCORD_GUILD_ID)) {
+    guildIds.push(env.DISCORD_GUILD_ID);
+  }
+
+  let deleted = 0;
+  const token = env.DISCORD_BOT_TOKEN;
+  for (const gid of guildIds) {
+    try {
+      const raw = await env.STATUS_KV.get(boardKey(gid));
+      if (!raw) continue;
+      let board = null;
+      try { board = JSON.parse(raw); } catch {}
+      if (board && board.channelId && board.messageId) {
+        const resp = await discordFetch(`https://discord.com/api/v10/channels/${board.channelId}/messages/${board.messageId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bot ${token}` }
+        });
+        if (!resp.ok && resp.status !== 404) {
+          // Keep the KV record so a later morning's cleanup retries the delete.
+          console.error(`Decision watch cleanup failed for guild ${gid}: ${resp.status}`);
+          continue;
+        }
+        deleted++;
+      }
+      await env.STATUS_KV.delete(boardKey(gid));
+    } catch (e) {
+      console.error(`Decision watch cleanup failed for guild ${gid}:`, e);
+    }
+  }
+  return { deleted };
 }
