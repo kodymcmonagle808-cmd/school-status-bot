@@ -184,47 +184,27 @@ test('unknown interactions fall through to a generic ack', async () => {
   assert.match(out.data.content, /Interaction received/);
 });
 
-// A ctx that captures the deferred work so tests can await it.
-function capturingCtx() {
-  const waited = [];
-  return { waited, waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
-}
-
-test('panel navigation acks instantly (type 6) so a slow render cannot miss the deadline', async (t) => {
-  // updateInteractionOriginal PATCHes the webhook; capture it instead of hitting the network.
-  const patchUrls = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
-    if ((opts.method || 'GET') === 'PATCH') patchUrls.push(String(url));
-    return new Response('{}', { status: 200 });
-  });
-
+test('panel navigation renders inline (type 7) and persists the page', async () => {
   const env = makeEnv();
-  const cctx = capturingCtx();
 
-  // The nav dropdown to Bot Health — the page that was timing out.
+  // The nav dropdown to Bot Health — the page that was misbehaving.
   const out = await json(handleInteraction(
-    component('panel_nav_select', { member: member({ admin: true }), values: ['dashboard_bot_status'] }), env, cctx));
+    component('panel_nav_select', { member: member({ admin: true }), values: ['dashboard_bot_status'] }), env, ctx));
 
-  // Immediate ack: a deferred message update, no payload built on the hot path.
-  assert.equal(out.type, 6);
-  assert.equal(out.data, undefined);
-
-  // The real work runs in waitUntil: persist the page and edit the panel in place.
-  await Promise.all(cctx.waited);
+  // A type-7 message update: the panel is edited in place and always renders,
+  // with the built payload delivered as the direct interaction response.
+  assert.equal(out.type, 7);
+  assert.ok(out.data.embeds && out.data.embeds.length, 'built the bot-health embed');
+  assert.match(out.data.embeds[0].title, /Bot Health/);
   assert.equal(env.STATUS_KV.store.get('panel_page:g1'), 'dashboard_bot_status');
-  assert.equal(patchUrls.length, 1);
-  assert.match(patchUrls[0], /\/messages\/@original$/);
 });
 
-test('panel nav buttons also defer with type 6', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
+test('panel nav buttons render inline (type 7) too', async () => {
   const env = makeEnv();
-  const cctx = capturingCtx();
-
   const out = await json(handleInteraction(
-    component('panel_to_config_toggles', { member: member({ admin: true }) }), env, cctx));
-  assert.equal(out.type, 6);
-  await Promise.all(cctx.waited);
+    component('panel_to_config_toggles', { member: member({ admin: true }) }), env, ctx));
+  assert.equal(out.type, 7);
+  assert.ok(out.data.embeds && out.data.embeds.length);
   assert.equal(env.STATUS_KV.store.get('panel_page:g1'), 'config_toggles');
 });
 

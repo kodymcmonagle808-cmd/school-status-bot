@@ -36,24 +36,16 @@ import {
   handlePanelClearLogs
 } from './commands.js';
 
-// Panel page navigation renders several sequential KV reads before the
-// payload is ready; on the free plan a slow-KV moment can push that past
-// Discord's 3-second component deadline ("this application did not respond in
-// time"). Ack instantly with a deferred update (type 6), then build the page
-// and edit the panel message in place — Discord allows 15 minutes after the
-// defer. `target` is passed as the page override so the render can't race the
-// KV write of the same key (KV is not read-your-own-write consistent).
-function deferPanelNav(env, ctx, body, guildId, target) {
-  ctx.waitUntil((async () => {
-    try {
-      await env.STATUS_KV.put(`panel_page:${guildId}`, target);
-      const payload = await buildControlPanelPayload(env, guildId, null, target);
-      await updateInteractionOriginal(env, body.token, payload);
-    } catch (e) {
-      console.error(`Panel nav to ${target} failed:`, e);
-    }
-  })());
-  return jsonResponse({ type: 6 });
+// Panel page navigation replies with a type-7 message update: an inline edit
+// of the panel message that is the interaction's direct response, so it always
+// renders. The payload build stays fast (buildControlPanelPayload fans its KV
+// reads out with Promise.all) so it clears Discord's 3-second component
+// deadline. `target` is passed as the page override so the render doesn't race
+// the KV write of the same key (KV is not read-your-own-write consistent).
+async function renderPanelNav(env, body, guildId, target) {
+  await env.STATUS_KV.put(`panel_page:${guildId}`, target);
+  const payload = await buildControlPanelPayload(env, guildId, null, target);
+  return jsonResponse({ type: 7, data: payload });
 }
 
 export async function handlePanelComponent(body, env, ctx, guildId) {
@@ -102,7 +94,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     }
 
     const target = PANEL_NAV_TABS.some(t => t.value === selected) ? selected : 'dashboard';
-    return deferPanelNav(env, ctx, body, guildId, target);
+    return renderPanelNav(env, body, guildId, target);
   }
 
   // Owner-only: toggle a server's lockdown from the Worker Updates page.
@@ -129,7 +121,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const selected = Array.isArray(body.data.values) && body.data.values[0];
     const allowed = ['dashboard_logs', 'dashboard_bot_status'];
     const target = allowed.includes(selected) ? selected : 'dashboard_logs';
-    return deferPanelNav(env, ctx, body, guildId, target);
+    return renderPanelNav(env, body, guildId, target);
   }
 
   if (customId === 'panel_action_select') {
@@ -217,7 +209,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_dashboard_logs: 'dashboard_logs'
   };
   if (NAV_BUTTON_PAGES[customId]) {
-    return deferPanelNav(env, ctx, body, guildId, NAV_BUTTON_PAGES[customId]);
+    return renderPanelNav(env, body, guildId, NAV_BUTTON_PAGES[customId]);
   }
 
   if (customId === 'panel_to_dashboard_bot_status') {
