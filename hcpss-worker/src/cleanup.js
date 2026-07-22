@@ -31,6 +31,8 @@ function guildKeys(guildId) {
     `greeted_users:${guildId}`,
     `last_recap_year:${guildId}`,
     `last_aqi_day:${guildId}`,
+    // Legacy: the storm-recap feature was removed, but any dedupe keys written
+    // before then must still be purged on removal (Privacy Policy promise).
     `last_storm_recap:${guildId}`,
     `alert_post_failures:${guildId}`,
     `nws_alerts_seen:${guildId}`

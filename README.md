@@ -8,7 +8,6 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Shows active NWS weather alerts for Howard County on status embeds, plus a Tomorrow Outlook on evening posts.
 - Storm mode: checks every 15 minutes during the early-morning decision window (closings/delays) and the 10 AM–2 PM midday window (early dismissals) when a storm or heat alert is active, posting only on real status changes — and when a 2-hour delay is announced, the conversion watch keeps checking until 9:30 AM for the delay-to-closure upgrade.
 - Decision Watch: on storm mornings, one live board per server showing every district's closing/delay announcements (with when each was first detected), edited in place every 15 minutes through the 4:30–7:30 AM window.
-- Storm Recap: a noon summary after every Decision Watch morning — what the evening outlook predicted, what the district actually did, and how every neighboring district decided.
 - Closure Outlook: during storm/heat alerts, estimates the chance of a closing/delay from NWS alerts and nearby districts' announcements — and grades its own evening predictions so `/stats` shows the outlook's track record.
 - Snowfall Forecast: storm-time embeds include expected snow/ice accumulations from the NWS forecast.
 - Night-Before Heads-Up: 7:00 PM ET alert when the Closure Outlook hits High/Very High before HCPSS has announced anything — and the watch keeps running until 11:45 PM, posting an update if the outlook climbs a tier later in the evening.
