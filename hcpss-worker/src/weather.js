@@ -5,6 +5,8 @@
 export const DEFAULT_NWS_ZONE = 'MDC027';
 const NWS_USER_AGENT = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
+import { contextCacheTtl } from './hookmode.js';
+
 const WEATHER_CACHE_KEY = 'weather_alerts_cache';
 const WEATHER_CACHE_TTL_SECONDS = 600;
 
@@ -164,7 +166,9 @@ export async function getActiveWeatherAlerts(env, zone = DEFAULT_NWS_ZONE) {
     // rewriting an empty array all summer. A cache miss and an empty list
     // mean the same thing to every reader.
     if (env && env.STATUS_KV && alerts.length > 0) {
-      await env.STATUS_KV.put(cacheKey, JSON.stringify(alerts), { expirationTtl: WEATHER_CACHE_TTL_SECONDS }).catch(() => {});
+      // Hook-armed guilds get a longer TTL: /nws-hook clears this key the
+      // moment the zone's alert set changes (including expirations).
+      await env.STATUS_KV.put(cacheKey, JSON.stringify(alerts), { expirationTtl: contextCacheTtl(env, WEATHER_CACHE_TTL_SECONDS) }).catch(() => {});
     }
     return alerts;
   } catch {

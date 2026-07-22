@@ -5,12 +5,21 @@
 // "no signal" — this can never break a status post.
 
 import { stripHtml, classifyDistrictText } from './districts.js';
+import { contextCacheTtl } from './hookmode.js';
 
 export const HCPSS_NEWS_FEED_URL = 'https://news.hcpss.org/feed/';
 
 const NEWS_CACHE_KEY = 'news_signal_cache';
 const NEWS_CACHE_TTL_SECONDS = 600;
 const FETCH_TIMEOUT_MS = 8000;
+
+// Drops the cached signal so the next reader fetches live. Used by the
+// /context-hook push path. Never throws.
+export async function clearNewsSignalCache(env) {
+  try {
+    if (env && env.STATUS_KV) await env.STATUS_KV.delete(NEWS_CACHE_KEY);
+  } catch {}
+}
 
 // Only posts this recent can describe today's operating status.
 export const NEWS_RECENT_WINDOW_MS = 12 * 60 * 60 * 1000;
@@ -99,7 +108,7 @@ export async function getNewsSignal(env) {
     await env.STATUS_KV.put(
       NEWS_CACHE_KEY,
       JSON.stringify({ at: Date.now(), signal }),
-      { expirationTtl: NEWS_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, NEWS_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return signal;

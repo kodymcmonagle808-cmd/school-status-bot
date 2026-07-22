@@ -7,10 +7,20 @@
 const NWS_POINT_URL = 'https://api.weather.gov/points/39.2156,-76.8582'; // Columbia, MD
 const NWS_USER_AGENT = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
+import { contextCacheTtl } from './hookmode.js';
+
 const FORECAST_URL_CACHE_KEY = 'nws_forecast_url';
 const SNOWFALL_CACHE_KEY = 'snowfall_forecast_cache';
 const SNOWFALL_CACHE_TTL_SECONDS = 1800;
 const FETCH_TIMEOUT_MS = 8000;
+
+// Drops the cached lines so the next reader fetches live. Used by the
+// /context-hook push path. Never throws.
+export async function clearSnowfallCache(env) {
+  try {
+    if (env && env.STATUS_KV) await env.STATUS_KV.delete(SNOWFALL_CACHE_KEY);
+  } catch {}
+}
 
 export const MAX_SNOWFALL_LINES = 3;
 
@@ -83,7 +93,7 @@ export async function getSnowfallForecast(env) {
     await env.STATUS_KV.put(
       SNOWFALL_CACHE_KEY,
       JSON.stringify({ at: Date.now(), lines }),
-      { expirationTtl: SNOWFALL_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, SNOWFALL_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return lines;

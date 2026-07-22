@@ -4,6 +4,7 @@
 // always degrade to no incidents — road context never breaks a status post.
 
 import { stripHtml } from './districts.js';
+import { contextCacheTtl } from './hookmode.js';
 
 export const CHART_INCIDENTS_URL = 'https://chart.maryland.gov/DataFeeds/GetIncidentXml';
 const ROADS_CACHE_KEY = 'chart_incidents_cache';
@@ -105,7 +106,7 @@ export async function getChartIncidents(env) {
     await env.STATUS_KV.put(
       ROADS_CACHE_KEY,
       JSON.stringify({ at: Date.now(), incidents }),
-      { expirationTtl: ROADS_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, ROADS_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return incidents;

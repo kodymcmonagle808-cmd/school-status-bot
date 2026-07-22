@@ -1,6 +1,6 @@
 // Google Apps Script: external change watcher for school-status-bot.
 //
-// Five watchers on one free 5-minute Google trigger:
+// Six watchers on one free 5-minute Google trigger:
 //   1. NWS alerts — polls the active-alerts feed for every county zone the
 //      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
 //      zone's alert set changes. The Worker's own cron scan drops to an
@@ -19,7 +19,14 @@
 //   4. Road conditions — polls the Maryland CHART incident feed and pings
 //      /refresh-hook when the set of meaningful open incidents changes, so
 //      the roads lines on posted embeds stay current too.
-//   5. HCPSS emails — watches this Google account's Gmail for HCPSS
+//   5. Context sources — the district feeds (AACPS/BCPS/CCPS/FCPS/MCPS/
+//      PGCPS), the HCPSS news RSS, the NWS snowfall forecast, and AirNow AQI,
+//      all fetched in one parallel batch. On a real change it POSTs
+//      /context-hook {source}, which drops that source's KV cache so the next
+//      reader fetches live. With this watcher armed the Worker trusts its
+//      context caches for an hour instead of 10 minutes — steady-state
+//      polling lives here, not in the Worker.
+//   6. HCPSS emails — watches this Google account's Gmail for HCPSS
 //      announcement emails (the ones that never reach the status page) and
 //      POSTs them to /email-hook, which forwards them into each guild's
 //      alert channel. Needs the Gmail permission — after pasting this
@@ -40,10 +47,12 @@
 //   5. Done — runWatchers() now runs every 5 minutes. Executions page
 //      shows each run; testPing() verifies the Worker connection.
 //
-// Quota math: (7 zones + 1 status page + 5 outage feeds + 1 roads feed) x
-// 288 runs/day ≈ 4,000 URL fetches/day, well under the consumer Apps Script
-// limit of 20,000/day. The Worker is only called when something changed,
-// which on most days is zero.
+// Quota math: (7 zones + 1 status page + 5 outage feeds + 1 roads feed +
+// 11 context-source feeds) x 288 runs/day ≈ 7,200 URL fetches/day, well under
+// the consumer Apps Script limit of 20,000/day. The context batch runs
+// through UrlFetchApp.fetchAll (parallel), keeping the added trigger runtime
+// to a few seconds per run against the 90-minute/day trigger budget. The
+// Worker is only called when something changed, which on most days is zero.
 
 // Keep in sync with DEFAULT_NWS_ZONE (weather.js) and the nwsZone values in
 // districts.js: Howard + the six neighboring districts guilds can follow.
@@ -123,6 +132,11 @@ function runWatchers() {
     checkRoads();
   } catch (e) {
     console.error('Roads check failed: ' + e);
+  }
+  try {
+    checkContextSources();
+  } catch (e) {
+    console.error('Context sources check failed: ' + e);
   }
   try {
     checkHcpssEmails();
@@ -275,6 +289,230 @@ function checkRoads() {
   } else {
     console.error('Roads refresh ping failed: ' + code + ' ' + ping.getContentText());
   }
+}
+
+// --- Context sources (district feeds, HCPSS news RSS, snowfall, AQI) ---
+//
+// These have no dedicated hook: on a real change the Worker just needs its
+// KV cache for that source dropped, so it re-fetches live with its own
+// parsers on the next read. Fingerprints are built from extracted meaningful
+// content only (never raw HTML), mirroring the Worker's parsers, so cosmetic
+// page churn doesn't ping. Sources whose fetch failed are skipped for the
+// run — a missing feed must never look like a change.
+
+var THRILLSHARE_AACPS_URL = 'https://api.thrillshare.com/api/v4/o/20274/cms/live_feeds?page=1&per_page=15';
+var HCPSS_NEWS_FEED_URL = 'https://news.hcpss.org/feed/';
+var NWS_POINT_URL = 'https://api.weather.gov/points/39.2156,-76.8582'; // Columbia, MD
+var AIRNOW_STATE_URL = 'https://airnowgovapi.com/reportingarea/get_state';
+
+// Keep in sync with COUNTY_REPORTING_AREAS in aqi.js.
+var AQI_WATCHED_AREAS = ['Suburban DC', 'Metro Baltimore', 'Maryland Piedmont', 'Northern Virginia and DC'];
+
+function gasStripHtml(s) {
+  return String(s || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function checkContextSources() {
+  var props = PropertiesService.getScriptProperties();
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+  }
+
+  // The gridpoint forecast URL is resolved once via the points API and kept
+  // in Script Properties (NWS grid assignments are effectively static).
+  var forecastUrl = props.getProperty('NWS_FORECAST_URL');
+  if (!forecastUrl) {
+    try {
+      var point = UrlFetchApp.fetch(NWS_POINT_URL, {
+        headers: { 'User-Agent': NWS_USER_AGENT, Accept: 'application/geo+json' },
+        muteHttpExceptions: true
+      });
+      if (point.getResponseCode() === 200) {
+        forecastUrl = (((JSON.parse(point.getContentText()) || {}).properties) || {}).forecast || '';
+        if (forecastUrl) props.setProperty('NWS_FORECAST_URL', forecastUrl);
+      }
+    } catch (e) {
+      console.error('NWS points resolve failed: ' + e);
+    }
+  }
+
+  var defs = [
+    { key: 'aacps', url: THRILLSHARE_AACPS_URL, accept: 'application/json' },
+    { key: 'bcps', url: 'https://www.bcps.org/WebServices/UnifiedPublishing/UnifiedPublishingService.asmx/GetActiveAlerts', sharpSchool: true },
+    { key: 'ccps3', url: 'https://www.carrollk12.org/fs/post-manager/boards/3/posts/feed' },
+    { key: 'ccps63', url: 'https://www.carrollk12.org/fs/post-manager/boards/63/posts/feed' },
+    { key: 'fcps', url: 'https://www.fcps.org/WebServices/UnifiedPublishing/UnifiedPublishingService.asmx/GetActiveAlerts', sharpSchool: true },
+    { key: 'mcps', url: 'https://api.montgomeryschoolsmd.org/schools/homepageInput', accept: 'application/json' },
+    { key: 'pgcps', url: 'https://www.pgcps.org' },
+    { key: 'news', url: HCPSS_NEWS_FEED_URL },
+    { key: 'aqimd', url: AIRNOW_STATE_URL, form: 'state_code=MD' },
+    { key: 'aqidc', url: AIRNOW_STATE_URL, form: 'state_code=DC' }
+  ];
+  if (forecastUrl) {
+    defs.push({ key: 'snowfall', url: forecastUrl, accept: 'application/geo+json' });
+  }
+
+  var requests = defs.map(function (d) {
+    var headers = { 'User-Agent': NWS_USER_AGENT };
+    if (d.accept) headers.Accept = d.accept;
+    var req = { url: d.url, headers: headers, muteHttpExceptions: true };
+    if (d.sharpSchool) {
+      req.method = 'post';
+      req.contentType = 'application/json; charset=UTF-8';
+      req.payload = '{"returnDummyAlerts":false}';
+      headers.Accept = 'application/json, text/javascript, */*; q=0.01';
+    } else if (d.form) {
+      req.method = 'post';
+      req.contentType = 'application/x-www-form-urlencoded';
+      req.payload = d.form;
+    }
+    return req;
+  });
+
+  var responses = UrlFetchApp.fetchAll(requests);
+  var bodies = {};
+  defs.forEach(function (d, i) {
+    var r = responses[i];
+    bodies[d.key] = r && r.getResponseCode() === 200 ? r.getContentText() : null;
+  });
+
+  checkContextSource(props, workerUrl, secret, 'districts', districtsFingerprintParts(bodies));
+  checkContextSource(props, workerUrl, secret, 'news', newsFingerprintParts(bodies.news));
+  checkContextSource(props, workerUrl, secret, 'snowfall', snowfallFingerprintParts(bodies.snowfall));
+  checkContextSource(props, workerUrl, secret, 'aqi', aqiFingerprintParts(bodies.aqimd, bodies.aqidc));
+}
+
+// Shared change gate: null parts mean the fetch failed (skip the run), the
+// first fingerprint is baseline-only, and the stored fingerprint is advanced
+// only after the Worker acks so a Worker outage retries next run.
+function checkContextSource(props, workerUrl, secret, source, parts) {
+  if (parts === null) return;
+  var fingerprint = md5Hex(parts.join('|'));
+  var key = 'fp_ctx_' + source;
+  var previous = props.getProperty(key);
+  if (previous === fingerprint) return;
+
+  if (previous === null) {
+    props.setProperty(key, fingerprint);
+    return;
+  }
+
+  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/context-hook', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: JSON.stringify({ source: source }),
+    muteHttpExceptions: true
+  });
+  var code = ping.getResponseCode();
+  if (code >= 200 && code < 300) {
+    props.setProperty(key, fingerprint);
+    console.log('Pinged worker: ' + source + ' changed.');
+  } else {
+    console.error('Context hook ping for ' + source + ' failed: ' + code + ' ' + ping.getContentText());
+  }
+}
+
+// One combined fingerprint across all six district feeds. Any unreadable
+// required feed skips the run; Carroll tolerates one of its two boards being
+// down (mirroring the Worker's fetcher).
+function districtsFingerprintParts(bodies) {
+  if (!bodies.aacps || !bodies.bcps || !bodies.fcps || !bodies.mcps || !bodies.pgcps) return null;
+  if (!bodies.ccps3 && !bodies.ccps63) return null;
+  var parts = [];
+  try {
+    var feeds = (JSON.parse(bodies.aacps) || {}).live_feeds || [];
+    feeds.forEach(function (f) {
+      parts.push('aacps:' + gasStripHtml(f && f.status) + '@' + ((f && f.publishing_at) || ''));
+    });
+
+    parts.push('bcps:' + bodies.bcps.replace(/\s+/g, ' ').trim());
+    parts.push('fcps:' + bodies.fcps.replace(/\s+/g, ' ').trim());
+
+    ['ccps3', 'ccps63'].forEach(function (key) {
+      var blocks = (bodies[key] || '').match(/<entry[\s>][\s\S]*?<\/entry>/g) || [];
+      blocks.forEach(function (block) {
+        var title = (block.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1] || '';
+        var updated = (block.match(/<updated>([\s\S]*?)<\/updated>/) || [])[1] || '';
+        parts.push('ccps:' + gasStripHtml(title) + '@' + updated.trim());
+      });
+    });
+
+    var emsg = (JSON.parse(bodies.mcps) || {}).emsg || '';
+    if (!emsg || emsg.indexOf('emer-code-green') !== -1) {
+      parts.push('mcps:green');
+    } else {
+      parts.push('mcps:' + gasStripHtml(emsg.replace(/<span[^>]*class=['"]timestamp['"][^>]*>[\s\S]*?<\/span>/gi, '')));
+    }
+
+    var alertSection = bodies.pgcps.match(/<section class="site-alert-component[\s\S]*?<\/section>/);
+    parts.push('pgcps:' + (alertSection ? gasStripHtml(alertSection[0]) : 'none'));
+  } catch (e) {
+    console.error('District fingerprint failed: ' + e);
+    return null;
+  }
+  return parts.sort();
+}
+
+// HCPSS news RSS: item titles + publish dates (new posts ping, edits to old
+// body text don't matter — the Worker only classifies recent items anyway).
+function newsFingerprintParts(body) {
+  if (!body) return null;
+  var parts = [];
+  var items = body.match(/<item[\s>][\s\S]*?<\/item>/g) || [];
+  items.slice(0, 10).forEach(function (block) {
+    var title = (block.match(/<title[^>]*>([\s\S]*?)<\/title>/) || [])[1] || '';
+    var pubDate = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1] || '';
+    parts.push(gasStripHtml(title.replace(/<!\[CDATA\[|\]\]>/g, ' ')) + '@' + pubDate.trim());
+  });
+  return parts;
+}
+
+// Snowfall: only the accumulation sentences the Worker extracts — the
+// forecast text refreshes constantly, but these change rarely.
+function snowfallFingerprintParts(body) {
+  if (!body) return null;
+  try {
+    var periods = ((JSON.parse(body) || {}).properties || {}).periods || [];
+    var parts = [];
+    periods.slice(0, 4).forEach(function (p) {
+      var detail = String((p && p.detailedForecast) || '');
+      var sentences = detail.match(/[^.!?]*accumulation[^.!?]*[.!?]/gi) || [];
+      if (sentences.length) {
+        parts.push(((p && p.name) || '?') + ':' + sentences.join(' ').replace(/\s+/g, ' ').trim());
+      }
+    });
+    return parts;
+  } catch (e) {
+    return null;
+  }
+}
+
+// AQI: category (not the raw number, which churns hourly) per watched
+// reporting area and date — the Worker's alert threshold is a category
+// boundary, so category changes are the only ones that matter.
+function aqiFingerprintParts(mdBody, dcBody) {
+  if (!mdBody || !dcBody) return null;
+  var parts = [];
+  try {
+    [mdBody, dcBody].forEach(function (body) {
+      var records = JSON.parse(body);
+      (Array.isArray(records) ? records : []).forEach(function (r) {
+        if (!r || AQI_WATCHED_AREAS.indexOf(r.reportingArea) === -1) return;
+        parts.push(r.reportingArea + '|' + (r.validDate || '') + '|' + (r.dataType || '') + '|' + (r.category || '') + '|' + (r.isActionDay === true ? 'action' : ''));
+      });
+    });
+  } catch (e) {
+    return null;
+  }
+  return parts.sort();
 }
 
 // Forwards HCPSS announcement emails from this Google account's inbox to the

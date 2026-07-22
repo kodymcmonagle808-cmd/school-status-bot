@@ -10,10 +10,21 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { getDistrictMeta } from './districts.js';
 import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { contextCacheTtl } from './hookmode.js';
 
 const AQI_API_URL = 'https://airnowgovapi.com/reportingarea/get_state';
 const AQI_CACHE_KEY = 'aqi_cache';
 const AQI_CACHE_TTL_SECONDS = 3600;
+
+// Both state feeds the reporting areas map to. Drops the cached records so
+// the next reader fetches live. Used by the /context-hook push path. Never
+// throws.
+export async function clearAqiCaches(env) {
+  if (!env || !env.STATUS_KV) return;
+  for (const state of ['MD', 'DC']) {
+    try { await env.STATUS_KV.delete(`${AQI_CACHE_KEY}:${state}`); } catch {}
+  }
+}
 const FETCH_TIMEOUT_MS = 8000;
 const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
@@ -113,7 +124,7 @@ async function fetchStateRecords(env, stateCode) {
   }
 
   if (env && env.STATUS_KV && records) {
-    await env.STATUS_KV.put(cacheKey, JSON.stringify(records), { expirationTtl: AQI_CACHE_TTL_SECONDS }).catch(() => {});
+    await env.STATUS_KV.put(cacheKey, JSON.stringify(records), { expirationTtl: contextCacheTtl(env, AQI_CACHE_TTL_SECONDS) }).catch(() => {});
   }
   return records;
 }

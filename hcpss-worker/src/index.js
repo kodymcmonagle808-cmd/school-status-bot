@@ -16,6 +16,11 @@ import { maybeUpdateDecisionWatch, maybeCleanupDecisionWatch } from './decisionw
 import { maybeSendAqiAlerts } from './aqi.js';
 import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
+import { clearDistrictCache } from './districts.js';
+import { clearNewsSignalCache } from './crosscheck.js';
+import { clearSnowfallCache } from './snowfall.js';
+import { clearAqiCaches } from './aqi.js';
+import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handleEmailHook } from './emailhook.js';
 import { maybeSendStormRecap } from './stormrecap.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
@@ -116,7 +121,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -150,6 +155,45 @@ export default {
         console.error('Refresh hook failed', e);
       }));
       return jsonResponse({ ok: true });
+    }
+
+    // A context source with no dedicated hook changed (district feeds, HCPSS
+    // news RSS, snowfall forecast, AQI): drop its cache so the next reader
+    // fetches live instead of waiting out the hook-armed TTL. A per-source
+    // cooldown caps the KV churn a noisy fingerprint could cause. Posted
+    // storm embeds also refresh so their context lines update — that pass is
+    // alert-gated and edit-throttled, so a quiet-day ping costs almost
+    // nothing.
+    if (url.pathname === '/context-hook') {
+      let source = '';
+      try {
+        const body = await request.json();
+        if (body && typeof body.source === 'string') source = body.source.trim().toLowerCase();
+      } catch {}
+      const clearers = {
+        districts: clearDistrictCache,
+        news: clearNewsSignalCache,
+        snowfall: clearSnowfallCache,
+        aqi: clearAqiCaches
+      };
+      if (!clearers[source]) {
+        return jsonResponse({ ok: false, error: 'source must be one of: ' + Object.keys(clearers).join(', ') }, 400);
+      }
+      if (env.STATUS_KV) {
+        const cooldownKey = contextHookCooldownKey(source);
+        if (await env.STATUS_KV.get(cooldownKey)) {
+          return jsonResponse({ ok: true, source, throttled: true });
+        }
+        await env.STATUS_KV.put(cooldownKey, '1', { expirationTtl: CONTEXT_HOOK_COOLDOWN_SECONDS }).catch(() => {});
+      }
+      await clearers[source](env);
+      ctx.waitUntil(maybeRefreshStormEmbeds(env, new Date(), {
+        force: true,
+        requireActiveAlerts: true
+      }).catch(e => {
+        console.error('Context hook storm refresh failed', e);
+      }));
+      return jsonResponse({ ok: true, source });
     }
 
     // The status page changed: run a change-only check pass now. Posts land

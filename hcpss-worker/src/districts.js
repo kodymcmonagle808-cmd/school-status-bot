@@ -5,9 +5,20 @@
 // any per-district failure degrades to 'unavailable' — this feature is never
 // allowed to break a status post.
 
+import { contextCacheTtl } from './hookmode.js';
+
 const DISTRICT_CACHE_KEY = 'district_status_cache';
 const DISTRICT_CACHE_TTL_SECONDS = 600;
 const FETCH_TIMEOUT_MS = 8000;
+
+// Drops the cached statuses so the next reader fetches live. Used by the
+// /context-hook push path — the external watcher saw a district feed change.
+// Never throws.
+export async function clearDistrictCache(env) {
+  try {
+    if (env && env.STATUS_KV) await env.STATUS_KV.delete(DISTRICT_CACHE_KEY);
+  } catch {}
+}
 
 // Feed-based sources (AACPS, Carroll) always contain unrelated recent news, so
 // only posts newer than this window are considered for classification.
@@ -308,7 +319,7 @@ export async function getDistrictStatuses(env) {
     await env.STATUS_KV.put(
       DISTRICT_CACHE_KEY,
       JSON.stringify({ at: Date.now(), districts }),
-      { expirationTtl: DISTRICT_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, DISTRICT_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return districts;

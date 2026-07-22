@@ -106,7 +106,7 @@ Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.de
 
 A free Google Apps Script (`gas/nws-alert-watcher.js` at the repo root) can do
 the recurring polling on Google's timed triggers instead of the Worker's cron.
-Every 5 minutes it checks two sources and pings the Worker (bearer
+Every 5 minutes it checks every external source and pings the Worker (bearer
 `NWS_HOOK_SECRET`) only when something changed:
 
 - **NWS alerts** → `POST /nws-hook` with the changed zone. The Worker drops
@@ -124,6 +124,13 @@ Every 5 minutes it checks two sources and pings the Worker (bearer
   outage/roads/weather context stays current within minutes during a storm —
   still gated on an active power-threat warning and capped at one edit per 5
   minutes. NWS zone changes trigger the same refresh.
+- **District feeds / news RSS / snowfall / AQI** → `POST /context-hook` with
+  `{"source": "districts" | "news" | "snowfall" | "aqi"}`. The Worker drops
+  that source's KV cache so the next reader fetches live (per-source
+  10-minute throttle), and refreshes posted storm embeds when an alert is
+  active. With the secret configured, all context caches also stretch from
+  10 minutes to an hour — freshness is push-based, so steady-state polling
+  lives in the Apps Script instead of the Worker.
 - **HCPSS emails** → `POST /email-hook`. Announcement emails in the owner's
   Gmail that never reach the status page are forwarded into each guild's
   alert channel (per-guild `toggle_email_alerts`, HCPSS-primary guilds only,

@@ -6,6 +6,8 @@
 // driver (and a direct signal for the Closure Outlook). Failures always
 // degrade to null — outage context is never allowed to break a status post.
 
+import { contextCacheTtl } from './hookmode.js';
+
 export const BGE_COUNTIES_URL = 'https://bge-prod.ifactornotifi.com/report/datafeed/counties';
 const OUTAGE_CACHE_KEY = 'bge_outage_cache';
 const OUTAGE_CACHE_TTL_SECONDS = 600;
@@ -176,7 +178,7 @@ async function getKubraOutages(env, utilityId) {
     await env.STATUS_KV.put(
       u.cacheKey,
       JSON.stringify({ at: Date.now(), summary }),
-      { expirationTtl: OUTAGE_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, OUTAGE_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return summary;
@@ -265,7 +267,7 @@ export async function getBgeOutages(env) {
     await env.STATUS_KV.put(
       OUTAGE_CACHE_KEY,
       JSON.stringify({ at: Date.now(), summary }),
-      { expirationTtl: OUTAGE_CACHE_TTL_SECONDS }
+      { expirationTtl: contextCacheTtl(env, OUTAGE_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
   return summary;
