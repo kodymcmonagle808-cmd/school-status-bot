@@ -182,7 +182,7 @@ test('forced refresh skips the minute gate and dedupes on a 5-minute bucket', as
   assert.equal(patches.length, 2);
 });
 
-test('forced refresh runs even without a power threat (the hook saw a real change)', async (t) => {
+test('forced refresh without a power threat (and no recent refresh) is skipped', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store, { storm: false });
   seedGuild(kv.store, 'g1');
@@ -193,11 +193,69 @@ test('forced refresh runs even without a power threat (the hook saw a real chang
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
   const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+  assert.equal(kv.store.has('last_storm_refresh_slot'), false);
+});
+
+test('advisory-level cached alerts do not qualify a forced refresh', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  // An advisory is an active alert but not a power threat — the July
+  // heat-advisory failure mode that used to burn the KV write budget.
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: 0 }
+  ]));
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+});
+
+test('forced refresh still runs within an hour of the last one (expiry clears the embed)', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false }); // alert just expired — cache empty
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+  const now = new Date('2026-01-15T12:07:00Z');
+  // The last refresh ran 10 minutes ago (a forced 5-minute bucket).
+  const tenAgo = now.getTime() - 10 * 60 * 1000;
+  kv.store.set('last_storm_refresh_slot', `f${Math.floor(tenAgo / (5 * 60 * 1000))}`);
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, now, { force: true });
   assert.equal(result.updated, 1);
   assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
 });
 
-test('requireActiveAlerts skips the forced refresh on a quiet day', async (t) => {
+test('the trailing window closes: an hours-old slot no longer opens the gate', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+  const now = new Date('2026-01-15T12:07:00Z');
+  const threeHoursAgo = now.getTime() - 3 * 60 * 60 * 1000;
+  kv.store.set('last_storm_refresh_slot', `f${Math.floor(threeHoursAgo / (5 * 60 * 1000))}`);
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, now, { force: true });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+});
+
+test('a quiet-day forced refresh leaves the flagged data caches alone', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store, { storm: false });
   seedGuild(kv.store, 'g1');
@@ -210,7 +268,7 @@ test('requireActiveAlerts skips the forced refresh on a quiet day', async (t) =>
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
   const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), {
-    force: true, requireActiveAlerts: true, refreshContextCaches: true
+    force: true, refreshContextCaches: true
   });
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
@@ -219,12 +277,9 @@ test('requireActiveAlerts skips the forced refresh on a quiet day', async (t) =>
   assert.ok(kv.store.has('chart_incidents_cache'));
 });
 
-test('requireActiveAlerts refreshes and clears context caches when an alert is cached', async (t) => {
+test('forced refresh with a cached power threat clears flagged context caches', async (t) => {
   const kv = makeKv();
-  seedCommon(kv.store); // any active alert qualifies, not just power threats
-  kv.store.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: 0 }
-  ]));
+  seedCommon(kv.store); // Winter Storm Warning — a power threat
   seedGuild(kv.store, 'g1');
   kv.store.set('guild_index', JSON.stringify(['g1']));
   kv.store.set('bge_outage_cache', 'x');
@@ -235,7 +290,7 @@ test('requireActiveAlerts refreshes and clears context caches when an alert is c
 
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
   const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), {
-    force: true, requireActiveAlerts: true, refreshContextCaches: true
+    force: true, refreshContextCaches: true
   });
   assert.equal(result.updated, 1);
   assert.equal(patches.length, 1);

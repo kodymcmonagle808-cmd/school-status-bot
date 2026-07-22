@@ -19,6 +19,22 @@ const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 // numbers move constantly, and the external watcher pings on every real
 // change — this caps embed edits at one per 5 minutes.
 const FORCED_INTERVAL_MS = 5 * 60 * 1000;
+// After the last refresh, forced pings keep refreshing for this long even
+// without a power threat in the cache, so the ping that follows an alert's
+// expiry still clears the embed's storm sections instead of leaving them
+// frozen at the storm's peak.
+const TRAILING_REFRESH_MS = 60 * 60 * 1000;
+
+// Approximate time of the refresh a stored slot value represents. Forced
+// slots are `f<5-min bucket>`, cron slots a bare 15-min bucket. 0 when the
+// value is missing or unparseable (treated as "no recent refresh").
+export function slotTimestampMs(slotVal) {
+  if (typeof slotVal !== 'string' || !slotVal) return 0;
+  const forced = slotVal.startsWith('f');
+  const n = Number(forced ? slotVal.slice(1) : slotVal);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n * (forced ? FORCED_INTERVAL_MS : REFRESH_INTERVAL_MS);
+}
 
 async function readGuildIds(env) {
   let guildIds = [];
@@ -40,10 +56,14 @@ async function readGuildIds(env) {
 // ~96 writes/day pacing the quiet-weather path year-round. The slot key still
 // dedupes the refresh itself in case a delayed tick lands in the same bucket.
 // { force: true } (the push-hook paths — the external watcher saw alert,
-// outage, or road data actually change) skips both the minute gate and the
-// power-threat probe: something on the embed is known-stale, so refresh it
-// whatever the weather. Forced runs dedupe on a 5-minute bucket, capping the
-// edit rate during a busy storm. Never throws.
+// outage, or road data actually change) skips the minute gate but keeps the
+// power-threat gate, using cache-only reads: the embed only shows live storm
+// sections during a power-threat warning, so refreshing outside one is pure
+// KV churn (a July heat advisory used to keep this cascade running all day).
+// For up to an hour after the last refresh the gate stays open even without
+// a cached threat, so the ping that follows an alert's expiry clears the
+// embed. Forced runs dedupe on a 5-minute bucket, capping the edit rate
+// during a busy storm. Never throws.
 export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) {
   if (!env || !env.STATUS_KV) return { updated: 0 };
   const force = opts.force === true;
@@ -52,16 +72,17 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
   const slot = force
     ? `f${Math.floor(now.getTime() / FORCED_INTERVAL_MS)}`
     : String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
-  if (await env.STATUS_KV.get(SLOT_KEY) === slot) return { updated: 0 };
+  const lastSlot = await env.STATUS_KV.get(SLOT_KEY);
+  if (lastSlot === slot) return { updated: 0 };
 
   let guildIds = null;
-  if (force && opts.requireActiveAlerts) {
-    // Data-context pings (outages, roads) only matter while some alert is
-    // active — that's when the embed shows those sections. Cache-only reads:
-    // the weather cache exists only while alerts are active, so a quiet day
-    // costs a couple of KV reads and no fetches, edits, or cache churn.
-    let active = (await getCachedWeatherAlerts(env)).length > 0;
-    if (!active) {
+  if (force) {
+    // Cache-only power-threat probe (the weather cache only exists while
+    // alerts are active, and hook-armed freshness keeps it current): a
+    // quiet-day ping costs a couple of KV reads and no fetches, edits, or
+    // cache churn.
+    let threat = hasPowerThreatAlert(await getCachedWeatherAlerts(env));
+    if (!threat) {
       guildIds = await readGuildIds(env);
       const zones = new Set();
       for (const gid of guildIds) {
@@ -69,15 +90,16 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
         if (meta && meta.nwsZone) zones.add(meta.nwsZone);
       }
       for (const zone of zones) {
-        if ((await getCachedWeatherAlerts(env, zone)).length > 0) {
-          active = true;
+        if (hasPowerThreatAlert(await getCachedWeatherAlerts(env, zone))) {
+          threat = true;
           break;
         }
       }
     }
-    if (!active) return { updated: 0 };
-  }
-  if (!force) {
+    if (!threat && now.getTime() - slotTimestampMs(lastSlot) > TRAILING_REFRESH_MS) {
+      return { updated: 0 };
+    }
+  } else {
     // Cron path: refresh only while a power-threatening storm is active.
     // Weather is checked before claiming the slot so quiet days cost no
     // writes, and the first storm-time tick still runs the refresh.

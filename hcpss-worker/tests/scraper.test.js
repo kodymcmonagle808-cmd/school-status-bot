@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCards, determineStatusKey, assembleDescription, statusDateInfo, getStatusCards } from '../src/scraper.js';
+import { extractCards, determineStatusKey, assembleDescription, statusDateInfo, getStatusCards, resetScrapeMemCache } from '../src/scraper.js';
 
 const NEW_FORMAT_HTML = `
 <html><body>
@@ -110,11 +110,70 @@ test('getStatusCards ignores a cached scrape older than 24 hours', async (t) => 
 });
 
 test('getStatusCards caches the parsed cards on success', async (t) => {
+  resetScrapeMemCache();
   const kv = makeKv();
   t.mock.method(globalThis, 'fetch', async () => new Response(NEW_FORMAT_HTML, { status: 200 }));
 
   const result = await getStatusCards({ STATUS_KV: kv });
   assert.equal(result.stale, false);
+  assert.equal(result.cards[0].title, 'Schools Closed');
+  const cached = JSON.parse(kv.store.get('last_good_scrape'));
+  assert.equal(cached.cards[0].title, 'Schools Closed');
+});
+
+test('an unchanged rescrape skips the KV rewrite and arms the memory cache', async (t) => {
+  resetScrapeMemCache();
+  const kv = makeKv();
+  // KV holds the same cards the live page will parse to, 5 minutes old —
+  // past the 60s fresh window but far from the hourly rewrite horizon.
+  const cards = extractCards(NEW_FORMAT_HTML);
+  const seededRaw = JSON.stringify({ at: Date.now() - 5 * 60_000, cards });
+  kv.store.set('last_good_scrape', seededRaw);
+
+  let puts = 0;
+  const origPut = kv.put.bind(kv);
+  kv.put = async (k, v) => { puts++; return origPut(k, v); };
+  let fetches = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    fetches++;
+    return new Response(NEW_FORMAT_HTML, { status: 200 });
+  });
+
+  const first = await getStatusCards({ STATUS_KV: kv });
+  assert.equal(first.cards[0].title, 'Schools Closed');
+  assert.equal(fetches, 1);
+  assert.equal(puts, 0, 'identical cards must not rewrite last_good_scrape');
+  assert.equal(kv.store.get('last_good_scrape'), seededRaw);
+
+  // The in-isolate memory cache now serves the 60s window (the KV `at` is
+  // stale precisely because the rewrite was skipped).
+  const second = await getStatusCards({ STATUS_KV: kv });
+  assert.equal(second.cards[0].title, 'Schools Closed');
+  assert.equal(fetches, 1, 'repeat call within 60s must not re-scrape');
+});
+
+test('an unchanged scrape still rewrites once the KV copy is an hour old', async (t) => {
+  resetScrapeMemCache();
+  const kv = makeKv();
+  const cards = extractCards(NEW_FORMAT_HTML);
+  kv.store.set('last_good_scrape', JSON.stringify({ at: Date.now() - 2 * 60 * 60_000, cards }));
+  t.mock.method(globalThis, 'fetch', async () => new Response(NEW_FORMAT_HTML, { status: 200 }));
+
+  await getStatusCards({ STATUS_KV: kv });
+  const cached = JSON.parse(kv.store.get('last_good_scrape'));
+  assert.ok(Date.now() - cached.at < 60_000, 'stale-fallback timestamp refreshed');
+});
+
+test('a changed status always rewrites the KV copy', async (t) => {
+  resetScrapeMemCache();
+  const kv = makeKv();
+  kv.store.set('last_good_scrape', JSON.stringify({
+    at: Date.now() - 5 * 60_000,
+    cards: [{ date: '', title: 'Normal Operations', body: 'old' }]
+  }));
+  t.mock.method(globalThis, 'fetch', async () => new Response(NEW_FORMAT_HTML, { status: 200 }));
+
+  const result = await getStatusCards({ STATUS_KV: kv });
   assert.equal(result.cards[0].title, 'Schools Closed');
   const cached = JSON.parse(kv.store.get('last_good_scrape'));
   assert.equal(cached.cards[0].title, 'Schools Closed');

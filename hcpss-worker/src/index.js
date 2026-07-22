@@ -143,13 +143,13 @@ export default {
     }
 
     // Outage numbers or road conditions changed: refresh the posted embeds
-    // with live data — but only while an alert is active (that's when those
-    // sections are shown), and at most one edit per 5 minutes. On a quiet
-    // day this ping costs a couple of KV reads and nothing else.
+    // with live data — but only while a power-threat warning is active
+    // (that's when the embeds show live storm sections), and at most one
+    // edit per 5 minutes. On a quiet day this ping costs a couple of KV
+    // reads and nothing else.
     if (url.pathname === '/refresh-hook') {
       ctx.waitUntil(maybeRefreshStormEmbeds(env, new Date(), {
         force: true,
-        requireActiveAlerts: true,
         refreshContextCaches: true
       }).catch(e => {
         console.error('Refresh hook failed', e);
@@ -162,8 +162,8 @@ export default {
     // fetches live instead of waiting out the hook-armed TTL. A per-source
     // cooldown caps the KV churn a noisy fingerprint could cause. Posted
     // storm embeds also refresh so their context lines update — that pass is
-    // alert-gated and edit-throttled, so a quiet-day ping costs almost
-    // nothing.
+    // power-threat-gated and edit-throttled, so a quiet-day ping costs
+    // almost nothing.
     if (url.pathname === '/context-hook') {
       let source = '';
       try {
@@ -188,8 +188,7 @@ export default {
       }
       await clearers[source](env);
       ctx.waitUntil(maybeRefreshStormEmbeds(env, new Date(), {
-        force: true,
-        requireActiveAlerts: true
+        force: true
       }).catch(e => {
         console.error('Context hook storm refresh failed', e);
       }));

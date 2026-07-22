@@ -27,6 +27,25 @@ export async function fetchHtml(url, { retries = 1, retryDelayMs = 800 } = {}) {
 // and keeps request volume to the HCPSS site bounded regardless of usage.
 const FRESH_CACHE_MS = 60 * 1000;
 
+// A successful scrape whose cards match the KV copy skips the KV rewrite
+// unless the copy is older than this — writes are the scarce KV resource
+// (1,000/day free vs 100,000 reads), and on a quiet day every scrape used to
+// spend one rewriting an identical status. The hourly rewrite keeps the
+// stale-fallback timestamp honest and the 24h fallback window reachable.
+const REWRITE_MAX_AGE_MS = 60 * 60 * 1000;
+
+// Per-isolate memory of the last successful scrape. When a KV rewrite was
+// skipped the KV `at` goes stale, so this is what keeps the 60s anti-spam
+// window working for repeat traffic landing on the same isolate. Only
+// honored when its cards agree with the KV copy (a mismatch means another
+// isolate saw the page change).
+let memCache = null;
+
+// Test hook: clears the per-isolate scrape memory.
+export function resetScrapeMemCache() {
+  memCache = null;
+}
+
 // Fetches and parses the live status page. On success the parsed cards are
 // cached in KV; on failure the last good scrape (if recent enough) is returned
 // with stale=true so callers can post a "last known status" instead of an error.
@@ -34,13 +53,20 @@ const FRESH_CACHE_MS = 60 * 1000;
 // see the post-change page even if a scheduled check cached it seconds ago)
 // while keeping the last-good scrape intact as the stale fallback.
 export async function getStatusCards(env, { bypassFreshCache = false } = {}) {
+  let priorRaw;
   if (!bypassFreshCache && env && env.STATUS_KV) {
     try {
-      const raw = await env.STATUS_KV.get(LAST_GOOD_SCRAPE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.cards) && Date.now() - parsed.at <= FRESH_CACHE_MS) {
-          return { cards: parsed.cards, error: null, stale: false, staleAt: 0 };
+      priorRaw = await env.STATUS_KV.get(LAST_GOOD_SCRAPE_KEY);
+      if (priorRaw) {
+        const parsed = JSON.parse(priorRaw);
+        if (parsed && Array.isArray(parsed.cards)) {
+          if (Date.now() - parsed.at <= FRESH_CACHE_MS) {
+            return { cards: parsed.cards, error: null, stale: false, staleAt: 0 };
+          }
+          if (memCache && Date.now() - memCache.at <= FRESH_CACHE_MS &&
+              memCache.cardsJson === JSON.stringify(parsed.cards)) {
+            return { cards: memCache.cards, error: null, stale: false, staleAt: 0 };
+          }
         }
       }
     } catch {}
@@ -49,9 +75,26 @@ export async function getStatusCards(env, { bypassFreshCache = false } = {}) {
   try {
     const html = await fetchHtml(HCPSS_URL);
     const cards = extractCards(html);
+    const cardsJson = JSON.stringify(cards);
     if (env && env.STATUS_KV) {
-      await env.STATUS_KV.put(LAST_GOOD_SCRAPE_KEY, JSON.stringify({ at: Date.now(), cards })).catch(() => {});
+      try {
+        if (priorRaw === undefined) {
+          priorRaw = await env.STATUS_KV.get(LAST_GOOD_SCRAPE_KEY);
+        }
+        let shouldWrite = true;
+        if (priorRaw) {
+          const prior = JSON.parse(priorRaw);
+          if (prior && JSON.stringify(prior.cards) === cardsJson &&
+              Date.now() - prior.at < REWRITE_MAX_AGE_MS) {
+            shouldWrite = false;
+          }
+        }
+        if (shouldWrite) {
+          await env.STATUS_KV.put(LAST_GOOD_SCRAPE_KEY, JSON.stringify({ at: Date.now(), cards }));
+        }
+      } catch {}
     }
+    memCache = { at: Date.now(), cardsJson, cards };
     return { cards, error: null, stale: false, staleAt: 0 };
   } catch (err) {
     if (env && env.STATUS_KV) {
