@@ -35,7 +35,7 @@ registration**, `wrangler deploy`).
 - Watchers (all cron-driven, all per-guild-toggleable): `digest.js`,
   `headsup.js` (7 PM + evening escalation), `busalerts.js` (news feed),
   `decisionwatch.js` (live morning board), `stormrefresh.js`, `aqi.js`,
-  `outlookaccuracy.js`, `recap.js`, `cleanup.js`, `greeter.js`.
+  `recap.js`, `cleanup.js`, `greeter.js`.
 - Data sources: `scraper.js` (status page), `districts.js` (6 neighboring
   districts, one fetcher per platform), `weather.js`/`snowfall.js` (NWS),
   `outages.js` (BGE + Pepco/Potomac Edison via Kubra), `roads.js` (MD CHART),
