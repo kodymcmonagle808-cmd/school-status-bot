@@ -1,14 +1,15 @@
 // End-to-end simulation of a storm morning across the cron-driven modules:
 // 4:30 AM the Decision Watch board posts, 5:15 AM storm mode catches a delay
-// announcement, and 8:15 AM the conversion watch catches the delay-to-closure
-// upgrade (outside the storm window). Time is mocked via node:test timers,
-// network via a fetch stub, KV via a Map — this catches the cross-module
-// wiring that unit tests can't.
+// announcement, 8:15 AM the conversion watch catches the delay-to-closure
+// upgrade (outside the storm window), and noon brings the storm recap. Time
+// is mocked via node:test timers, network via a fetch stub, KV via a Map —
+// this catches the cross-module wiring that unit tests can't.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { doCheckAndPost } from '../src/check.js';
 import { maybeUpdateDecisionWatch, maybeCleanupDecisionWatch } from '../src/decisionwatch.js';
+import { maybeSendStormRecap } from '../src/stormrecap.js';
 
 function makeKv(store = new Map()) {
   return {
@@ -31,8 +32,9 @@ function statusHtml(title, body) {
 const T_430AM = Date.parse('2027-01-15T09:30:00Z');
 const T_515AM = Date.parse('2027-01-15T10:15:00Z');
 const T_815AM = Date.parse('2027-01-15T13:15:00Z');
+const T_NOON = Date.parse('2027-01-15T17:00:00Z');
 
-test('full storm morning: board, delay, closure upgrade', async (t) => {
+test('full storm morning: board, delay, closure upgrade, recap', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: T_430AM });
 
   const kv = makeKv();
@@ -125,4 +127,13 @@ test('full storm morning: board, delay, closure upgrade', async (t) => {
   const history = JSON.parse(kv.store.get('status_history'));
   assert.equal(history[0].status_key, 'schools_closed');
   assert.equal(history[1].status_key, 'schools_open_2_hours_late');
+
+  // Noon — the storm recap closes the loop with the outcome and the board.
+  t.mock.timers.setTime(T_NOON);
+  const recapResult = await maybeSendStormRecap(env);
+  assert.equal(recapResult.sent, 1);
+  const recap = alertPosts().find(p => p.body.embeds && p.body.embeds[0].title.includes('Storm Recap'));
+  assert.ok(recap, 'storm recap posted');
+  assert.match(recap.body.embeds[0].description, /Schools closed/);
+  assert.match(recap.body.embeds[0].description, /Anne Arundel Co\./);
 });

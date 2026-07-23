@@ -167,6 +167,7 @@ The health check returns JSON with the Worker name, timestamp, whether the manua
 - `src/roads.js` — MD CHART road incident feed with a 10-minute KV cache.
 - `src/districts.js` — neighboring districts' operating status (per-platform fetchers, keyword classifier, 10-minute KV cache).
 - `src/outlook.js` — Closure Outlook scoring from weather alerts + district statuses.
+- `src/outlookaccuracy.js` — nightly outlook predictions and next-day grading for the /stats track record.
 - `src/crosscheck.js` — HCPSS News RSS second-source signal and mismatch detection.
 - `src/history.js` — status change history (200 entries), school-year incident stats, and the per-year archive.
 - `src/subscriptions.js` — DM notify-on-change subscriber list and delivery.

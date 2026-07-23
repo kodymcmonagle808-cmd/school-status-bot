@@ -22,6 +22,8 @@ import { clearSnowfallCache } from './snowfall.js';
 import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handleEmailHook } from './emailhook.js';
+import { maybeSendStormRecap } from './stormrecap.js';
+import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
@@ -318,6 +320,19 @@ export default {
       } catch (e) {
         console.error('Decision watch cleanup run failed', e);
         await recordWatcherError(env, 'decisionwatch', e);
+      }
+      try {
+        await maybeTrackOutlookAccuracy(env);
+      } catch (e) {
+        console.error('Outlook accuracy run failed', e);
+        await recordWatcherError(env, 'outlookaccuracy', e);
+      }
+      // After the accuracy grader, so the noon recap reads a graded prediction.
+      try {
+        await maybeSendStormRecap(env);
+      } catch (e) {
+        console.error('Storm recap run failed', e);
+        await recordWatcherError(env, 'stormrecap', e);
       }
       try {
         await maybeSendAqiAlerts(env);

@@ -16,6 +16,7 @@ import { getActiveWeatherAlerts, getCachedWeatherAlerts, formatWeatherAlertLines
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
 import { getBgeOutages, getCountyOutage, outagePercent, getCountyOutagePicture, getKubraUtilitySummaries } from './outages.js';
 import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { getOutlookPredictions, summarizeOutlookAccuracy, formatOutlookAccuracyLines } from './outlookaccuracy.js';
 import { computeSnowDayBudget } from './snowbudget.js';
 import { toggleSubscriber, getSubscribers } from './subscriptions.js';
 import { getSchoolSubscriptions, setSchoolSubscription, clearSchoolSubscription, MAX_SCHOOL_NAME_LENGTH } from './schoolsubs.js';
@@ -678,6 +679,16 @@ export async function runStatsCommand(env, guildId = '') {
     ? `\n\n**Previous School Years (district-wide):**\n${pastYearLines.join('\n')}`
     : '';
 
+  // Closure Outlook track record (HCPSS-based; graded the day after each
+  // storm-evening prediction). Only shown once at least one night is graded.
+  let outlookSection = '';
+  try {
+    const accuracyLines = formatOutlookAccuracyLines(summarizeOutlookAccuracy(await getOutlookPredictions(env)));
+    if (accuracyLines) {
+      outlookSection = `\n\n**🔮 Closure Outlook Track Record:**\n${accuracyLines}`;
+    }
+  } catch {}
+
   const embed = {
     title: meta ? `📊 School Status — ${meta.name} Statistics` : '📊 School Status - Statistics',
     color: 0x34495E,
@@ -690,7 +701,7 @@ export async function runStatsCommand(env, guildId = '') {
                  `• 🏃 **Early Closings**: \`${yearStats.earlyCloses}\`\n` +
                  `• 📌 **Last Incident**: ${lastIncidentStr}` +
                  budgetLine +
-                 pastYearsSection + `\n\n` +
+                 pastYearsSection + outlookSection + `\n\n` +
                  `**Status Changes (This School Year):**\n` +
                  `${yearCountsDisplay}\n\n` +
                  `**Status Changes (${joinedAt ? 'Since Server Setup' : 'All-Time'}):**\n` +
@@ -942,7 +953,8 @@ export async function handlePanelKvDebug(body, env) {
     `scraper_failures_count`,
     `scraper_failure_alerted`,
     `log_panel_message_id:${guildId}`,
-    `setup_done:${guildId}`
+    `setup_done:${guildId}`,
+    `outlook_predictions`
   ];
 
   for (const key of kvKeys) {

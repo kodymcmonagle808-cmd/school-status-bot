@@ -546,6 +546,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const roads = config.toggle_roads !== false;
     const yearRecap = config.toggle_year_recap !== false;
     const aqiAlerts = config.toggle_aqi_alerts !== false;
+    const stormRecap = config.toggle_storm_recap !== false;
     const nwsAlerts = config.toggle_nws_alerts !== false;
     const emailAlerts = config.toggle_email_alerts !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
@@ -573,6 +574,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n` +
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
                    `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
+                   `• ${stormRecap ? '🟢' : '🔴'} **Storm Recap** — noon summary after storm mornings (outlook grade, every district's call)\n` +
                    `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
                    `• ${emailAlerts ? '🟢' : '🔴'} **HCPSS Email Notices** — post announcement emails that never reach the status page (no pings)\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
@@ -699,6 +701,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post when the AQI reaches Code Orange or worse (no pings)',
         emoji: { name: '😷' },
         default: aqiAlerts
+      },
+      {
+        label: 'Storm Recap',
+        value: 'toggle_storm_recap',
+        description: 'Noon summary after storm mornings (no pings)',
+        emoji: { name: '🌤️' },
+        default: stormRecap
       },
       {
         label: 'NWS Issuance Notices',
@@ -1422,6 +1431,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_roads = selected.includes('toggle_roads');
     next.toggle_year_recap = selected.includes('toggle_year_recap');
     next.toggle_aqi_alerts = selected.includes('toggle_aqi_alerts');
+    next.toggle_storm_recap = selected.includes('toggle_storm_recap');
     next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
     next.toggle_email_alerts = selected.includes('toggle_email_alerts');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {

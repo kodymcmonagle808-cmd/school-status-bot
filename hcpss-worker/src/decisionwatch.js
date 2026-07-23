@@ -132,8 +132,8 @@ export async function maybeUpdateDecisionWatch(env) {
     }
   } catch {}
 
-  // Track first-detection times for every district's announcement across the
-  // morning's ticks, so the board shows when each call was first seen.
+  // Track first-detection times for every district's announcement, and keep a
+  // same-day snapshot of the whole board — the noon storm recap reads it.
   let times = {};
   try {
     const raw = await env.STATUS_KV.get('decision_watch_times');
@@ -144,6 +144,11 @@ export async function maybeUpdateDecisionWatch(env) {
   } catch {}
   times = updateAnnouncementTimes(times, buildDecisionWatchEntries(districts, hcpssEntry), now.getTime());
   await env.STATUS_KV.put('decision_watch_times', JSON.stringify({ ymd: todayYmd, times })).catch(() => {});
+  await env.STATUS_KV.put('decision_watch_data', JSON.stringify({
+    ymd: todayYmd,
+    districts,
+    hcpss: hcpssEntry
+  })).catch(() => {});
 
   let updated = 0;
   const token = env.DISCORD_BOT_TOKEN;
@@ -215,9 +220,8 @@ export async function maybeUpdateDecisionWatch(env) {
 }
 
 // The board is live morning coverage, not a permanent record — once the
-// window is over it's channel clutter, so it's deleted. The status history
-// (/history) is the durable record. True from 8:00 through 10:00 AM ET; the
-// wide window covers missed ticks.
+// window is over it's channel clutter (the noon storm recap is the record).
+// True from 8:00 through 10:00 AM ET; the wide window covers missed ticks.
 export function decisionWatchCleanupDue(etStr) {
   const [h, m] = String(etStr).split(':').map(Number);
   if (isNaN(h) || isNaN(m)) return false;
