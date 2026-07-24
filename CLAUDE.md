@@ -35,7 +35,16 @@ registration**, `wrangler deploy`).
 - Watchers (all cron-driven, all per-guild-toggleable): `digest.js`,
   `headsup.js` (7 PM + evening escalation), `busalerts.js` (news feed),
   `decisionwatch.js` (live morning board), `stormrefresh.js`, `aqi.js`,
-  `outlookaccuracy.js`, `recap.js`, `cleanup.js`, `greeter.js`.
+  `outlookaccuracy.js`, `recap.js`, `cleanup.js`, `greeter.js`,
+  `sourcehealth.js` (hourly silent-zero sweep).
+- `src/session.js` — "is school actually in session?", the gate storm mode,
+  `decisionwatch.js`, and `headsup.js` consult before alerting. Pure and
+  one-sided: `noSchoolReason()` returns a reason only when the bot is
+  *confident* there's no school, and null (don't suppress) for anything
+  unknown. HCPSS gets the built-in calendar; other districts get only the
+  rules that hold everywhere (weekend, summer, federal holidays). Its
+  `SCHOOL_YEAR_WINDOWS` must be updated whenever `SCHOOL_CALENDAR_EVENTS` in
+  `constants.js` rolls to a new school year — `/health` warns 60 days out.
 - Data sources: `scraper.js` (status page), `districts.js` (6 neighboring
   districts, one fetcher per platform), `weather.js`/`snowfall.js` (NWS),
   `outages.js` (BGE + Pepco/Potomac Edison via Kubra), `roads.js` (MD CHART),
@@ -46,7 +55,11 @@ registration**, `wrangler deploy`).
 - **Context never breaks a status post.** Every external data source degrades
   to `null`/`[]`/`''` on failure — never throw out of a fetcher. The status
   post must go out even when every side feed is down. Because failures are
-  silent at runtime, `scripts/canary.mjs` (daily CI) is what detects breakage.
+  silent at runtime, `scripts/canary.mjs` (daily CI) is what detects breakage;
+  `sourcehealth.js` is the in-production half, alerting when a source that
+  should never be empty goes quiet. A new always-expect source belongs in
+  both — but only add one to `SOURCE_EXPECTATIONS` if it has an unambiguous
+  failure signal, or a quiet season will read as an outage.
 - **Multi-server everything.** Per-guild config via
   `getConfig`/`getEffectiveConfig` (`config.js`); new features get a
   `toggle_*` default in `getEffectiveConfig`, a control-panel entry in

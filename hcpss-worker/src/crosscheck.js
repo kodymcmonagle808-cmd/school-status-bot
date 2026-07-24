@@ -81,35 +81,70 @@ function timeoutSignal(ms) {
 
 // Fetches the news signal with a 10-minute KV cache. Caches "no signal" too,
 // so quiet days cost one feed fetch per 10 minutes at most. Never throws.
-export async function getNewsSignal(env) {
+// How many <item> blocks the feed carries, before any recency filtering.
+// parseRssItems keeps only the last 12 hours, so its length is legitimately 0
+// on a healthy feed — this raw count is the one that says the feed itself is
+// alive, which is what source health needs. Exported for tests.
+export function countFeedItems(xml) {
+  return (String(xml || '').match(/<item[\s>]/g) || []).length;
+}
+
+// Fetches (or reads from cache) both the operating-status signal and the raw
+// feed item count. Returns { signal, feedItems } — feedItems is -1 when the
+// feed could not be read at all, which is what separates "nothing to report"
+// from "the feed is broken".
+async function loadNewsFeed(env) {
   if (env && env.STATUS_KV) {
     try {
       const cached = await env.STATUS_KV.get(NEWS_CACHE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed && typeof parsed === 'object') return parsed.signal || null;
+        if (parsed && typeof parsed === 'object') {
+          return {
+            signal: parsed.signal || null,
+            // Entries cached before feedItems existed report "unknown".
+            feedItems: typeof parsed.feedItems === 'number' ? parsed.feedItems : null
+          };
+        }
       }
     } catch {}
   }
 
   let signal = null;
+  let feedItems = -1;
   try {
     const r = await fetch(HCPSS_NEWS_FEED_URL, {
       headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml, text/xml' },
       signal: timeoutSignal(FETCH_TIMEOUT_MS)
     });
     if (!r.ok) throw new Error('News feed fetch failed ' + r.status);
-    signal = summarizeNewsItems(parseRssItems(await r.text()));
+    const xml = await r.text();
+    feedItems = countFeedItems(xml);
+    signal = summarizeNewsItems(parseRssItems(xml));
   } catch {
-    return null;
+    return { signal: null, feedItems: -1 };
   }
 
   if (env && env.STATUS_KV) {
     await env.STATUS_KV.put(
       NEWS_CACHE_KEY,
-      JSON.stringify({ at: Date.now(), signal }),
+      JSON.stringify({ at: Date.now(), signal, feedItems }),
       { expirationTtl: contextCacheTtl(env, NEWS_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
-  return signal;
+  return { signal, feedItems };
+}
+
+export async function getNewsSignal(env) {
+  return (await loadNewsFeed(env)).signal;
+}
+
+// For source health: >0 healthy, 0 parsed-but-empty, -1 unreachable,
+// null unknown (cache predates the counter). Never throws.
+export async function getNewsFeedItemCount(env) {
+  try {
+    return (await loadNewsFeed(env)).feedItems;
+  } catch {
+    return -1;
+  }
 }

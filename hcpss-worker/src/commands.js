@@ -12,6 +12,8 @@ import { postLog } from './panel.js';
 import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
+import { noSchoolReason, calendarExhaustion } from './session.js';
+import { getSourceHealth, formatSourceHealth } from './sourcehealth.js';
 import { getActiveWeatherAlerts, getCachedWeatherAlerts, formatWeatherAlertLines, hasStormAlert, DEFAULT_NWS_ZONE } from './weather.js';
 import { computeClosureOutlook, formatOutlookLines, OUTLOOK_LEVELS } from './outlook.js';
 import { getBgeOutages, getCountyOutage, outagePercent, getCountyOutagePicture, getKubraUtilitySummaries } from './outages.js';
@@ -537,6 +539,11 @@ export async function runHealthCommand(env, guildId = '') {
   const schedule = Array.isArray(cfg.check_schedule) ? cfg.check_schedule : [];
   const next = nextScheduledTime(schedule, etStr);
 
+  const todayYmd = formatYmdNY(checkedAt);
+  const sessionReason = noSchoolReason(todayYmd, cfg.primary_district || 'hcpss');
+  const calExhaustion = calendarExhaustion(todayYmd);
+  const sourceHealth = await getSourceHealth(env);
+
   const scraperEmoji = failureStreak >= 3 ? '🔴' : failureStreak > 0 ? '🟠' : '🟢';
   const lines = [
     `**Scraper (all servers):**`,
@@ -552,7 +559,14 @@ export async function runHealthCommand(env, guildId = '') {
     ``,
     `**Storm mode:**`,
     `• ${cfg.toggle_storm_mode !== false ? '🟢 Enabled' : '🔴 Disabled'} — windows 4:30–7:30 AM & 10 AM–2 PM ET`,
-    `• Storm alert active${meta ? ` (${meta.name})` : ' (Howard Co.)'}: ${stormAlert ? '🌨️ **Yes**' : 'No'}${inWindow && stormAlert ? ' — extra checks running now' : ''}`
+    `• Storm alert active${meta ? ` (${meta.name})` : ' (Howard Co.)'}: ${stormAlert ? '🌨️ **Yes**' : 'No'}${inWindow && stormAlert ? ' — extra checks running now' : ''}`,
+    `• ${cfg.toggle_session_gate !== false ? '🟢' : '🔴'} School in session today: ${sessionReason ? `**No** — ${sessionReason}` : '**Yes**'}${sessionReason && cfg.toggle_session_gate !== false ? ' (storm alerts held)' : ''}`,
+    ``,
+    `**Data sources:**`,
+    formatSourceHealth(sourceHealth, checkedAt.getTime()),
+    calExhaustion.warn
+      ? `• ⚠️ Built-in school calendar ends **${calExhaustion.endsOn}** (${calExhaustion.daysLeft} day(s) left) — add next year's dates to \`constants.js\``
+      : null
   ].filter(l => l !== null);
 
   return {

@@ -548,6 +548,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const aqiAlerts = config.toggle_aqi_alerts !== false;
     const nwsAlerts = config.toggle_nws_alerts !== false;
     const emailAlerts = config.toggle_email_alerts !== false;
+    const sessionGate = config.toggle_session_gate !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -574,7 +575,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
                    `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
                    `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
-                   `• ${emailAlerts ? '🟢' : '🔴'} **HCPSS Email Notices** — post announcement emails that never reach the status page (no pings)\n\n` +
+                   `• ${emailAlerts ? '🟢' : '🔴'} **HCPSS Email Notices** — post announcement emails that never reach the status page (no pings)\n` +
+                   `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -713,6 +715,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post forwarded HCPSS announcement emails (no pings)',
         emoji: { name: '📧' },
         default: emailAlerts
+      },
+      {
+        label: 'Skip Non-School Days',
+        value: 'toggle_session_gate',
+        description: 'Hold storm alerts on weekends, breaks, and holidays',
+        emoji: { name: '📆' },
+        default: sessionGate
       }
     ];
 
@@ -1424,6 +1433,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_aqi_alerts = selected.includes('toggle_aqi_alerts');
     next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
     next.toggle_email_alerts = selected.includes('toggle_email_alerts');
+    next.toggle_session_gate = selected.includes('toggle_session_gate');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];

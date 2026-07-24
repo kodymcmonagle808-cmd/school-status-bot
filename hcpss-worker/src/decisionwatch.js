@@ -16,6 +16,7 @@ import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { noSchoolReason } from './session.js';
 
 const SLOT_KEY = 'last_decision_watch_slot';
 const CLEANUP_DAY_KEY = 'last_decision_watch_cleanup_day';
@@ -90,12 +91,16 @@ export async function maybeUpdateDecisionWatch(env) {
     guildIds.push(env.DISCORD_GUILD_ID);
   }
 
-  // Cheap pass: which guilds want a board this morning?
+  // Cheap pass: which guilds want a board this morning? A board of closing
+  // announcements is noise on a day school was never in session, so the
+  // session gate runs here — before the NWS probe and the district fetches.
   const wanting = [];
   for (const gid of guildIds) {
     const cfg = getEffectiveConfig(await getConfig(env, gid));
     if (cfg.toggle_decision_watch === false || cfg.toggle_storm_mode === false) continue;
     if (!cfg.alert_channel_id) continue;
+    if (cfg.toggle_session_gate !== false &&
+        noSchoolReason(todayYmd, cfg.primary_district || 'hcpss')) continue;
     wanting.push({ gid, cfg });
   }
   if (!wanting.length) return { updated: 0 };

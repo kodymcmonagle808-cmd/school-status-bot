@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRssItems, summarizeNewsItems, crossCheckMismatch, NEWS_RECENT_WINDOW_MS } from '../src/crosscheck.js';
+import { parseRssItems, summarizeNewsItems, crossCheckMismatch, countFeedItems, NEWS_RECENT_WINDOW_MS } from '../src/crosscheck.js';
 
 const NOW = Date.parse('2027-01-15T11:00:00Z');
 
@@ -68,4 +68,23 @@ test('no mismatch when page shows a different non-normal alert', () => {
 
 test('no mismatch without a signal', () => {
   assert.equal(crossCheckMismatch('normal_operations', null), false);
+});
+
+test('countFeedItems ignores the recency window that parseRssItems applies', () => {
+  // A healthy feed whose newest post is a month old: parseRssItems correctly
+  // returns nothing, but the feed itself is fine. Source health needs the
+  // second number, or every quiet month would look like an outage.
+  const old = rss([
+    { title: 'Board meeting recap', date: new Date(NOW - 30 * 86400000).toUTCString() },
+    { title: 'Spring registration open', date: new Date(NOW - 31 * 86400000).toUTCString() }
+  ]);
+  assert.equal(parseRssItems(old, NOW).length, 0);
+  assert.equal(countFeedItems(old), 2);
+});
+
+test('countFeedItems returns 0 for an empty or broken feed', () => {
+  assert.equal(countFeedItems('<rss><channel></channel></rss>'), 0);
+  assert.equal(countFeedItems(''), 0);
+  assert.equal(countFeedItems(null), 0);
+  assert.equal(countFeedItems('<html><body>Not a feed at all</body></html>'), 0);
 });

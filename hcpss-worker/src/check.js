@@ -12,6 +12,7 @@ import { buildStatusPayload } from './embeds.js';
 import { postMessageToChannel, discordFetch } from './discord.js';
 import { postLog } from './panel.js';
 import { getBlockedGuilds } from './blocklist.js';
+import { noSchoolReason } from './session.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
 
@@ -284,6 +285,23 @@ export async function doCheckAndPost(env, options = {}) {
       if (!stormSlot) {
         return { ok: true, skipped: true, message: 'No guilds scheduled for this time.' };
       }
+
+      // A closing or delay only means something if school was going to happen.
+      // The status page reads Normal Operations straight through winter break,
+      // so without this the storm ticks would check — and post — on days no
+      // school was ever scheduled. Runs before the NWS probe and the slot
+      // write so a break costs neither a fetch nor a KV write.
+      const sessionGuildIds = [];
+      for (const gid of targetGuildIds) {
+        const cfg = await getCfg(gid);
+        if (cfg.toggle_session_gate !== false &&
+            noSchoolReason(todayYmd, cfg.primary_district || 'hcpss')) continue;
+        sessionGuildIds.push(gid);
+      }
+      if (sessionGuildIds.length === 0) {
+        return { ok: true, skipped: true, message: 'Storm window, but school is not in session today.' };
+      }
+
       if (!isConversionWatch) {
         // An alert in the default (Howard) zone or in any guild's primary
         // district's zone opens the window — a guild following Frederick still
@@ -291,7 +309,7 @@ export async function doCheckAndPost(env, options = {}) {
         let stormZoneAlert = hasStormAlert(await getActiveWeatherAlerts(env));
         if (!stormZoneAlert) {
           const zones = new Set();
-          for (const gid of targetGuildIds) {
+          for (const gid of sessionGuildIds) {
             const meta = getDistrictMeta((await getCfg(gid)).primary_district);
             if (meta && meta.nwsZone) zones.add(meta.nwsZone);
           }
@@ -312,7 +330,7 @@ export async function doCheckAndPost(env, options = {}) {
       }
       await env.STATUS_KV.put('last_storm_slot', slotVal);
       isStormCheck = true;
-      activeGuildIds = [...targetGuildIds];
+      activeGuildIds = [...sessionGuildIds];
     }
   }
 

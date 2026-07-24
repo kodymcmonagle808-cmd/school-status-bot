@@ -23,7 +23,7 @@ import {
   HCPSS_COUNTY
 } from './districts.js';
 import { computeClosureOutlook, formatOutlookLines, closureOutlookTitle } from './outlook.js';
-import { getSnowfallForecast, formatSnowfallLines } from './snowfall.js';
+import { getSnowfallForecast, formatSnowfallLines, getObservedSnowfall, formatObservedSnowfallLines } from './snowfall.js';
 import { getBgeOutages, formatOutageLine, getCountyOutage, outagePercent, getCountyOutagePicture } from './outages.js';
 import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getNewsSignal, crossCheckMismatch } from './crosscheck.js';
@@ -209,6 +209,12 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
     if (snowLines) {
       addField(embeds[0], '🌨️ Snowfall Forecast — Howard County', snowLines);
     }
+    // What actually fell, once spotters start reporting — the number that
+    // explains a call the forecast didn't.
+    const observedLines = formatObservedSnowfallLines(await getObservedSnowfall(env, HCPSS_COUNTY));
+    if (observedLines) {
+      addField(embeds[0], '📏 Observed Snowfall — Howard County', observedLines);
+    }
   }
 
   // On closure days, show how much of the built-in inclement weather day
@@ -388,6 +394,12 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     const snowLines = formatSnowfallLines(await getSnowfallForecast(env));
     if (snowLines) {
       addField(embeds[0], '🌨️ Snowfall Forecast — Region', snowLines);
+    }
+    // Observed totals are reported per county, so this one is district-aware
+    // even though the forecast gridpoint isn't.
+    const observedLines = formatObservedSnowfallLines(await getObservedSnowfall(env, meta.county));
+    if (observedLines) {
+      addField(embeds[0], `📏 Observed Snowfall — ${meta.name}`, observedLines);
     }
   }
 

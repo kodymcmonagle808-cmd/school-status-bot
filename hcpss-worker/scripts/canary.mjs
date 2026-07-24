@@ -13,6 +13,7 @@ import { summarizeWeatherAlerts, DEFAULT_NWS_ZONE } from '../src/weather.js';
 import { BGE_COUNTIES_URL, KUBRA_UTILITIES, summarizeOutageFeed, summarizeKubraReport } from '../src/outages.js';
 import { CHART_INCIDENTS_URL, parseChartIncidents } from '../src/roads.js';
 import { COUNTY_REPORTING_AREAS, worstAqiToday } from '../src/aqi.js';
+import { LSR_PRODUCT_LIST_URL, parseLocalStormReports } from '../src/snowfall.js';
 
 const UA = 'school-status-bot canary (github.com/kodymcmonagle808-cmd/school-status-bot)';
 const TIMEOUT_MS = 15000;
@@ -96,6 +97,21 @@ const CHECKS = {
     const xml = await (await get(CHART_INCIDENTS_URL)).text();
     assert(/^\s*</.test(xml), 'CHART response is not XML');
     assert(Array.isArray(parseChartIncidents(xml)), 'parseChartIncidents failed');
+  },
+
+  'NWS local storm reports (observed snowfall)': async () => {
+    const list = await (await get(LSR_PRODUCT_LIST_URL, { headers: { Accept: 'application/ld+json' } })).json();
+    const graph = list && list['@graph'];
+    assert(Array.isArray(graph) && graph.length, 'no LSR products listed for LWX');
+    assert(graph[0] && graph[0].id, 'LSR product entry has no id');
+    const full = await (await get(`https://api.weather.gov/products/${graph[0].id}`, {
+      headers: { Accept: 'application/ld+json' }
+    })).json();
+    assert(typeof full.productText === 'string' && full.productText.length, 'LSR product has no text');
+    // Reports are legitimately empty outside a storm, so assert the shape and
+    // that the bulletin still looks like the format the parser expects.
+    assert(Array.isArray(parseLocalStormReports(full.productText)), 'parseLocalStormReports failed');
+    assert(/LOCAL STORM REPORT/i.test(full.productText), 'LSR bulletin header changed');
   }
 };
 

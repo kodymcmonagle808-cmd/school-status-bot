@@ -27,6 +27,7 @@ import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { noSchoolReason, addDaysYmd } from './session.js';
 
 export const HEADS_UP_TIME = '19:00';
 export const HEADS_UP_LEVELS = ['high', 'very_high'];
@@ -140,12 +141,19 @@ export async function maybeSendHeadsUp(env) {
     guildIds.push(env.DISCORD_GUILD_ID);
   }
 
+  // The heads-up is about *tomorrow*, so that is the day the session gate has
+  // to ask about — a Sunday-evening post is about Monday, and a Dec 26 post
+  // about a day inside winter break shouldn't go out at all.
+  const tomorrowYmd = addDaysYmd(todayYmd, 1);
+
   // Cheap pass first: only guilds that want a heads-up and could still climb
   // a tier tonight (very_high is the ceiling — nothing left to announce).
   const wanting = [];
   for (const gid of guildIds) {
     const cfg = getEffectiveConfig(await getConfig(env, gid));
     if (cfg.toggle_heads_up === false || !cfg.alert_channel_id) continue;
+    if (cfg.toggle_session_gate !== false &&
+        noSchoolReason(tomorrowYmd, cfg.primary_district || 'hcpss')) continue;
     const state = parseHeadsUpState(await env.STATUS_KV.get(`last_headsup_day:${gid}`));
     if (state.ymd === todayYmd && state.level === 'very_high') continue;
     wanting.push({ gid, cfg, state });

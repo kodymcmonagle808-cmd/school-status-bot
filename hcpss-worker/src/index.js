@@ -24,6 +24,7 @@ import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmod
 import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
+import { maybeSweepSourceHealth } from './sourcehealth.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
 import { recordWatcherError } from './watcherhealth.js';
@@ -355,6 +356,12 @@ export default {
       } catch (e) {
         console.error('Server membership watch failed', e);
         await recordWatcherError(env, 'serverwatch', e);
+      }
+      try {
+        await maybeSweepSourceHealth(env);
+      } catch (e) {
+        console.error('Source health sweep failed', e);
+        await recordWatcherError(env, 'sourcehealth', e);
       }
     })());
   }
