@@ -108,10 +108,25 @@ const CHECKS = {
       headers: { Accept: 'application/ld+json' }
     })).json();
     assert(typeof full.productText === 'string' && full.productText.length, 'LSR product has no text');
-    // Reports are legitimately empty outside a storm, so assert the shape and
-    // that the bulletin still looks like the format the parser expects.
     assert(Array.isArray(parseLocalStormReports(full.productText)), 'parseLocalStormReports failed');
     assert(/LOCAL STORM REPORT/i.test(full.productText), 'LSR bulletin header changed');
+
+    // Snow reports are legitimately absent for most of the year, so instead of
+    // asserting on them, assert the thing the parser actually depends on: the
+    // fixed-width column layout declared by the bulletin's own legend.
+    const legend = full.productText.split(/\r?\n/).find(l => /\.\.DATE\.\.\./.test(l));
+    assert(legend, 'LSR column legend line missing');
+    assert(legend.indexOf('....MAG....') === 12, `magnitude column moved (found at ${legend.indexOf('....MAG....')})`);
+    assert(legend.indexOf('..COUNTY LOCATION..ST..') === 29, 'county/state column moved');
+
+    // And prove the parser still reads a record laid out on those columns.
+    const probe = [
+      '0300 PM     Snow             1 SW Ellicott City      39.26N  76.83W',
+      `${new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/-/g, '/')}  M6.0 Inch        Howard             MD   Trained Spotter`
+    ].join('\n');
+    const parsed = parseLocalStormReports(probe);
+    assert(parsed.length === 1 && parsed[0].county === 'Howard' && parsed[0].inches === 6,
+      'parseLocalStormReports no longer reads a canonical record');
   }
 };
 

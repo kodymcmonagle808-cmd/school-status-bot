@@ -119,57 +119,78 @@ const LSR_PRODUCTS_TO_READ = 3;
 // about, so they're dropped rather than shown as today's totals.
 export const OBSERVED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-// LSR bulletins are fixed-format two-line records:
+// LSR bulletins are fixed-width two-line records. Real sample from LWX:
 //
-//   0300 PM     SNOW             1 SW ELLICOTT CITY      39.26N 76.83W
-//   01/06/2025  M6.0 INCH        HOWARD             MD   TRAINED SPOTTER
+//   0300 PM     Snow             1 SW Ellicott City      39.26N  76.83W
+//   01/06/2026  M6.0 Inch        Howard             MD   Trained Spotter
 //
-// The second line carries the measurement and county; the first carries the
-// event type and place. Returns [{ county, state, inches, event, place, atMs }].
-// Tolerant by design — a format drift yields fewer reports, never a throw.
+// Columns (per the bulletin's own legend): 0-11 time/date, 12-28 event/
+// magnitude, 29-47 city/county, 48-51 state, 52+ lat-lon/source. The text is
+// mixed case, magnitudes carry an M (measured) or E (estimated) prefix, and
+// county names can hold periods and spaces ("St. Marys", "Prince Georges") —
+// so this splits on columns and only regexes within a field, which survives
+// all of that better than one big pattern.
+//
+// Returns [{ county, state, inches, event, place, atMs }]. Tolerant by
+// design: a format drift yields fewer reports, never a throw.
 export function parseLocalStormReports(text, nowMs = Date.now()) {
   const lines = String(text || '').split(/\r?\n/);
   const reports = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const dataLine = lines[i].trim();
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})\s+M?([\d.]+)\s+INCH(?:ES)?\s+(.+?)\s{2,}([A-Z]{2})\b/.exec(dataLine);
-    if (!m) continue;
+    const line = lines[i];
+    const dateField = line.slice(0, 12).trim();
+    const dateMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateField);
+    if (!dateMatch) continue;
 
-    const [, mm, dd, yyyy, mag, countyRaw, state] = m;
-    const inches = Number(mag);
+    // Magnitude field: "M6.0 Inch", "E39 mph", or empty (tornadoes carry none).
+    const magMatch = /^[ME]?\s*([\d.]+)\s*inch(?:es)?$/i.exec(line.slice(12, 29).trim());
+    if (!magMatch) continue;
+    const inches = Number(magMatch[1]);
     if (!isFinite(inches)) continue;
+
+    // County/state: prefer the fixed columns, fall back to splitting the
+    // remainder when a bulletin's padding drifts.
+    let county = line.slice(29, 48).trim();
+    let state = line.slice(48, 52).trim();
+    if (!/^[A-Z]{2}$/.test(state)) {
+      const tail = /^(.+?)\s{2,}([A-Z]{2})\b/.exec(line.slice(29).trim());
+      if (!tail) continue;
+      county = tail[1].trim();
+      state = tail[2];
+    }
+    if (!county) continue;
+
+    const [, mm, dd, yyyy] = dateMatch;
 
     // The record's own timestamp is only a date; pair it with the time on the
     // header line when one is there, else treat it as midday. LSR times are
     // local (ET) and this builds a UTC instant from them, so `atMs` runs ~4-5
     // hours early — irrelevant against a 24-hour window, and it only ever
     // makes a report look older, never fresher.
-    const headerLine = lines[i - 1].trim();
-    const timeMatch = /^(\d{1,2})(\d{2})\s*(AM|PM)\b/.exec(headerLine);
+    const headerLine = lines[i - 1];
+    const timeMatch = /^(\d{1,2})(\d{2})\s*(AM|PM)\b/i.exec(headerLine.slice(0, 12).trim());
     let hour = 12;
     let minute = 0;
     if (timeMatch) {
       hour = Number(timeMatch[1]) % 12;
       minute = Number(timeMatch[2]);
-      if (timeMatch[3] === 'PM') hour += 12;
+      if (/pm/i.test(timeMatch[3])) hour += 12;
     }
     const atMs = Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd), hour, minute);
     if (nowMs - atMs > OBSERVED_MAX_AGE_MS) continue;
 
-    // Header line: "<time> <AM/PM>  <EVENT>  <PLACE>  <LAT> <LON>". Only snow
-    // and ice events carry an accumulation worth reporting.
-    const eventMatch = /^\d{1,2}\d{2}\s*(?:AM|PM)\s+([A-Z][A-Z ]*?)\s{2,}(.*?)\s{2,}[\d.]+[NS]/.exec(headerLine);
-    const event = eventMatch ? eventMatch[1].trim() : 'SNOW';
-    const place = eventMatch ? eventMatch[2].trim() : '';
-    if (!/SNOW|SLEET|ICE|FREEZING/i.test(event)) continue;
+    // Only frozen-precip events carry an accumulation worth reporting — hail
+    // is also measured in inches and must not be read as snowfall.
+    const event = headerLine.slice(12, 29).trim() || 'Snow';
+    if (!/snow|sleet|ice|freezing/i.test(event)) continue;
 
     reports.push({
-      county: countyRaw.trim(),
+      county,
       state,
       inches,
       event,
-      place,
+      place: headerLine.slice(29, 53).trim(),
       atMs
     });
   }
@@ -196,22 +217,15 @@ export function summarizeObservedSnowfall(reports, county) {
   };
 }
 
+// Place names arrive already cased the way NWS wants them ("1 SW Ellicott
+// City"), so they're used verbatim rather than re-cased.
 export function formatObservedSnowfallLines(summary) {
   if (!summary) return '';
-  const place = summary.place ? ` at ${titleCasePlace(summary.place)}` : '';
+  const place = summary.place ? ` at ${summary.place}` : '';
   const others = summary.reportCount > 1
     ? ` · ${summary.reportCount} spotter reports`
     : '';
   return `📏 **${summary.max}"** measured${place}${others}`;
-}
-
-// LSR place names arrive shouting ("1 SW ELLICOTT CITY").
-function titleCasePlace(place) {
-  return String(place || '')
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (_, c) => c.toUpperCase())
-    // Keep compass abbreviations upper: "1 Sw Ellicott City" → "1 SW Ellicott City".
-    .replace(/\b(N|S|E|W|Ne|Nw|Se|Sw|Nne|Ene|Ese|Sse|Ssw|Wsw|Wnw|Nnw)\b/g, s => s.toUpperCase());
 }
 
 // Observed totals for one county, cached in KV for 30 minutes. All counties
