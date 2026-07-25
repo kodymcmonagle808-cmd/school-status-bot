@@ -5,6 +5,8 @@
 //      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
 //      zone's alert set changes. The Worker's own cron scan drops to an
 //      hourly safety net automatically once NWS_HOOK_SECRET is configured.
+//      The fingerprint mirrors the Worker's own filter (weather.js
+//      summarizeWeatherAlerts), so alerts it discards can never ping.
 //   2. HCPSS status page — polls https://status.hcpss.org and POSTs to
 //      /status-hook when the status block changes. The Worker then runs a
 //      change-only check immediately: it re-scrapes with its real parser and
@@ -386,7 +388,7 @@ function checkContextSources() {
   checkContextSource(props, workerUrl, secret, 'districts', districtsFingerprintParts(bodies));
   checkContextSource(props, workerUrl, secret, 'news', newsFingerprintParts(bodies.news));
   checkContextSource(props, workerUrl, secret, 'snowfall', snowfallFingerprintParts(bodies.snowfall));
-  checkContextSource(props, workerUrl, secret, 'aqi', aqiFingerprintParts(bodies.aqimd, bodies.aqidc));
+  checkContextSource(props, workerUrl, secret, 'aqi', aqiFingerprintParts(bodies.aqimd, bodies.aqidc, aqiTodayMdy()));
 }
 
 // Shared change gate: null parts mean the fetch failed (skip the run), the
@@ -495,10 +497,21 @@ function snowfallFingerprintParts(body) {
   }
 }
 
+// Today's date as AirNow writes validDate (MM/DD/YY), in the bot's timezone.
+function aqiTodayMdy(now) {
+  return Utilities.formatDate(now || new Date(), 'America/New_York', 'MM/dd/yy');
+}
+
 // AQI: category (not the raw number, which churns hourly) per watched
-// reporting area and date — the Worker's alert threshold is a category
-// boundary, so category changes are the only ones that matter.
-function aqiFingerprintParts(mdBody, dcBody) {
+// reporting area — the Worker's alert threshold is a category boundary, so
+// category changes are the only ones that matter.
+//
+// Restricted to today's records because that is all the Worker ever reads
+// (worstAqiToday in aqi.js scores today's observed and forecast rows for the
+// guild's area and ignores the rest). AirNow returns six more days of
+// forecast per area and revises them throughout the day; fingerprinting those
+// pinged /context-hook to drop the AQI cache for rows nothing would look at.
+function aqiFingerprintParts(mdBody, dcBody, todayMdy) {
   if (!mdBody || !dcBody) return null;
   var parts = [];
   try {
@@ -506,7 +519,8 @@ function aqiFingerprintParts(mdBody, dcBody) {
       var records = JSON.parse(body);
       (Array.isArray(records) ? records : []).forEach(function (r) {
         if (!r || AQI_WATCHED_AREAS.indexOf(r.reportingArea) === -1) return;
-        parts.push(r.reportingArea + '|' + (r.validDate || '') + '|' + (r.dataType || '') + '|' + (r.category || '') + '|' + (r.isActionDay === true ? 'action' : ''));
+        if (r.validDate !== todayMdy) return;
+        parts.push(r.reportingArea + '|' + (r.dataType || '') + '|' + (r.category || '') + '|' + (r.isActionDay === true ? 'action' : ''));
       });
     });
   } catch (e) {
@@ -602,7 +616,7 @@ function checkHcpssStatus() {
   var content = section
     ? section[1]
     : html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
-  var text = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  var text = statusFingerprintText(content);
   var fingerprint = md5Hex(text);
 
   var previous = props.getProperty('fp_hcpss_status');
@@ -628,6 +642,20 @@ function checkHcpssStatus() {
   } else {
     console.error('Status hook ping failed: ' + code + ' ' + ping.getContentText());
   }
+}
+
+// Visible text of the status block, minus the date it always carries
+// ("Important Status Message July 25, 2026 Normal Operations ..."). That date
+// rolls at midnight whether or not the status did, so keeping it meant one
+// guaranteed /status-hook ping a day that ran a full check pass and posted
+// nothing. Any real change — a closing, a delay, an early dismissal — rewrites
+// the message text, which is still fingerprinted in full.
+function statusFingerprintText(content) {
+  return String(content || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function md5Hex(text) {
@@ -673,9 +701,8 @@ function checkNwsAlerts() {
   });
 }
 
-// Stable digest of a zone's active alert set: alert ids + their last-sent
-// timestamps, so both new issuances and meaningful updates change it.
-// Returns null when the feed can't be read.
+// Stable digest of a zone's active alert set. Returns null when the feed
+// can't be read.
 function fetchZoneFingerprint(zone) {
   var resp = UrlFetchApp.fetch('https://api.weather.gov/alerts/active/zone/' + zone, {
     headers: { 'User-Agent': NWS_USER_AGENT, 'Accept': 'application/geo+json' },
@@ -686,11 +713,37 @@ function fetchZoneFingerprint(zone) {
     return null;
   }
   var features = (JSON.parse(resp.getContentText()) || {}).features || [];
-  var parts = features.map(function (f) {
+  return md5Hex(alertFingerprintParts(features).join('|'));
+}
+
+// Reduces a zone's raw features to exactly what the Worker keeps — this is a
+// mirror of summarizeWeatherAlerts in hcpss-worker/src/weather.js: real
+// alerts only ('Actual' status), no cancellations, one entry per event name.
+//
+// Fingerprinting the raw feed (alert id + sent time) was a steady KV drain:
+// NWS broadcasts a "Test Message" KEEPALIVE on some zones — MDC031 gets one
+// every 10 minutes, around the clock — each with a fresh id and sent time.
+// Every one of those read as a zone change and pinged /nws-hook, ~144 times
+// a day, and the Worker threw the message away on arrival (status 'Test')
+// after spending a KV delete on its alert cache. Keying on the fields the bot
+// actually acts on (event drives the notice, severity drives storm and
+// power-threat gating, end time drives the "until" line and the
+// tomorrow-morning outlook) also means a routine reissue of an unchanged
+// alert no longer pings. A reworded headline alone won't push either — the
+// hourly cache TTL is the safety net for that.
+function alertFingerprintParts(features) {
+  var seen = {};
+  var parts = [];
+  (Array.isArray(features) ? features : []).forEach(function (f) {
     var p = (f && f.properties) || {};
-    return (f.id || p.id || p.event || '?') + '@' + (p.sent || '');
-  }).sort();
-  return md5Hex(parts.join('|'));
+    if (!p.event) return;
+    if (p.status && p.status !== 'Actual') return;
+    if (p.messageType === 'Cancel') return;
+    if (seen[p.event]) return;
+    seen[p.event] = true;
+    parts.push(p.event + '|' + (p.severity || 'Unknown') + '|' + (p.ends || p.expires || ''));
+  });
+  return parts.sort();
 }
 
 // Tells the Worker this zone's alerts changed. Returns true on a 2xx ack.
