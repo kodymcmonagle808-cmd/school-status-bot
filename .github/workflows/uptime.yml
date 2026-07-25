@@ -1,9 +1,15 @@
 name: Worker uptime check
 
 # Polls the live Worker's /health endpoint every 20 minutes. Fails when the
-# Worker is unreachable, unhealthy, or its cron heartbeat (written every 15th
-# minute) is older than 40 minutes — the one failure mode nothing else
-# catches: a deployed Worker whose cron silently stopped firing.
+# Worker is unreachable, unhealthy, or its cron heartbeat is stale — the one
+# failure mode nothing else catches: a deployed Worker whose cron silently
+# stopped firing.
+#
+# The heartbeat is written once per half hour (HEARTBEAT_INTERVAL_MINUTES in
+# timeutil.js), so a healthy Worker's tick is never older than ~31 minutes.
+# MAX_CRON_AGE_MINUTES has to stay above that with room for one missed tick,
+# and both have to move together — raising the write interval without raising
+# this limit makes a healthy Worker trip the alarm.
 #
 # Dedupe via a GitHub issue: the first failure opens "Worker health check
 # failing" and pings the log channel; repeat failures stay quiet while the
@@ -21,7 +27,7 @@ permissions:
 env:
   HEALTH_URL: https://hcpss-worker.kodymcmonagle808.workers.dev/health
   ISSUE_TITLE: Worker health check failing
-  MAX_CRON_AGE_MINUTES: 40
+  MAX_CRON_AGE_MINUTES: 75
 
 jobs:
   check:

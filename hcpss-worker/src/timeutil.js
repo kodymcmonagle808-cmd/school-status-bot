@@ -162,3 +162,26 @@ export const EVENING_WINDOW_END_MIN = 23 * 60 + 45;
 export function eveningTickSlot(etStr) {
   return tickSlotInWindow(etStr, EVENING_WINDOW_START_MIN, EVENING_WINDOW_END_MIN);
 }
+
+// Cron heartbeat for the external uptime monitor (.github/workflows/uptime.yml),
+// which proves the cron is still firing — a dead cron is otherwise invisible.
+//
+// A clock gate, so a tick that isn't a heartbeat minute costs nothing at all.
+// The previous version re-read `last_cron_tick` on all 1,440 ticks to decide
+// whether it was 14 minutes stale, spending ~103 writes and 1,440 reads a day
+// on a key nothing but /health reads. Detection latency is set by the
+// monitor's 20-minute poll and its MAX_CRON_AGE_MINUTES, not by how finely
+// this ticks: at 30 minutes a healthy Worker's heartbeat is never older than
+// ~31, and the monitor's 75-minute limit leaves room for a missed tick.
+// Raising this interval without raising that limit makes a healthy Worker
+// trip the alarm — change both together.
+export const HEARTBEAT_INTERVAL_MINUTES = 30;
+
+// Staggered away from the other watchers' gate minutes (weatheralerts 6,
+// sourcehealth 7, serverwatch 11) so the heartbeat write doesn't land in the
+// same tick as their work.
+export const HEARTBEAT_MINUTE_OFFSET = 21;
+
+export function isHeartbeatMinute(now) {
+  return now.getUTCMinutes() % HEARTBEAT_INTERVAL_MINUTES === HEARTBEAT_MINUTE_OFFSET % HEARTBEAT_INTERVAL_MINUTES;
+}

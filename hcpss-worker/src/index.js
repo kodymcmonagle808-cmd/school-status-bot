@@ -28,6 +28,7 @@ import { maybeSweepSourceHealth } from './sourcehealth.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
 import { recordWatcherError } from './watcherhealth.js';
+import { isHeartbeatMinute } from './timeutil.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -258,17 +259,12 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
       // Heartbeat for the external uptime monitor: proves the cron itself is
-      // firing (a dead cron is otherwise invisible). Reads every tick but
-      // writes only when the stored tick is ≥14 minutes old, keeping ~100
-      // writes/day within the KV free-plan budget; the monitor alerts when
-      // the tick is older than ~40 minutes.
+      // firing (a dead cron is otherwise invisible). Clock-gated to one write
+      // per half hour — see isHeartbeatMinute for why the interval and the
+      // monitor's MAX_CRON_AGE_MINUTES have to move together.
       try {
-        if (env.STATUS_KV) {
-          const now = Date.now();
-          const last = Number(await env.STATUS_KV.get('last_cron_tick') || 0);
-          if (now - last >= 14 * 60 * 1000) {
-            await env.STATUS_KV.put('last_cron_tick', String(now));
-          }
+        if (env.STATUS_KV && isHeartbeatMinute(new Date())) {
+          await env.STATUS_KV.put('last_cron_tick', String(Date.now()));
         }
       } catch (e) {
         console.error('Heartbeat write failed', e);

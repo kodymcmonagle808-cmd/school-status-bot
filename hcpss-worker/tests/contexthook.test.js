@@ -34,8 +34,9 @@ test('contextCacheTtl extends TTLs only when the push hooks are armed', () => {
   assert.equal(contextCacheTtl(null, 600), 600);
   assert.equal(contextCacheTtl({}, 600), 600);
   assert.equal(contextCacheTtl({ NWS_HOOK_SECRET: 's' }, 600), HOOK_ARMED_TTL_SECONDS);
+  assert.equal(contextCacheTtl({ NWS_HOOK_SECRET: 's' }, 7200), HOOK_ARMED_TTL_SECONDS);
   // A base TTL already past the armed floor is left alone.
-  assert.equal(contextCacheTtl({ NWS_HOOK_SECRET: 's' }, 7200), 7200);
+  assert.equal(contextCacheTtl({ NWS_HOOK_SECRET: 's' }, HOOK_ARMED_TTL_SECONDS + 1200), HOOK_ARMED_TTL_SECONDS + 1200);
 });
 
 test('/context-hook rejects when the secret is missing or wrong', async () => {

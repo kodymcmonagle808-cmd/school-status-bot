@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot, eveningTickSlot, conversionTickSlot, nextScheduledTime } from '../src/timeutil.js';
+import { matchesScheduleTime, formatScheduleTimeLabel, clockEmojiForTime, formatYmdNY, isInStormWindow, stormTickSlot, middayTickSlot, eveningTickSlot, conversionTickSlot, nextScheduledTime, isHeartbeatMinute, HEARTBEAT_INTERVAL_MINUTES, HEARTBEAT_MINUTE_OFFSET } from '../src/timeutil.js';
 
 test('matchesScheduleTime fires on time and up to 5 minutes late', () => {
   assert.equal(matchesScheduleTime('5:20', '5:20'), true);
@@ -99,4 +99,25 @@ test('nextScheduledTime finds the next slot and wraps to tomorrow', () => {
 test('formatYmdNY formats an Eastern calendar date', () => {
   // 2026-01-15T03:00Z is still Jan 14 in New York
   assert.equal(formatYmdNY(new Date('2026-01-15T03:00:00Z')), '2026-01-14');
+});
+
+test('isHeartbeatMinute fires twice an hour and stays clear of other watchers', () => {
+  const at = (min) => new Date(Date.UTC(2026, 0, 6, 13, min, 0));
+
+  assert.equal(isHeartbeatMinute(at(HEARTBEAT_MINUTE_OFFSET)), true);
+  assert.equal(isHeartbeatMinute(at(HEARTBEAT_MINUTE_OFFSET + HEARTBEAT_INTERVAL_MINUTES)), true);
+
+  let hits = 0;
+  for (let m = 0; m < 60; m++) if (isHeartbeatMinute(at(m))) hits++;
+  assert.equal(hits, 60 / HEARTBEAT_INTERVAL_MINUTES, 'exactly two writes an hour');
+
+  // The uptime monitor's MAX_CRON_AGE_MINUTES must clear the widest gap a
+  // healthy Worker can show, with room for one dropped tick. Keep this in
+  // step with .github/workflows/uptime.yml.
+  assert.ok(HEARTBEAT_INTERVAL_MINUTES * 2 + 5 <= 75, 'a missed tick must not trip the alarm');
+
+  // Staggered off the other clock-gated watchers.
+  for (const taken of [6, 7, 11]) {
+    assert.notEqual(HEARTBEAT_MINUTE_OFFSET % HEARTBEAT_INTERVAL_MINUTES, taken % HEARTBEAT_INTERVAL_MINUTES);
+  }
 });
