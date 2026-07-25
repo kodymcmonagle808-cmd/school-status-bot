@@ -1,9 +1,17 @@
 name: Worker uptime check
 
-# Polls the live Worker's /health endpoint every 20 minutes. Fails when the
-# Worker is unreachable, unhealthy, or its cron heartbeat is stale — the one
-# failure mode nothing else catches: a deployed Worker whose cron silently
-# stopped firing.
+# Polls the live Worker's /health endpoint and fails when the Worker is
+# unreachable, unhealthy, or its cron heartbeat is stale — the one failure
+# mode nothing else catches: a deployed Worker whose cron silently stopped
+# firing.
+#
+# The schedule below asks for every 20 minutes but does NOT get it: GitHub
+# throttles scheduled workflows, and the observed gap between runs is a median
+# of 95 minutes (min 59, max 213 over a two-day sample). Real notice of a dead
+# cron is therefore 1.5-3.5 hours, dominated by that gap rather than by
+# MAX_CRON_AGE_MINUTES. Don't tighten the heartbeat or the limit expecting
+# faster detection — the polling interval is the binding constraint, and only
+# an external pinger (UptimeRobot, Better Stack) hitting /health would fix it.
 #
 # The heartbeat is written once per half hour (HEARTBEAT_INTERVAL_MINUTES in
 # timeutil.js), so a healthy Worker's tick is never older than ~31 minutes.
