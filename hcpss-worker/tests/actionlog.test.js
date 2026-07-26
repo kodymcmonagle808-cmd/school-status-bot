@@ -187,3 +187,50 @@ test('postLog feeds the action log so the Discord stream is complete', async (t)
   assert.match(buffered[0].text, /Override set/);
   assert.equal(buffered[0].guildId, 'g9');
 });
+
+// --- "Last checked" must report the last real check, not the render time ---
+
+test('resolveCheckedAt prefers the stored check time over now', async () => {
+  const { resolveCheckedAt } = await import('../src/embeds.js');
+
+  const at = Date.UTC(2026, 6, 26, 0, 0, 52);
+  const kv = kvStub({ 'last_check_time:g1': String(at) });
+  const resolved = await resolveCheckedAt({ STATUS_KV: kv }, 'g1');
+  assert.equal(resolved.getTime(), at, 'a re-render must inherit the stored check time');
+
+  // An explicit Date always wins — that is how a caller that actually scraped
+  // reports its own check.
+  const explicit = new Date(Date.UTC(2026, 6, 26, 1, 2, 3));
+  assert.equal(
+    (await resolveCheckedAt({ STATUS_KV: kv }, 'g1', explicit)).getTime(),
+    explicit.getTime()
+  );
+
+  // No check has ever run for this guild: fall back to now rather than 1970.
+  const fresh = await resolveCheckedAt({ STATUS_KV: kvStub() }, 'never');
+  assert.ok(Date.now() - fresh.getTime() < 5000);
+
+  // Missing KV must not throw — the footer is never allowed to break a post.
+  assert.ok((await resolveCheckedAt(null, 'g1')) instanceof Date);
+});
+
+test('a storm-mode re-render does not advance the footer past the real check', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
+  const { buildStatusPayload } = await import('../src/embeds.js');
+
+  const checkAt = Date.UTC(2026, 6, 26, 0, 0, 52); // 8:00:52 PM ET
+  const kv = kvStub({
+    'last_check_time:g1': String(checkAt),
+    'override:g1': JSON.stringify({
+      status_key: 'schools_closed',
+      status_label: 'Schools Closed',
+      expires_at: Date.now() + 86400000
+    })
+  });
+
+  // No checkedAt passed — this is the storm-refresh / re-render path.
+  const built = await buildStatusPayload({ STATUS_KV: kv }, { guildId: 'g1' });
+  const footer = built.payload.embeds[0].footer.text;
+  assert.match(footer, /Last checked/);
+  assert.match(footer, /8:00/, `footer should report the 8:00 PM check, got: ${footer}`);
+});

@@ -371,7 +371,9 @@ export async function doCheckAndPost(env, options = {}) {
     cards,
     error,
     stale: isStale,
-    staleAt
+    staleAt,
+    // This pass just scraped, so it is the check the footer should report.
+    checkedAt: new Date()
   });
 
   const firstEmbedGlobal = liveStatusResult.payload.embeds && liveStatusResult.payload.embeds[0];
@@ -477,7 +479,8 @@ export async function doCheckAndPost(env, options = {}) {
       cards,
       error,
       stale: isStale,
-      staleAt
+      staleAt,
+      checkedAt: new Date()
     });
 
     const statusKey = builtStatus.statusKey || 'normal_operations';

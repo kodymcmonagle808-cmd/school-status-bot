@@ -98,7 +98,9 @@ export async function runStatusCommand(body, env) {
   const guildId = body.guild_id || '';
   const builtStatus = await buildStatusPayload(env, {
     footer: 'School Status - Only you can see this',
-    guildId
+    guildId,
+    // /status scrapes the live page, so this really is a fresh check.
+    checkedAt: new Date()
   });
   await updateInteractionOriginal(env, body.token, {
     content: '',

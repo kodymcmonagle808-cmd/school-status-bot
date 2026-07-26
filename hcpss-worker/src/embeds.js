@@ -36,6 +36,29 @@ export function footerWithCheckedAt(label, checkedAt) {
   return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
 }
 
+// "Last checked" has to mean the last time a check actually ran, not the
+// moment this embed happened to be rendered. Those are different things:
+// storm mode re-renders a posted embed to refresh its context lines, and the
+// old `new Date()` default made every one of those edits advance the
+// timestamp, so the footer claimed a check that never happened — a post from
+// the 8:00 PM scheduled run could sit there reading "Last checked 9:02 PM".
+//
+// Callers that really do read the source (the scheduled/hook check, /status,
+// and the Check Again button all scrape live) pass their own Date. Everything
+// else falls back to the stored per-guild check time, and only to the current
+// time when no check has ever run for that guild.
+export async function resolveCheckedAt(env, guildId, explicit = null) {
+  if (explicit instanceof Date) return explicit;
+  try {
+    if (env && env.STATUS_KV) {
+      const raw = await env.STATUS_KV.get(`last_check_time:${guildId}`);
+      const ms = Number(raw) || 0;
+      if (ms > 0) return new Date(ms);
+    }
+  } catch {}
+  return new Date();
+}
+
 export function splitEmbeds(title, description, url, color, footer, checkedAt = new Date(), thumbnailUrl = '') {
   const chunks = [];
   let rem = (description || '').trim();
@@ -165,8 +188,8 @@ export function enforceEmbedBudget(embed) {
   return embed;
 }
 
-export async function buildStatusEmbeds(env, footer = 'School Status', cards = null, config = null, staleInfo = null, guildId = '') {
-  const checkedAt = new Date();
+export async function buildStatusEmbeds(env, footer = 'School Status', cards = null, config = null, staleInfo = null, guildId = '', checkedAtOverride = null) {
+  const checkedAt = checkedAtOverride instanceof Date ? checkedAtOverride : new Date();
   if (!cards) {
     const html = await fetchHtml(HCPSS_URL);
     cards = extractCards(html);
@@ -344,7 +367,7 @@ export function buildStatusErrorEmbeds(error, footer = 'School Status', config =
 // Status embeds for a guild whose primary district is a neighboring county
 // rather than HCPSS. Announcements come from the district's own fetcher;
 // weather uses that county's NWS zone; Nearby Districts includes HCPSS.
-export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpssCards = null, footer = 'Status Monitor') {
+export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpssCards = null, footer = 'Status Monitor', checkedAtOverride = null) {
   const districtId = config && config.primary_district;
   const meta = getDistrictMeta(districtId);
   if (!meta) throw new Error(`Unknown primary district: ${districtId}`);
@@ -355,7 +378,7 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
     throw new Error(`The ${meta.name} announcement source is unavailable right now.`);
   }
 
-  const checkedAt = new Date();
+  const checkedAt = checkedAtOverride instanceof Date ? checkedAtOverride : new Date();
   const statusKey = DISTRICT_STATUS_TO_KEY[mine.status] || 'unknown_alert';
   const statusLabel = mine.status === 'none' ? 'Normal Operations' : (DISTRICT_STATUS_LABELS[mine.status] || 'Announcement');
 
@@ -483,8 +506,8 @@ export async function buildDistrictStatusEmbeds(env, config, guildId = '', hcpss
   return { embeds: embeds.map(enforceEmbedBudget), statusKey };
 }
 
-export function buildOverrideEmbeds(override, footer = 'School Status', config = null) {
-  const checkedAt = new Date();
+export function buildOverrideEmbeds(override, footer = 'School Status', config = null, checkedAtOverride = null) {
+  const checkedAt = checkedAtOverride instanceof Date ? checkedAtOverride : new Date();
   const statusKey = override && override.status_key ? String(override.status_key) : '';
   const statusLabel = override && override.status_label ? String(override.status_label) : 'Override';
   let color = getDefaultStatusColor(statusKey);
@@ -504,15 +527,18 @@ export function buildOverrideEmbeds(override, footer = 'School Status', config =
   return splitEmbeds(title, body, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
 }
 
-export async function buildStatusPayload(env, { includeComponents = false, footer = 'School Status', guildId = '', cards = null, error = null, stale = false, staleAt = 0 } = {}) {
+export async function buildStatusPayload(env, { includeComponents = false, footer = 'School Status', guildId = '', cards = null, error = null, stale = false, staleAt = 0, checkedAt = null } = {}) {
   const storedConfig = await getConfig(env, guildId);
   const config = getEffectiveConfig(storedConfig);
+  // Callers that actually scraped pass a Date; re-renders inherit the stored
+  // check time so they can't invent one. See resolveCheckedAt.
+  const checkedAtResolved = await resolveCheckedAt(env, guildId, checkedAt);
 
   const activeOverride = env ? await getActiveOverride(env, guildId) : null;
   if (activeOverride) {
     const payload = {
       content: '',
-      embeds: buildOverrideEmbeds(activeOverride, footer, config)
+      embeds: buildOverrideEmbeds(activeOverride, footer, config, checkedAtResolved)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: false, isOverride: true, statusKey: activeOverride.status_key };
@@ -522,13 +548,13 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
   // instead of the HCPSS status page.
   if (config.primary_district && config.primary_district !== 'hcpss') {
     try {
-      const built = await buildDistrictStatusEmbeds(env, config, guildId, cards, footer);
+      const built = await buildDistrictStatusEmbeds(env, config, guildId, cards, footer, checkedAtResolved);
       const payload = { content: '', embeds: built.embeds };
       if (includeComponents) payload.components = buildCheckAgainComponents(config);
       return { payload, isError: false, statusKey: built.statusKey };
     } catch (err) {
       const meta = getDistrictMeta(config.primary_district);
-      const checkedAt = new Date();
+      const checkedAt = checkedAtResolved;
       const payload = {
         content: '',
         embeds: [{
@@ -568,7 +594,7 @@ export async function buildStatusPayload(env, { includeComponents = false, foote
     const statusKey = determineStatusKey(cards);
     const payload = {
       content: '',
-      embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null, guildId)
+      embeds: await buildStatusEmbeds(env, footer, cards, config, stale ? { staleAt } : null, guildId, checkedAtResolved)
     };
     if (includeComponents) payload.components = buildCheckAgainComponents(config);
     return { payload, isError: false, stale, statusKey };

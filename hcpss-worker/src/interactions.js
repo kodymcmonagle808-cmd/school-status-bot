@@ -498,7 +498,8 @@ export async function handleInteraction(body, env, ctx) {
     // Building the private view scrapes live pages and can outrun Discord's
     // 3-second interaction deadline — ack immediately, then edit the reply.
     ctx.waitUntil((async () => {
-      const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId });
+      // Check Again scrapes live pages, so it stamps its own check time.
+      const builtStatus = await buildStatusPayload(env, { footer: 'School Status - Only you can see this', guildId, checkedAt: new Date() });
       await updateInteractionOriginal(env, body.token, {
         content: '',
         embeds: builtStatus.payload.embeds
