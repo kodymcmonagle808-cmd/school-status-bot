@@ -12,7 +12,8 @@ import {
   logActionError,
   flushActionLog,
   formatActionBatch,
-  getBufferedActions
+  getBufferedActions,
+  logDetail
 } from '../src/actionlog.js';
 import { postLog } from '../src/panel.js';
 
@@ -233,4 +234,37 @@ test('a storm-mode re-render does not advance the footer past the real check', a
   const footer = built.payload.embeds[0].footer.text;
   assert.match(footer, /Last checked/);
   assert.match(footer, /8:00/, `footer should report the 8:00 PM check, got: ${footer}`);
+});
+
+test('logDetail keeps routine plumbing out of Discord entirely', async (t) => {
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts) => {
+    posts.push(JSON.parse(opts.body));
+    return new Response('{}', { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ log_channel_id: 'c1' })
+  });
+
+  beginActionLog();
+  // A data push every few minutes is real, but it is not news. It must not
+  // buffer at all, or the log channel gets a message around the clock.
+  logDetail('Watcher pushed fresh data: roads.');
+  logDetail('Watcher pushed fresh data: aqi:MD, aqi:DC.');
+  assert.deepEqual(getBufferedActions(), [], 'detail lines must never buffer');
+
+  const quiet = await flushActionLog(envWith({}, kv));
+  assert.equal(quiet.posted, 0, 'a tick of pure plumbing posts nothing');
+  assert.equal(posts.length, 0);
+
+  // A failure in the same tick still surfaces, and carries only itself.
+  beginActionLog();
+  logDetail('Watcher pushed fresh data: roads.');
+  logActionError('Watcher push skipped: news.');
+  const noisy = await flushActionLog(envWith({}, kv));
+  assert.equal(noisy.posted, 1);
+  assert.match(posts[0].content, /push skipped/);
+  assert.doesNotMatch(posts[0].content, /pushed fresh data/);
 });

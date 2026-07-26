@@ -22,7 +22,7 @@ import { clearSnowfallCache } from './snowfall.js';
 import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handlePushData } from './pushdata.js';
-import { beginActionLog, logAction, logActionError, flushActionLog } from './actionlog.js';
+import { beginActionLog, logDetail, logActionError, flushActionLog } from './actionlog.js';
 import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -146,7 +146,9 @@ export default {
       try { payload = await request.json(); } catch {}
       const result = await handlePushData(env, payload || {});
       if (result.written && result.written.length) {
-        logAction(`Watcher pushed fresh data: ${result.written.join(', ')}.`);
+        // Console only — see logDetail. A stored feed is not news, and at one
+        // push every few minutes it drowned the log channel.
+        logDetail(`Watcher pushed fresh data: ${result.written.join(', ')}.`);
       }
       if (result.skipped && result.skipped.length) {
         logActionError(`Watcher push skipped (unparseable or unwritable): ${result.skipped.join(', ')}.`);

@@ -40,16 +40,23 @@ export function beginActionLog() {
   buffer = [];
 }
 
-// Records one action. `guildId` scopes the line to a single server's log
-// channel; omit it for Worker-wide actions, which go to every log channel.
+// Writes one line to Cloudflare's log store. Free, immediate, survives
+// everything downstream failing, and queryable from Apps Script via
+// showLogs(). Every level goes here — this is the firehose.
+function writeConsole(level, guildId, text) {
+  try {
+    console.log(`ACT|${new Date().toISOString()}|${level}|${guildId || '-'}|${text}`);
+  } catch {}
+}
+
+// Records one action worth a human's attention: a post that went out, a status
+// change, a configuration edit. `guildId` scopes the line to a single server's
+// log channel; omit it for Worker-wide actions, which go to every log channel.
 // Never throws — logging must never be able to break the thing it is logging.
 export function logAction(message, { guildId = '', level = 'info' } = {}) {
   const text = String(message || '').trim();
   if (!text) return;
-  try {
-    // Authoritative copy: free, immediate, and queryable from Apps Script.
-    console.log(`ACT|${new Date().toISOString()}|${level}|${guildId || '-'}|${text}`);
-  } catch {}
+  writeConsole(level, guildId, text);
   if (buffer.length < MAX_BUFFERED_LINES) {
     buffer.push({ text, guildId, level, at: Date.now() });
   } else if (buffer.length === MAX_BUFFERED_LINES) {
@@ -57,8 +64,23 @@ export function logAction(message, { guildId = '', level = 'info' } = {}) {
   }
 }
 
+// Records routine plumbing: the Cloudflare log gets it, Discord does not.
+//
+// The watcher hands over changed feeds every few minutes — road incidents open
+// and close all day, outage counts drift across their bucket, AQI is revised
+// hourly. Those are real changes and they must be stored, but "stored some
+// road incidents" is not news, and putting it in the log channel produced a
+// message every five minutes around the clock that buried the lines that
+// actually matter. The full stream still exists and is still complete; it just
+// lives where reading it is free, which is what showLogs() is for.
+export function logDetail(message, { guildId = '' } = {}) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  writeConsole('detail', guildId, text);
+}
+
 // Convenience wrapper so failures read differently in Discord and can be
-// filtered in the Apps Script viewer.
+// filtered in the Apps Script viewer. Failures always reach Discord.
 export function logActionError(message, { guildId = '' } = {}) {
   logAction(message, { guildId, level: 'error' });
 }
