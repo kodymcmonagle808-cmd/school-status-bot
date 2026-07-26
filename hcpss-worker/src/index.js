@@ -21,6 +21,8 @@ import { clearNewsSignalCache } from './crosscheck.js';
 import { clearSnowfallCache } from './snowfall.js';
 import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
+import { handlePushData } from './pushdata.js';
+import { beginActionLog, logAction, logActionError, flushActionLog } from './actionlog.js';
 import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -122,7 +124,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook' || url.pathname === '/push-data') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -130,6 +132,37 @@ export default {
       if (!provided || provided !== env.NWS_HOOK_SECRET) {
         return new Response('Forbidden', { status: 403 });
       }
+    }
+
+    // The watcher fetched the external feeds itself and is handing over the
+    // bodies of the ones that changed. The Worker parses them with its own
+    // parsers and writes the results straight into the cache keys the readers
+    // use: one KV write per changed source, no delete, and no outbound fetch.
+    // This supersedes /context-hook (kept below for the older watcher build,
+    // which stays deployed until the new script is pasted into Apps Script).
+    if (url.pathname === '/push-data') {
+      beginActionLog();
+      let payload = null;
+      try { payload = await request.json(); } catch {}
+      const result = await handlePushData(env, payload || {});
+      if (result.written && result.written.length) {
+        logAction(`Watcher pushed fresh data: ${result.written.join(', ')}.`);
+      }
+      if (result.skipped && result.skipped.length) {
+        logActionError(`Watcher push skipped (unparseable or unwritable): ${result.skipped.join(', ')}.`);
+      }
+      // A changed feed can change what a posted storm embed should say; this
+      // pass is power-threat-gated and edit-throttled, so it is nearly free on
+      // a quiet day.
+      ctx.waitUntil((async () => {
+        try {
+          await maybeRefreshStormEmbeds(env, new Date(), { force: true });
+        } catch (e) {
+          console.error('Push-data storm refresh failed', e);
+        }
+        await flushActionLog(env);
+      })());
+      return jsonResponse(result, result.ok ? 200 : 400);
     }
 
     // An HCPSS announcement email arrived in the owner's inbox that may never
@@ -239,7 +272,13 @@ export default {
       if (!ok) return new Response('Invalid request signature', { status: 401 });
 
       const body = await request.json();
-      return await handleInteraction(body, env, ctx);
+      beginActionLog();
+      const interactionResponse = await handleInteraction(body, env, ctx);
+      // Slash commands and panel clicks log through postLog, which feeds the
+      // action-log buffer. Flush after responding — Discord's 3-second
+      // deadline is not something a log post is allowed to eat into.
+      ctx.waitUntil(flushActionLog(env).catch(() => {}));
+      return interactionResponse;
     }
 
     const manualTriggerError = validateManualTrigger(request, env);
@@ -258,6 +297,8 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
+      beginActionLog();
+
       // Heartbeat for the external uptime monitor: proves the cron itself is
       // firing (a dead cron is otherwise invisible). Clock-gated to one write
       // per half hour — see isHeartbeatMinute for why the interval and the
@@ -269,96 +310,40 @@ export default {
       } catch (e) {
         console.error('Heartbeat write failed', e);
       }
-      try {
-        await doCheckAndPost(env, { source: 'scheduled' });
-      } catch (e) {
-        console.error('Scheduled run failed', e);
-        await recordWatcherError(env, 'check', e);
+
+      // Every watcher decides for itself whether this minute matters, and each
+      // is isolated so one failure never blocks the rest. A watcher that did
+      // nothing logs nothing — the action log stays silent on a quiet tick and
+      // only a failure or a real action produces a line.
+      const watchers = [
+        ['check', () => doCheckAndPost(env, { source: 'scheduled' })],
+        ['digest', () => maybeSendMorningDigests(env)],
+        ['headsup', () => maybeSendHeadsUp(env)],
+        ['busalerts', () => maybeSendBusAlerts(env)],
+        ['greeter', () => checkNewMembersAndDM(env)],
+        ['stormrefresh', () => maybeRefreshStormEmbeds(env)],
+        ['decisionwatch', () => maybeUpdateDecisionWatch(env)],
+        ['decisionwatch', () => maybeCleanupDecisionWatch(env)],
+        ['outlookaccuracy', () => maybeTrackOutlookAccuracy(env)],
+        ['aqi', () => maybeSendAqiAlerts(env)],
+        ['weatheralerts', () => maybeSendWeatherAlertNotices(env)],
+        ['recap', () => maybeSendYearRecap(env)],
+        ['cleanup', () => maybeCleanupDepartedGuilds(env)],
+        ['serverwatch', () => maybeWatchServerMembership(env)],
+        ['sourcehealth', () => maybeSweepSourceHealth(env)]
+      ];
+
+      for (const [name, run] of watchers) {
+        try {
+          await run();
+        } catch (e) {
+          console.error(`${name} run failed`, e);
+          logActionError(`Watcher "${name}" threw: ${e && e.message ? e.message : e}`);
+          await recordWatcherError(env, name, e);
+        }
       }
-      try {
-        await maybeSendMorningDigests(env);
-      } catch (e) {
-        console.error('Morning digest run failed', e);
-        await recordWatcherError(env, 'digest', e);
-      }
-      try {
-        await maybeSendHeadsUp(env);
-      } catch (e) {
-        console.error('Heads-up run failed', e);
-        await recordWatcherError(env, 'headsup', e);
-      }
-      try {
-        await maybeSendBusAlerts(env);
-      } catch (e) {
-        console.error('Bus alert run failed', e);
-        await recordWatcherError(env, 'busalerts', e);
-      }
-      try {
-        await checkNewMembersAndDM(env);
-      } catch (e) {
-        console.error('Greeter run failed', e);
-        await recordWatcherError(env, 'greeter', e);
-      }
-      try {
-        await maybeRefreshStormEmbeds(env);
-      } catch (e) {
-        console.error('Storm refresh run failed', e);
-        await recordWatcherError(env, 'stormrefresh', e);
-      }
-      try {
-        await maybeUpdateDecisionWatch(env);
-      } catch (e) {
-        console.error('Decision watch run failed', e);
-        await recordWatcherError(env, 'decisionwatch', e);
-      }
-      try {
-        await maybeCleanupDecisionWatch(env);
-      } catch (e) {
-        console.error('Decision watch cleanup run failed', e);
-        await recordWatcherError(env, 'decisionwatch', e);
-      }
-      try {
-        await maybeTrackOutlookAccuracy(env);
-      } catch (e) {
-        console.error('Outlook accuracy run failed', e);
-        await recordWatcherError(env, 'outlookaccuracy', e);
-      }
-      try {
-        await maybeSendAqiAlerts(env);
-      } catch (e) {
-        console.error('AQI alert run failed', e);
-        await recordWatcherError(env, 'aqi', e);
-      }
-      try {
-        await maybeSendWeatherAlertNotices(env);
-      } catch (e) {
-        console.error('NWS issuance notice run failed', e);
-        await recordWatcherError(env, 'weatheralerts', e);
-      }
-      try {
-        await maybeSendYearRecap(env);
-      } catch (e) {
-        console.error('Year recap run failed', e);
-        await recordWatcherError(env, 'recap', e);
-      }
-      try {
-        await maybeCleanupDepartedGuilds(env);
-      } catch (e) {
-        console.error('Guild cleanup run failed', e);
-        await recordWatcherError(env, 'cleanup', e);
-      }
-      try {
-        await maybeWatchServerMembership(env);
-      } catch (e) {
-        console.error('Server membership watch failed', e);
-        await recordWatcherError(env, 'serverwatch', e);
-      }
-      try {
-        await maybeSweepSourceHealth(env);
-      } catch (e) {
-        console.error('Source health sweep failed', e);
-        await recordWatcherError(env, 'sourcehealth', e);
-      }
+
+      await flushActionLog(env);
     })());
   }
 };

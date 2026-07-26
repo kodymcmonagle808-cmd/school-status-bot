@@ -30,10 +30,20 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Optional Morning Digest: a daily 6:00 AM ET summary post (status, calendar, weather) per opted-in server, built from the server's own primary district.
 - Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button, or self-assign a status ping role from the dropdown on status posts.
 - Serves a public read-only status page at the Worker's root URL (current status, active alerts, recent history) — shareable with people who aren't in a Discord server.
+- Worker Action Log: a running record of everything the Worker does — every post, every watcher failure, every data push — batched into one message per run in the server's log channel (`toggle_action_log`). The same lines go to Cloudflare's log store, so `showLogs()` in the Apps Script project can read them even when the Worker is the thing that's broken.
+
+## Where the work happens
+
+Polling lives in [`gas/nws-alert-watcher.js`](gas/nws-alert-watcher.js), an Apps Script project on a free 5-minute Google trigger. It fetches every external feed, works out whether anything actually changed, and only then hands the Worker the bodies it already downloaded (`/push-data`). The Worker parses them with its own parsers and stores the result — one KV write per real change.
+
+That split exists because Cloudflare's free plan allows 1,000 KV writes and 1,000 deletes a day, and the Worker's job is the part that genuinely has to run there: signed Discord interactions, scheduled posts, and storm mode. Steady-state polling isn't, so it doesn't. The Worker keeps its own fetchers as the fallback for a dead collector, so nothing breaks if the Apps Script project stops running — it just gets slower to notice changes.
+
+The Apps Script file is **not deployed by CI**; paste it into [script.google.com](https://script.google.com) by hand. Setup steps are in the comment at the top of the file.
 
 ## Repo layout
 
 - `hcpss-worker/` — the Cloudflare Worker (source, tests, deploy script).
+- `gas/` — the Apps Script collector (pasted in by hand, not deployed by CI).
 - `.github/workflows/deploy_worker.yml` — runs the worker tests and deploys on push to `main`.
 
 ## Tests

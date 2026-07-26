@@ -2,15 +2,27 @@ name = "hcpss-worker"
 main = "src/index.js"
 compatibility_date = "2026-07-09"
 
+# Workers Logs is where every action the Worker takes is recorded (the ACT|
+# lines from src/actionlog.js). It costs nothing — unlike KV — and it is
+# readable over the Cloudflare API, which is what showLogs() in
+# gas/nws-alert-watcher.js queries. That path has to keep working when the
+# Worker itself is broken and its Discord log channel has gone quiet, so this
+# stays on deliberately: turning it off blinds the only out-of-band view of
+# what the Worker is doing.
 [observability]
-enabled = false
+enabled = true
 head_sampling_rate = 1
 
 [observability.logs]
 enabled = true
 head_sampling_rate = 1
 persist = true
-invocation_logs = true
+# The cron fires every minute, so per-invocation summary lines would be ~1,440
+# entries a day of "a scheduled event ran" — enough to push the actual actions
+# out of any recent-events query long before they stop being interesting.
+# Uncaught exceptions are still recorded on their own; everything the Worker
+# does on purpose is logged explicitly through logAction().
+invocation_logs = false
 
 [observability.traces]
 enabled = false

@@ -21,9 +21,25 @@ registration**, `wrangler deploy`).
 ## Architecture
 
 - `src/index.js` — HTTP entry (signed Discord interactions, `/health`,
-  `/terms`, `/privacy`, manual trigger) and the cron `scheduled()` handler.
-  The cron fires **every minute**; each watcher decides for itself whether
-  this minute matters, and every watcher is wrapped in its own try/catch.
+  `/terms`, `/privacy`, push hooks, manual trigger) and the cron `scheduled()`
+  handler. The cron fires **every minute**; each watcher decides for itself
+  whether this minute matters, and the watcher table is driven by one loop so
+  every watcher is isolated and logged the same way.
+- `src/pushdata.js` — `/push-data`, the write-through path from the Apps
+  Script collector (`gas/nws-alert-watcher.js`). The script owns all
+  steady-state polling: it fetches each feed, fingerprints it, and POSTs the
+  raw bodies that changed. The Worker parses them **with its own parsers** and
+  writes straight into the cache key the reader already uses — one KV write
+  per change, no delete, no outbound fetch, and no second copy of any parser.
+  Adding a source here means adding a `parse*FromBody` and a `store()` call;
+  the live fetcher stays untouched as the dead-collector fallback.
+- `src/actionlog.js` — the "everything the Worker did" log, at **zero KV
+  cost**. `logAction()` writes a prefixed `console.log` (persisted by
+  `observability.logs`, queryable from Apps Script via `showLogs()`) and
+  buffers the line; `flushActionLog()` posts the batch as one Discord message
+  per invocation. `postLog()` in `panel.js` feeds it, so the log channel
+  carries the full stream. Never use `postLog` as a general logger — it costs
+  two KV writes a call and exists to re-render the control panel.
 - `src/check.js` — core check-and-post loop (`doCheckAndPost`): schedule
   matching, storm mode (15-min ticks, 4:30–7:30 AM + 10 AM–2 PM ET),
   conversion watch (7:45–9:30 when a delay is announced), posting, history.
@@ -67,13 +83,31 @@ registration**, `wrangler deploy`).
   `cfg.alert_channel_id`. Guilds can follow a neighboring district
   (`primary_district`) — district-aware features must use that district's
   county/NWS zone/history, not Howard's.
-- **KV discipline.** Per-guild keys end in `:${guildId}` and MUST be added to
-  `guildKeys()` in `cleanup.js` (purge on bot removal is a Privacy Policy
-  promise). Cron dedupe uses slot-value keys (`last_*_slot`, `last_*_day`) —
-  always **mark before posting** so a delayed tick can't double-post. Read the
-  `guild_index` cached list, never `KV.list()`, in per-minute paths (free-plan
-  list quota). Per-minute watchers do a "cheap pass" (time gate / cooldown key)
-  before reading guild configs.
+- **KV discipline.** Writes and deletes are the binding quota — **1,000/day
+  each** on the free plan, against 100,000 reads. Per-guild keys end in
+  `:${guildId}` and MUST be added to `guildKeys()` in `cleanup.js` (purge on
+  bot removal is a Privacy Policy promise). Cron dedupe uses slot-value keys
+  (`last_*_slot`, `last_*_day`) — always **mark before posting** so a delayed
+  tick can't double-post. Read the `guild_index` cached list, never
+  `KV.list()`, in per-minute paths (free-plan list quota). Per-minute watchers
+  do a "cheap pass" (time gate / cooldown key) before reading guild configs.
+  Prefer a **clock gate over a cooldown key** — a gate costs nothing, a key
+  costs a write. Never invalidate a cache you could overwrite: a delete makes
+  the next reader refetch and re-put, so it spends a delete *and* a write to
+  land the same bytes `/push-data` writes once.
+- **Polling belongs in Apps Script, not the Worker.** `gas/nws-alert-watcher.js`
+  runs on a free 5-minute Google trigger and only contacts the Worker when a
+  fingerprint actually moves, so quiet days cost nothing. The Worker's own
+  fetchers are the fallback for a dead collector, not the primary path — keep
+  them working, but don't add new scheduled polling to the cron. Anything the
+  Worker would discard must also be filtered out of the script's fingerprint,
+  or it pushes data that gets thrown away. Two cross-runtime contracts are
+  covered by `tests/gaspush.test.js`: the body keys the script sends, and the
+  source names it waits for in `written` before advancing a fingerprint. A
+  drift in the second is a silent write loop — the script re-pushes forever.
+  **The GAS file is not deployed by CI**; it has to be pasted into
+  script.google.com by hand, so a fix there is inert until that happens, and
+  the Worker must keep accepting the older build's hooks until it does.
 - **User data is a liability.** Anything new stored about users or servers
   must show up in `/mydata view`, be purged by `purgeGuildData`, and be
   reflected in `legal.js` + the root policy docs (all three stay in sync).

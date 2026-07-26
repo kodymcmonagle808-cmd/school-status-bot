@@ -1,41 +1,52 @@
-// Google Apps Script: external change watcher for school-status-bot.
+// Google Apps Script: external data collector for school-status-bot.
 //
-// Six watchers on one free 5-minute Google trigger:
-//   1. NWS alerts — polls the active-alerts feed for every county zone the
-//      bot can serve and POSTs to the Worker's /nws-hook endpoint when a
-//      zone's alert set changes. The Worker's own cron scan drops to an
-//      hourly safety net automatically once NWS_HOOK_SECRET is configured.
-//      The fingerprint mirrors the Worker's own filter (weather.js
-//      summarizeWeatherAlerts), so alerts it discards can never ping.
-//   2. HCPSS status page — polls https://status.hcpss.org and POSTs to
-//      /status-hook when the status block changes. The Worker then runs a
-//      change-only check immediately: it re-scrapes with its real parser and
-//      posts only to guilds whose status actually changed, so a cosmetic
-//      page edit never posts anything. Panel-scheduled posts keep firing at
-//      their configured times no matter what.
-//   3. Power outages — polls the BGE/Pepco/Potomac Edison outage feeds and
-//      POSTs to /refresh-hook when the county picture changes (bucketed to
-//      the nearest 100 customers), so posted storm embeds refresh their
-//      outage/roads/weather context within minutes during a storm instead
-//      of on the 15-minute cron. Quiet days never ping.
-//   4. Road conditions — polls the Maryland CHART incident feed and pings
-//      /refresh-hook when the set of meaningful open incidents changes, so
-//      the roads lines on posted embeds stay current too.
-//   5. Context sources — the district feeds (AACPS/BCPS/CCPS/FCPS/MCPS/
-//      PGCPS), the HCPSS news RSS, the NWS snowfall forecast, and AirNow AQI,
-//      all fetched in one parallel batch. On a real change it POSTs
-//      /context-hook {source}, which drops that source's KV cache so the next
-//      reader fetches live. With this watcher armed the Worker trusts its
-//      context caches for an hour instead of 10 minutes — steady-state
-//      polling lives here, not in the Worker.
-//   6. HCPSS emails — watches this Google account's Gmail for HCPSS
-//      announcement emails (the ones that never reach the status page) and
-//      POSTs them to /email-hook, which forwards them into each guild's
-//      alert channel. Needs the Gmail permission — after pasting this
-//      version, run runWatchers() once manually and approve the new consent
-//      prompt. If your HCPSS mail arrives at a different address, forward it
-//      to this Gmail, and if the sender isn't @hcpss.org set an EMAIL_QUERY
-//      script property (e.g. from:someschoolsender.com).
+// This script owns every steady-state poll. The Worker fetches nothing on a
+// schedule any more: it runs the Discord side (interactions, scheduled posts,
+// storm mode) and stores what this script hands it. All the "has anything
+// changed?" work happens up here, on Google's free 5-minute trigger, where
+// polling costs nothing.
+//
+// How data reaches the Worker: this script fetches each feed, fingerprints
+// the part the Worker actually acts on, and — when a fingerprint moves —
+// POSTs the raw body it already downloaded to /push-data. The Worker parses
+// it with its own parsers and writes the result straight into the cache key
+// its readers use.
+//
+// That last part is the whole point. The older design POSTed "source X
+// changed" to /context-hook, the Worker deleted that source's cache, and the
+// next reader re-downloaded the same bytes and re-cached them: one KV delete
+// plus one KV write plus an outbound fetch, per change. Cloudflare's free
+// plan allows 1,000 writes and 1,000 deletes a day, and a quiet summer day
+// with a single server was already spending roughly half of each. Handing
+// over the body costs one write and nothing else, and the Worker never
+// fetches. Parsing stays in the Worker so there is exactly one parser per
+// source — this script never has to know what a closure looks like.
+//
+// What runs on the 5-minute trigger:
+//   1. NWS alerts — the active-alerts feed for every county zone the bot can
+//      serve. The fingerprint mirrors the Worker's own filter (weather.js
+//      summarizeWeatherAlerts), so alerts the Worker discards can never
+//      trigger a push; tests/gaswatcher.test.js pins the two together.
+//   2. HCPSS status page — https://status.hcpss.org. This one still POSTs to
+//      /status-hook rather than /push-data, because a status change is an
+//      *action*, not data: the Worker re-scrapes with its real parser and
+//      posts to Discord only where the parsed status actually changed.
+//      Panel-scheduled posts keep firing at their configured times regardless.
+//   3. Power outages — BGE plus the Pepco and Potomac Edison Kubra feeds,
+//      bucketed to the nearest 100 customers so meter noise never pushes.
+//   4. Road conditions — the Maryland CHART incident feed, filtered to the
+//      counties the bot serves.
+//   5. Context sources — the six district feeds, the HCPSS news RSS, the NWS
+//      snowfall forecast, and AirNow AQI, all fetched in one parallel batch.
+//   6. HCPSS emails — this Google account's Gmail, forwarded to /email-hook.
+//      Needs the Gmail permission: after pasting this version, run
+//      runWatchers() once by hand and approve the new consent prompt. If your
+//      HCPSS mail arrives elsewhere, forward it to this Gmail; if the sender
+//      isn't @hcpss.org, set an EMAIL_QUERY script property.
+//
+// Everything from 1, 3, 4 and 5 is batched into a single /push-data request
+// per run, so a stormy five minutes where every feed moved still costs the
+// Worker one request.
 //
 // Setup (one time, ~5 minutes):
 //   1. Go to https://script.google.com → New project, name it "nws-alert-watcher".
@@ -43,18 +54,21 @@
 //   3. Project Settings (gear icon) → Script Properties → add:
 //        WORKER_URL       = https://hcpss-worker.kodymcmonagle808.workers.dev
 //        NWS_HOOK_SECRET  = <the same secret you set on the Worker/GitHub>
+//      Optional, only needed for showLogs() — see that function's comment:
+//        CF_ACCOUNT_ID    = <your Cloudflare account id>
+//        CF_API_TOKEN     = <token with Account Analytics + Workers Observability read>
 //   4. In the editor, run setupTriggers() once and grant the permissions
 //      it asks for (external requests + triggers). Re-run it after pasting
 //      an updated copy of this file — it replaces the old triggers.
 //   5. Done — runWatchers() now runs every 5 minutes. Executions page
-//      shows each run; testPing() verifies the Worker connection.
+//      shows each run; testPing() verifies the Worker connection, and
+//      showLogs() prints what the Worker has been doing.
 //
 // Quota math: (7 zones + 1 status page + 5 outage feeds + 1 roads feed +
 // 11 context-source feeds) x 288 runs/day ≈ 7,200 URL fetches/day, well under
 // the consumer Apps Script limit of 20,000/day. The context batch runs
 // through UrlFetchApp.fetchAll (parallel), keeping the added trigger runtime
-// to a few seconds per run against the 90-minute/day trigger budget. The
-// Worker is only called when something changed, which on most days is zero.
+// to a few seconds per run against the 90-minute/day trigger budget.
 
 // Keep in sync with DEFAULT_NWS_ZONE (weather.js) and the nwsZone values in
 // districts.js: Howard + the six neighboring districts guilds can follow.
@@ -112,34 +126,49 @@ var KUBRA_UTILITIES = [
   }
 ];
 
-// Entry point for the timed trigger: all watchers, each shielded so one
-// failing never blocks the others.
+// Entry point for the timed trigger.
+//
+// Each collector fetches its feeds, compares fingerprints, and — for anything
+// that moved — adds the raw body to a shared batch and registers a pending
+// fingerprint. Nothing is sent until every collector has run, so one run
+// produces at most one /push-data request no matter how much changed. Each
+// collector is shielded, so one failing feed never blocks the others.
 function runWatchers() {
+  var props = PropertiesService.getScriptProperties();
+  var batch = { bodies: {}, zones: {}, units: [] };
+
   try {
     checkHcpssStatus();
   } catch (e) {
     console.error('HCPSS status check failed: ' + e);
   }
   try {
-    checkNwsAlerts();
+    collectNwsAlerts(props, batch);
   } catch (e) {
     console.error('NWS alerts check failed: ' + e);
   }
   try {
-    checkOutages();
+    collectOutages(props, batch);
   } catch (e) {
     console.error('Outage check failed: ' + e);
   }
   try {
-    checkRoads();
+    collectRoads(props, batch);
   } catch (e) {
     console.error('Roads check failed: ' + e);
   }
   try {
-    checkContextSources();
+    collectContextSources(props, batch);
   } catch (e) {
     console.error('Context sources check failed: ' + e);
   }
+
+  try {
+    sendBatch(props, batch);
+  } catch (e) {
+    console.error('Push to Worker failed: ' + e);
+  }
+
   try {
     checkHcpssEmails();
   } catch (e) {
@@ -147,18 +176,94 @@ function runWatchers() {
   }
 }
 
-// Watches the outage feeds and pings /refresh-hook when the picture changes,
-// so posted storm embeds update their outage/roads/weather context within
-// minutes instead of on the 15-minute cron. Skips the run when any feed is
-// unreadable (a missing utility would look like a change).
-function checkOutages() {
-  var props = PropertiesService.getScriptProperties();
+// Registers one changed source: the raw bodies to hand over, the property key
+// holding its fingerprint, the new fingerprint value, and the source names the
+// Worker will report back in `written` once it has stored them.
+function stageUnit(batch, fpKey, fingerprint, expect, bodies, zones) {
+  var i;
+  var keys = Object.keys(bodies || {});
+  for (i = 0; i < keys.length; i++) {
+    batch.bodies[keys[i]] = bodies[keys[i]];
+  }
+  keys = Object.keys(zones || {});
+  for (i = 0; i < keys.length; i++) {
+    batch.zones[keys[i]] = zones[keys[i]];
+  }
+  batch.units.push({ fpKey: fpKey, fingerprint: fingerprint, expect: expect });
+}
+
+// Standard change gate shared by every collector: null parts mean the fetch
+// failed (skip this run — a missing feed must never look like a change), and
+// the very first fingerprint is recorded as a baseline without pushing, so
+// installing this script never replays the current state as if it were new.
+// Returns the fingerprint when it should be pushed, or null when it shouldn't.
+function changedFingerprint(props, fpKey, parts) {
+  if (parts === null) return null;
+  var fingerprint = md5Hex(parts.join('|'));
+  var previous = props.getProperty(fpKey);
+  if (previous === fingerprint) return null;
+  if (previous === null) {
+    props.setProperty(fpKey, fingerprint); // baseline only
+    return null;
+  }
+  return fingerprint;
+}
+
+// Sends everything that changed in one request. A fingerprint is advanced only
+// after the Worker confirms it stored that source, so a Worker outage, a parse
+// failure, or a partial write all retry on the next run instead of silently
+// losing the change.
+function sendBatch(props, batch) {
+  if (!batch.units.length) return;
+
   var workerUrl = props.getProperty('WORKER_URL');
   var secret = props.getProperty('NWS_HOOK_SECRET');
   if (!workerUrl || !secret) {
     throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
   }
 
+  var resp = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/push-data', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: JSON.stringify({ bodies: batch.bodies, zones: batch.zones }),
+    muteHttpExceptions: true
+  });
+
+  var code = resp.getResponseCode();
+  if (code < 200 || code >= 300) {
+    console.error('Push failed: ' + code + ' ' + resp.getContentText());
+    return;
+  }
+
+  var written = [];
+  try {
+    written = (JSON.parse(resp.getContentText()) || {}).written || [];
+  } catch (e) {
+    console.error('Push response was not JSON: ' + resp.getContentText());
+    return;
+  }
+
+  var advanced = [];
+  batch.units.forEach(function (unit) {
+    var allStored = unit.expect.every(function (name) {
+      return written.indexOf(name) !== -1;
+    });
+    if (allStored) {
+      props.setProperty(unit.fpKey, unit.fingerprint);
+      advanced.push(unit.fpKey);
+    } else {
+      console.error('Worker did not store ' + unit.expect.join(', ') + '; will retry next run.');
+    }
+  });
+  console.log('Pushed ' + advanced.length + ' changed source(s): ' + advanced.join(', '));
+}
+
+// Collects the outage feeds and stages the raw reports when the county picture
+// changes. Bails on the whole run if any feed is unreadable — a missing
+// utility would fingerprint as "everyone's power came back".
+function collectOutages(props, batch) {
+  var bodies = {};
   var parts = [];
 
   var bge = UrlFetchApp.fetch(BGE_COUNTIES_URL, {
@@ -166,7 +271,8 @@ function checkOutages() {
     muteHttpExceptions: true
   });
   if (bge.getResponseCode() !== 200) return;
-  var bgeData = JSON.parse(bge.getContentText()) || {};
+  bodies.bge = bge.getContentText();
+  var bgeData = JSON.parse(bodies.bge) || {};
   (bgeData.counties || []).forEach(function (c) {
     if (c && c.county && WATCHED_COUNTIES.indexOf(c.county) !== -1) {
       parts.push('bge:' + c.county + '=' + bucket(c.customersOut));
@@ -187,6 +293,7 @@ function checkOutages() {
       muteHttpExceptions: true
     });
     if (rep.getResponseCode() !== 200) return;
+    bodies['kubra_' + u.id] = rep.getContentText();
     var areas = (((JSON.parse(rep.getContentText()) || {}).file_data) || {}).areas || [];
     areas.forEach(function (a) {
       if (a && a.name && u.keep.indexOf(a.name) !== -1) {
@@ -195,29 +302,9 @@ function checkOutages() {
     });
   }
 
-  var fingerprint = md5Hex(parts.sort().join('|'));
-  var previous = props.getProperty('fp_outages');
-  if (previous === fingerprint) return;
-
-  if (previous === null) {
-    props.setProperty('fp_outages', fingerprint); // first run: baseline only
-    return;
-  }
-
-  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/refresh-hook', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + secret },
-    payload: '{}',
-    muteHttpExceptions: true
-  });
-  var code = ping.getResponseCode();
-  if (code >= 200 && code < 300) {
-    props.setProperty('fp_outages', fingerprint);
-    console.log('Pinged worker: outage picture changed.');
-  } else {
-    console.error('Refresh hook ping failed: ' + code + ' ' + ping.getContentText());
-  }
+  var fingerprint = changedFingerprint(props, 'fp_outages', parts.sort());
+  if (!fingerprint) return;
+  stageUnit(batch, 'fp_outages', fingerprint, ['bge', 'outages:pepco', 'outages:pe'], bodies, null);
 }
 
 // Rounds an outage count to the nearest 100 so meter noise never fingerprints
@@ -233,14 +320,7 @@ var CHART_INCIDENTS_URL = 'https://chart.maryland.gov/DataFeeds/GetIncidentXml';
 var ROAD_TYPE_RE = /weather|closure|collision|injury|damage|debris|flood/i;
 var ROAD_DESC_RE = /\b(snow|ice|icy|sleet|flood(?:ed|ing)?|closed|closure|crash|collision|jack-?knif\w*|overturn\w*|downed (?:tree|wire|pole)|tree down|wires? down)\b/i;
 
-function checkRoads() {
-  var props = PropertiesService.getScriptProperties();
-  var workerUrl = props.getProperty('WORKER_URL');
-  var secret = props.getProperty('NWS_HOOK_SECRET');
-  if (!workerUrl || !secret) {
-    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
-  }
-
+function collectRoads(props, batch) {
   var resp = UrlFetchApp.fetch(CHART_INCIDENTS_URL, {
     headers: { 'User-Agent': NWS_USER_AGENT },
     muteHttpExceptions: true
@@ -268,29 +348,9 @@ function checkRoads() {
     parts.push(county + '|' + type + '|' + desc.slice(0, 120));
   });
 
-  var fingerprint = md5Hex(parts.sort().join('~'));
-  var previous = props.getProperty('fp_roads');
-  if (previous === fingerprint) return;
-
-  if (previous === null) {
-    props.setProperty('fp_roads', fingerprint); // first run: baseline only
-    return;
-  }
-
-  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/refresh-hook', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + secret },
-    payload: '{}',
-    muteHttpExceptions: true
-  });
-  var code = ping.getResponseCode();
-  if (code >= 200 && code < 300) {
-    props.setProperty('fp_roads', fingerprint);
-    console.log('Pinged worker: road incidents changed.');
-  } else {
-    console.error('Roads refresh ping failed: ' + code + ' ' + ping.getContentText());
-  }
+  var fingerprint = changedFingerprint(props, 'fp_roads', parts.sort());
+  if (!fingerprint) return;
+  stageUnit(batch, 'fp_roads', fingerprint, ['roads'], { roads: xml }, null);
 }
 
 // --- Context sources (district feeds, HCPSS news RSS, snowfall, AQI) ---
@@ -319,14 +379,7 @@ function gasStripHtml(s) {
     .trim();
 }
 
-function checkContextSources() {
-  var props = PropertiesService.getScriptProperties();
-  var workerUrl = props.getProperty('WORKER_URL');
-  var secret = props.getProperty('NWS_HOOK_SECRET');
-  if (!workerUrl || !secret) {
-    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
-  }
-
+function collectContextSources(props, batch) {
   // The gridpoint forecast URL is resolved once via the points API and kept
   // in Script Properties (NWS grid assignments are effectively static).
   var forecastUrl = props.getProperty('NWS_FORECAST_URL');
@@ -385,40 +438,40 @@ function checkContextSources() {
     bodies[d.key] = r && r.getResponseCode() === 200 ? r.getContentText() : null;
   });
 
-  checkContextSource(props, workerUrl, secret, 'districts', districtsFingerprintParts(bodies));
-  checkContextSource(props, workerUrl, secret, 'news', newsFingerprintParts(bodies.news));
-  checkContextSource(props, workerUrl, secret, 'snowfall', snowfallFingerprintParts(bodies.snowfall));
-  checkContextSource(props, workerUrl, secret, 'aqi', aqiFingerprintParts(bodies.aqimd, bodies.aqidc, aqiTodayMdy()));
-}
-
-// Shared change gate: null parts mean the fetch failed (skip the run), the
-// first fingerprint is baseline-only, and the stored fingerprint is advanced
-// only after the Worker acks so a Worker outage retries next run.
-function checkContextSource(props, workerUrl, secret, source, parts) {
-  if (parts === null) return;
-  var fingerprint = md5Hex(parts.join('|'));
-  var key = 'fp_ctx_' + source;
-  var previous = props.getProperty(key);
-  if (previous === fingerprint) return;
-
-  if (previous === null) {
-    props.setProperty(key, fingerprint);
-    return;
+  // Districts share one cache entry in the Worker, so they are staged as one
+  // unit: all seven bodies go over together or none do.
+  var districtFp = changedFingerprint(props, 'fp_ctx_districts', districtsFingerprintParts(bodies));
+  if (districtFp) {
+    stageUnit(batch, 'fp_ctx_districts', districtFp, ['districts'], {
+      aacps: bodies.aacps,
+      bcps: bodies.bcps,
+      ccps3: bodies.ccps3,
+      ccps63: bodies.ccps63,
+      fcps: bodies.fcps,
+      mcps: bodies.mcps,
+      pgcps: bodies.pgcps
+    }, null);
   }
 
-  var ping = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/context-hook', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + secret },
-    payload: JSON.stringify({ source: source }),
-    muteHttpExceptions: true
-  });
-  var code = ping.getResponseCode();
-  if (code >= 200 && code < 300) {
-    props.setProperty(key, fingerprint);
-    console.log('Pinged worker: ' + source + ' changed.');
-  } else {
-    console.error('Context hook ping for ' + source + ' failed: ' + code + ' ' + ping.getContentText());
+  var newsFp = changedFingerprint(props, 'fp_ctx_news', newsFingerprintParts(bodies.news));
+  if (newsFp) {
+    stageUnit(batch, 'fp_ctx_news', newsFp, ['news'], { news: bodies.news }, null);
+  }
+
+  var snowFp = changedFingerprint(props, 'fp_ctx_snowfall', snowfallFingerprintParts(bodies.snowfall));
+  if (snowFp) {
+    stageUnit(batch, 'fp_ctx_snowfall', snowFp, ['snowfall'], { snowfall: bodies.snowfall }, null);
+  }
+
+  // Both AirNow state feeds are one fingerprint and one unit: the Worker
+  // stores them under separate keys, so both must land before the fingerprint
+  // advances.
+  var aqiFp = changedFingerprint(props, 'fp_ctx_aqi', aqiFingerprintParts(bodies.aqimd, bodies.aqidc, aqiTodayMdy()));
+  if (aqiFp) {
+    stageUnit(batch, 'fp_ctx_aqi', aqiFp, ['aqi:MD', 'aqi:DC'], {
+      aqimd: bodies.aqimd,
+      aqidc: bodies.aqidc
+    }, null);
   }
 }
 
@@ -663,47 +716,31 @@ function md5Hex(text) {
   return digest.map(function (b) { return ((b + 256) % 256).toString(16); }).join('');
 }
 
-// NWS watcher below. Each zone is independent: a bad fetch
-// for one zone never blocks the others, and the stored fingerprint is only
-// advanced after the Worker acknowledges the ping (so a Worker outage means
-// a retry on the next run, not a lost alert).
-function checkNwsAlerts() {
-  var props = PropertiesService.getScriptProperties();
-  var workerUrl = props.getProperty('WORKER_URL');
-  var secret = props.getProperty('NWS_HOOK_SECRET');
-  if (!workerUrl || !secret) {
-    throw new Error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
-  }
-
+// NWS collector. Each zone is independent: a bad fetch for one zone never
+// blocks the others, and each zone's fingerprint only advances once the Worker
+// confirms it stored that zone's alerts, so a Worker outage means a retry on
+// the next run rather than a lost alert.
+function collectNwsAlerts(props, batch) {
   NWS_ZONES.forEach(function (zone) {
     try {
-      var fingerprint = fetchZoneFingerprint(zone);
-      if (fingerprint === null) return; // fetch failed; try again next run
+      var body = fetchZoneBody(zone);
+      if (body === null) return; // fetch failed; try again next run
 
-      var key = 'fp_' + zone;
-      var previous = props.getProperty(key);
-      if (previous === fingerprint) return; // nothing changed
+      var features = (JSON.parse(body) || {}).features || [];
+      var fingerprint = changedFingerprint(props, 'fp_' + zone, alertFingerprintParts(features));
+      if (!fingerprint) return;
 
-      if (previous === null) {
-        // First run for this zone: record the baseline without pinging, so
-        // installing the script mid-storm doesn't fire 7 stale notices at
-        // once. Real changes from here on are pushed.
-        props.setProperty(key, fingerprint);
-        return;
-      }
-
-      if (pingWorker(workerUrl, secret, zone)) {
-        props.setProperty(key, fingerprint);
-      }
+      var zones = {};
+      zones[zone] = body;
+      stageUnit(batch, 'fp_' + zone, fingerprint, ['weather:' + zone], null, zones);
     } catch (e) {
       console.error('Zone ' + zone + ' check failed: ' + e);
     }
   });
 }
 
-// Stable digest of a zone's active alert set. Returns null when the feed
-// can't be read.
-function fetchZoneFingerprint(zone) {
+// A zone's raw active-alerts feed. Returns null when it can't be read.
+function fetchZoneBody(zone) {
   var resp = UrlFetchApp.fetch('https://api.weather.gov/alerts/active/zone/' + zone, {
     headers: { 'User-Agent': NWS_USER_AGENT, 'Accept': 'application/geo+json' },
     muteHttpExceptions: true
@@ -712,8 +749,7 @@ function fetchZoneFingerprint(zone) {
     console.error('NWS fetch for ' + zone + ' returned ' + resp.getResponseCode());
     return null;
   }
-  var features = (JSON.parse(resp.getContentText()) || {}).features || [];
-  return md5Hex(alertFingerprintParts(features).join('|'));
+  return resp.getContentText();
 }
 
 // Reduces a zone's raw features to exactly what the Worker keeps — this is a
@@ -746,35 +782,175 @@ function alertFingerprintParts(features) {
   return parts.sort();
 }
 
-// Tells the Worker this zone's alerts changed. Returns true on a 2xx ack.
-function pingWorker(workerUrl, secret, zone) {
-  var resp = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/nws-hook', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + secret },
-    payload: JSON.stringify({ zone: zone }),
-    muteHttpExceptions: true
-  });
-  var code = resp.getResponseCode();
-  if (code < 200 || code >= 300) {
-    console.error('Worker ping for ' + zone + ' failed: ' + code + ' ' + resp.getContentText());
-    return false;
-  }
-  console.log('Pinged worker: ' + zone + ' changed.');
-  return true;
-}
-
 // Run once manually to install the 5-minute trigger (replaces any existing
 // triggers for this script so re-running never stacks duplicates).
 function setupTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('runWatchers').timeBased().everyMinutes(5).create();
-  console.log('Trigger installed: runWatchers (NWS alerts + HCPSS status) every 5 minutes.');
+  console.log('Trigger installed: runWatchers every 5 minutes.');
 }
 
-// Optional: run manually to verify the Worker URL + secret are right.
-// Expect a log line ending in {"ok":true,"zone":"MDC027"}.
+// Optional: run manually to verify the Worker URL + secret are right. Sends an
+// empty push, which changes nothing. Expect {"ok":true,"written":[],"skipped":[]}.
 function testPing() {
   var props = PropertiesService.getScriptProperties();
-  pingWorker(props.getProperty('WORKER_URL'), props.getProperty('NWS_HOOK_SECRET'), 'MDC027');
+  var workerUrl = props.getProperty('WORKER_URL');
+  var secret = props.getProperty('NWS_HOOK_SECRET');
+  if (!workerUrl || !secret) {
+    console.error('Set WORKER_URL and NWS_HOOK_SECRET in Script Properties first.');
+    return;
+  }
+  var resp = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/push-data', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + secret },
+    payload: '{}',
+    muteHttpExceptions: true
+  });
+  console.log('Worker replied ' + resp.getResponseCode() + ': ' + resp.getContentText());
+}
+
+// Clears every stored fingerprint. The next run re-baselines instead of
+// pushing, so this is the safe way to recover if the Script Properties and the
+// Worker's caches ever disagree — it costs one quiet run, not a burst of
+// pushes.
+function resetFingerprints() {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var cleared = 0;
+  Object.keys(all).forEach(function (key) {
+    if (key.indexOf('fp_') === 0) {
+      props.deleteProperty(key);
+      cleared++;
+    }
+  });
+  console.log('Cleared ' + cleared + ' fingerprint(s); next run re-baselines without pushing.');
+}
+
+// --- Reading the Worker's logs from here ---
+//
+// Everything the Worker does is written to Cloudflare's own log store with an
+// ACT| prefix (see hcpss-worker/src/actionlog.js). Those logs cost nothing —
+// unlike KV — and they are queryable over the Cloudflare API, which means this
+// function talks to Cloudflare directly and never touches the Worker. That is
+// the point: when the Worker is the thing that's broken, its Discord log
+// channel goes quiet exactly when you need it, and this still works.
+//
+// One-time setup:
+//   1. Cloudflare dashboard → My Profile → API Tokens → Create Token →
+//      Custom token with these permissions:
+//        Account → Workers Observability → Read
+//        Account → Account Analytics → Read
+//   2. Script Properties → CF_API_TOKEN = <that token>
+//                          CF_ACCOUNT_ID = <your account id>
+//
+// Usage: showLogs() for the last 2 hours, showLogs(12) for the last 12, or
+// showErrors() for failures only. Output goes to the Apps Script execution
+// log (View → Executions, or the console pane in the editor).
+function showLogs(hours, onlyErrors) {
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty('CF_API_TOKEN');
+  var account = props.getProperty('CF_ACCOUNT_ID');
+  if (!token || !account) {
+    console.error('Set CF_API_TOKEN and CF_ACCOUNT_ID in Script Properties — see the comment above showLogs().');
+    return;
+  }
+
+  var to = Date.now();
+  var from = to - (Number(hours) > 0 ? Number(hours) : 2) * 3600 * 1000;
+
+  var filters = [
+    { key: '$metadata.service', operation: 'eq', type: 'string', value: 'hcpss-worker' }
+  ];
+
+  var resp = UrlFetchApp.fetch(
+    'https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/observability/telemetry/query',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({
+        queryId: 'school-status-bot-gas',
+        timeframe: { from: from, to: to },
+        parameters: { datasets: ['cloudflare-workers'], filters: filters, limit: 200 },
+        view: 'events',
+        limit: 200
+      }),
+      muteHttpExceptions: true
+    }
+  );
+
+  if (resp.getResponseCode() !== 200) {
+    console.error('Cloudflare logs query failed: ' + resp.getResponseCode() + ' ' + resp.getContentText());
+    return;
+  }
+
+  var parsed;
+  try {
+    parsed = JSON.parse(resp.getContentText());
+  } catch (e) {
+    console.error('Cloudflare logs response was not JSON.');
+    return;
+  }
+  if (!parsed.success) {
+    console.error('Cloudflare logs query rejected: ' + JSON.stringify(parsed.errors || []));
+    return;
+  }
+
+  var events = ((parsed.result || {}).events || {}).events || [];
+  if (!events.length) {
+    console.log('No Worker log events in the last ' + (Number(hours) > 0 ? hours : 2) + ' hour(s).');
+    return;
+  }
+
+  // Oldest first reads like a story; the API returns newest first.
+  var lines = [];
+  events.forEach(function (ev) {
+    var message = logEventMessage(ev);
+    if (!message) return;
+    if (onlyErrors && message.indexOf('|error|') === -1 && String((ev.$metadata || {}).level || '') !== 'error') return;
+    lines.push(Utilities.formatDate(new Date(ev.timestamp), 'America/New_York', 'MM-dd HH:mm:ss') + '  ' + message);
+  });
+
+  if (!lines.length) {
+    console.log(onlyErrors ? 'No errors logged in that window.' : 'Events returned but none carried a message.');
+    return;
+  }
+
+  lines.reverse();
+  // Apps Script truncates very long single log entries, so print in blocks.
+  for (var i = 0; i < lines.length; i += 40) {
+    console.log(lines.slice(i, i + 40).join('\n'));
+  }
+  console.log('— ' + lines.length + ' line(s) from the last ' + (Number(hours) > 0 ? hours : 2) + ' hour(s).');
+}
+
+// Failures only.
+function showErrors(hours) {
+  showLogs(hours || 24, true);
+}
+
+// Pulls the human-readable text out of one Workers Logs event. The shape
+// varies by how the line was produced (console.log vs. an uncaught throw), so
+// this checks the known locations and falls back to the raw event.
+function logEventMessage(ev) {
+  if (!ev) return '';
+  if (typeof ev.message === 'string' && ev.message) return ev.message;
+
+  var src = ev.source || {};
+  if (typeof src.message === 'string' && src.message) return src.message;
+
+  // console.log("a", "b") arrives as an argument array.
+  var args = src.arguments || ev.arguments;
+  if (Array.isArray(args) && args.length) {
+    return args.map(function (a) {
+      return typeof a === 'string' ? a : JSON.stringify(a);
+    }).join(' ');
+  }
+
+  var meta = ev.$metadata || {};
+  if (typeof meta.message === 'string' && meta.message) return meta.message;
+  if (typeof meta.error === 'string' && meta.error) return 'ERROR ' + meta.error;
+
+  return '';
 }

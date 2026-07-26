@@ -17,6 +17,7 @@ import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './c
 import { listCalendarEvents } from './calendar.js';
 import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
 import { getBlockedGuilds } from './blocklist.js';
+import { logAction } from './actionlog.js';
 import { discordFetch } from './discord.js';
 import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
 
@@ -549,6 +550,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const nwsAlerts = config.toggle_nws_alerts !== false;
     const emailAlerts = config.toggle_email_alerts !== false;
     const sessionGate = config.toggle_session_gate !== false;
+    const actionLog = config.toggle_action_log !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -715,6 +717,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post forwarded HCPSS announcement emails (no pings)',
         emoji: { name: '📧' },
         default: emailAlerts
+      },
+      {
+        label: 'Worker Action Log',
+        value: 'toggle_action_log',
+        description: 'Stream everything the Worker does to the log channel',
+        emoji: { name: '🧾' },
+        default: actionLog
       },
       {
         label: 'Skip Non-School Days',
@@ -1307,15 +1316,22 @@ export async function postLog(env, logChannelId, message, stats = {}, guildId = 
     logs.unshift(`[${timeStr}] ${message}`);
     logs = logs.slice(0, 25); // keep last 25 logs
     await env.STATUS_KV.put(logKey, JSON.stringify(logs));
+
+    // Mirror into the batched action log so the Discord log channel carries a
+    // complete stream of what the Worker did, and so the line lands in
+    // Cloudflare's log store where gas/showLogs() can read it. Costs no KV.
+    logAction(message, { guildId });
   }
 
-  // Record latest latency if provided
+  // "Last check" means the last time a status check actually ran, and only
+  // check call sites pass a latency — every other caller (calendar edits,
+  // announcements, panel refreshes) passes {}. Writing both keys on every
+  // postLog call therefore spent a KV write per log line to restate a
+  // timestamp that had not changed meaning, on a budget of 1,000 writes/day.
   if (typeof stats.latency === 'number') {
     await env.STATUS_KV.put(latencyKey, String(stats.latency));
+    await env.STATUS_KV.put(checkTimeKey, String(Date.now()));
   }
-
-  const lastCheckTime = Date.now();
-  await env.STATUS_KV.put(checkTimeKey, String(lastCheckTime));
 
   if (!logChannelId) return;
   const token = env.DISCORD_BOT_TOKEN;
@@ -1434,6 +1450,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
     next.toggle_email_alerts = selected.includes('toggle_email_alerts');
     next.toggle_session_gate = selected.includes('toggle_session_gate');
+    next.toggle_action_log = selected.includes('toggle_action_log');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];
