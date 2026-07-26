@@ -833,8 +833,9 @@ function resetFingerprints() {
 // ACT| prefix (see hcpss-worker/src/actionlog.js). Those logs cost nothing —
 // unlike KV — and they are queryable over the Cloudflare API, which means this
 // function talks to Cloudflare directly and never touches the Worker. That is
-// the point: when the Worker is the thing that's broken, its Discord log
-// channel goes quiet exactly when you need it, and this still works.
+// the point: the Worker posts none of this to Discord (the control panel is
+// the only in-server log, and it stops updating when the Worker is the thing
+// that's broken), and this still works.
 //
 // One-time setup:
 //   1. Cloudflare dashboard → My Profile → API Tokens → Create Token →

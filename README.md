@@ -30,7 +30,7 @@ Everything runs in the Cloudflare Worker in [`hcpss-worker/`](hcpss-worker/) —
 - Optional Morning Digest: a daily 6:00 AM ET summary post (status, calendar, weather) per opted-in server, built from the server's own primary district.
 - Lets anyone opt into DMs on status changes via the `🔔 Notify Me` button, or self-assign a status ping role from the dropdown on status posts.
 - Serves a public read-only status page at the Worker's root URL (current status, active alerts, recent history) — shareable with people who aren't in a Discord server.
-- Worker Action Log: a running record of what the Worker does — posts, status changes, config edits, and any watcher failure — batched into one message per run in the server's log channel (`toggle_action_log`), and silent on a quiet tick. Routine plumbing (the collector handing over a changed feed, which happens every few minutes all day) is deliberately kept out of Discord and goes only to Cloudflare's log store, where `showLogs()` in the Apps Script project can read the complete stream — including when the Worker is the thing that's broken.
+- Worker Action Log: a running record of what the Worker does — posts, status changes, config edits, and any watcher failure. The log channel gets no chat messages for any of it; the recent entries appear in the control panel itself, which updates in place. The complete stream goes to Cloudflare's log store, where `showLogs()` in the Apps Script project can read it — including when the Worker is the thing that's broken.
 
 ## Where the work happens
 

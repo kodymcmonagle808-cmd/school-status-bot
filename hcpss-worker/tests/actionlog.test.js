@@ -1,20 +1,14 @@
-// The batched action log: a complete Discord record of what the Worker did,
-// at zero KV write cost.
+// The action log: a complete record of what the Worker did, written to
+// Cloudflare's log store at zero KV cost — and sent to Discord never.
 //
-// The cost property is the reason this module exists rather than reusing
-// postLog, so it is asserted directly: a flush must not write to KV at all.
+// Both properties are the reason this module exists rather than reusing
+// postLog, so both are asserted directly: logging must not write to KV, and it
+// must not put a message in any channel. The user-facing log is the control
+// panel's Recent Activity list, which postLog owns.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  beginActionLog,
-  logAction,
-  logActionError,
-  flushActionLog,
-  formatActionBatch,
-  getBufferedActions,
-  logDetail
-} from '../src/actionlog.js';
+import { logAction, logActionError, logDetail } from '../src/actionlog.js';
 import { postLog } from '../src/panel.js';
 
 function kvStub(seed = {}) {
@@ -29,137 +23,60 @@ function kvStub(seed = {}) {
   };
 }
 
-function envWith(guilds, kv) {
-  return {
-    STATUS_KV: kv,
-    DISCORD_BOT_TOKEN: 'bot-token',
-    ...guilds
-  };
+// Captures the ACT| lines a block of logging emits.
+function captureLog(t) {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => {
+    const first = String(args[0] || '');
+    if (first.startsWith('ACT|')) lines.push(first);
+  });
+  return lines;
 }
 
-test('logAction buffers lines and beginActionLog clears them', () => {
-  beginActionLog();
-  assert.deepEqual(getBufferedActions(), []);
+function parse(line) {
+  const [, at, level, guildId, ...rest] = line.split('|');
+  return { at, level, guildId, text: rest.join('|') };
+}
+
+test('logging writes ACT| lines and nothing else', (t) => {
+  const lines = captureLog(t);
+
   logAction('did a thing');
   logActionError('broke a thing', { guildId: 'g1' });
-  const buffered = getBufferedActions();
-  assert.equal(buffered.length, 2);
-  assert.equal(buffered[0].text, 'did a thing');
-  assert.equal(buffered[0].level, 'info');
-  assert.equal(buffered[1].level, 'error');
-  assert.equal(buffered[1].guildId, 'g1');
-  beginActionLog();
-  assert.deepEqual(getBufferedActions(), []);
+  logDetail('stored a feed', { guildId: 'g2' });
+
+  assert.equal(lines.length, 3);
+  const [action, error, detail] = lines.map(parse);
+  assert.equal(action.text, 'did a thing');
+  assert.equal(action.level, 'info');
+  assert.equal(action.guildId, '-', 'a Worker-wide line is scoped to no guild');
+  assert.equal(error.level, 'error');
+  assert.equal(error.guildId, 'g1');
+  assert.equal(detail.level, 'detail', 'routine plumbing stays filterable');
+  assert.equal(detail.guildId, 'g2');
 });
 
-test('logAction ignores empty messages', () => {
-  beginActionLog();
+test('logging ignores empty messages', (t) => {
+  const lines = captureLog(t);
   logAction('');
   logAction(null);
   logAction('   ');
-  assert.deepEqual(getBufferedActions(), []);
+  logDetail('');
+  assert.deepEqual(lines, []);
 });
 
-test('formatActionBatch splits into code blocks under the Discord limit', () => {
-  const lines = Array.from({ length: 200 }, (_, i) => ({
-    text: `line ${i} ${'x'.repeat(40)}`,
-    guildId: '',
-    level: 'info',
-    at: Date.now()
-  }));
-  const chunks = formatActionBatch(lines);
-  assert.ok(chunks.length > 1, 'should split');
-  for (const chunk of chunks) {
-    assert.ok(chunk.length <= 2000, `chunk too long: ${chunk.length}`);
-    assert.ok(chunk.startsWith('```\n') && chunk.endsWith('\n```'));
-  }
-  // A single line longer than the whole budget is truncated, not dropped.
-  const huge = formatActionBatch([{ text: 'y'.repeat(5000), guildId: '', level: 'info', at: Date.now() }]);
-  assert.equal(huge.length, 1);
-  assert.ok(huge[0].length <= 2000);
-});
-
-test('flushActionLog posts one batch and spends no KV writes', async (t) => {
-  const posts = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    posts.push({ url, body: JSON.parse(opts.body) });
-    return new Response('{}', { status: 200 });
-  });
-
-  const kv = kvStub({
-    guild_index: JSON.stringify(['g1']),
-    'config:g1': JSON.stringify({ log_channel_id: 'chan-1' })
-  });
-  const env = envWith({}, kv);
-
-  beginActionLog();
-  logAction('posted the status');
-  logAction('refreshed the board');
-  const result = await flushActionLog(env);
-
-  assert.equal(result.posted, 1);
-  assert.equal(posts.length, 1, 'one API call, not one per line');
-  assert.match(posts[0].url, /channels\/chan-1\/messages/);
-  assert.match(posts[0].body.content, /posted the status/);
-  assert.match(posts[0].body.content, /refreshed the board/);
-  assert.equal(kv.writes, 0, 'the action log must never write to KV');
-  // The buffer is drained, so a second flush is a no-op.
-  assert.equal((await flushActionLog(env)).posted, 0);
-});
-
-test('flushActionLog stays silent when there is nothing to say', async (t) => {
+test('logging never contacts Discord and never writes KV', async (t) => {
   const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
-  const kv = kvStub({ guild_index: JSON.stringify(['g1']) });
-  beginActionLog();
-  const result = await flushActionLog(envWith({}, kv));
-  assert.equal(result.posted, 0);
-  assert.equal(fetchMock.mock.callCount(), 0, 'a quiet tick must cost nothing');
-});
+  captureLog(t);
 
-test('flushActionLog honours the per-guild toggle', async (t) => {
-  const posts = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    posts.push({ url, body: JSON.parse(opts.body) });
-    return new Response('{}', { status: 200 });
-  });
+  // The batched log channel feed is gone: a tick full of actions must produce
+  // no outbound request at all. The panel is the only thing in the channel.
+  logAction('posted the status', { guildId: 'g1' });
+  logAction('refreshed the board', { guildId: 'g1' });
+  logActionError('a watcher threw');
+  logDetail('Watcher pushed fresh data: roads.');
 
-  const kv = kvStub({
-    guild_index: JSON.stringify(['off', 'on']),
-    'config:off': JSON.stringify({ log_channel_id: 'c-off', toggle_action_log: false }),
-    'config:on': JSON.stringify({ log_channel_id: 'c-on' })
-  });
-
-  beginActionLog();
-  logAction('worker-wide line');
-  await flushActionLog(envWith({}, kv));
-
-  assert.equal(posts.length, 1, 'the opted-out guild must get nothing');
-  assert.match(posts[0].url, /channels\/c-on\/messages/);
-});
-
-test('guild-scoped lines only reach their own guild', async (t) => {
-  const posts = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    posts.push({ url, body: JSON.parse(opts.body) });
-    return new Response('{}', { status: 200 });
-  });
-
-  const kv = kvStub({
-    guild_index: JSON.stringify(['g1', 'g2']),
-    'config:g1': JSON.stringify({ log_channel_id: 'c1' }),
-    'config:g2': JSON.stringify({ log_channel_id: 'c2' })
-  });
-
-  beginActionLog();
-  logAction('global line');
-  logAction('g1 only', { guildId: 'g1' });
-  await flushActionLog(envWith({}, kv));
-
-  const byChannel = Object.fromEntries(posts.map(p => [p.url.match(/channels\/([^/]+)\//)[1], p.body.content]));
-  assert.match(byChannel.c1, /global line/);
-  assert.match(byChannel.c1, /g1 only/);
-  assert.match(byChannel.c2, /global line/);
-  assert.doesNotMatch(byChannel.c2, /g1 only/);
+  assert.equal(fetchMock.mock.callCount(), 0, 'the action log must send no messages');
 });
 
 test('postLog only stamps last_check_time for calls that were actually checks', async (t) => {
@@ -179,14 +96,31 @@ test('postLog only stamps last_check_time for calls that were actually checks', 
   assert.ok(Number(kv2.map.get('last_check_time:g1')) > 0);
 });
 
-test('postLog feeds the action log so the Discord stream is complete', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
-  beginActionLog();
-  await postLog({ STATUS_KV: kvStub() }, null, 'Override set (status: closed)', {}, 'g9');
-  const buffered = getBufferedActions();
-  assert.equal(buffered.length, 1);
-  assert.match(buffered[0].text, /Override set/);
-  assert.equal(buffered[0].guildId, 'g9');
+test('postLog records to the panel history and the log store, not to a chat message', async (t) => {
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts) => {
+    posts.push({ url, body: JSON.parse(opts.body) });
+    return new Response(JSON.stringify({ id: 'panel-msg' }), { status: 200 });
+  });
+  const lines = captureLog(t);
+
+  const kv = kvStub();
+  await postLog({ STATUS_KV: kv, DISCORD_BOT_TOKEN: 'bot-token' }, 'chan-1', 'Override set (status: closed)', {}, 'g9');
+
+  // The line is in the panel's own history array…
+  const history = JSON.parse(kv.map.get('panel_logs:g9'));
+  assert.equal(history.length, 1);
+  assert.match(history[0], /Override set/);
+
+  // …and in the log store, scoped to the guild…
+  assert.equal(lines.length, 1);
+  assert.equal(parse(lines[0]).guildId, 'g9');
+  assert.match(parse(lines[0]).text, /Override set/);
+
+  // …and the only thing sent to Discord is the control panel itself.
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].body.embeds, 'the panel is an embed, not a log line');
+  assert.equal(posts[0].body.content, undefined);
 });
 
 // --- "Last checked" must report the last real check, not the render time ---
@@ -234,37 +168,4 @@ test('a storm-mode re-render does not advance the footer past the real check', a
   const footer = built.payload.embeds[0].footer.text;
   assert.match(footer, /Last checked/);
   assert.match(footer, /8:00/, `footer should report the 8:00 PM check, got: ${footer}`);
-});
-
-test('logDetail keeps routine plumbing out of Discord entirely', async (t) => {
-  const posts = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    posts.push(JSON.parse(opts.body));
-    return new Response('{}', { status: 200 });
-  });
-
-  const kv = kvStub({
-    guild_index: JSON.stringify(['g1']),
-    'config:g1': JSON.stringify({ log_channel_id: 'c1' })
-  });
-
-  beginActionLog();
-  // A data push every few minutes is real, but it is not news. It must not
-  // buffer at all, or the log channel gets a message around the clock.
-  logDetail('Watcher pushed fresh data: roads.');
-  logDetail('Watcher pushed fresh data: aqi:MD, aqi:DC.');
-  assert.deepEqual(getBufferedActions(), [], 'detail lines must never buffer');
-
-  const quiet = await flushActionLog(envWith({}, kv));
-  assert.equal(quiet.posted, 0, 'a tick of pure plumbing posts nothing');
-  assert.equal(posts.length, 0);
-
-  // A failure in the same tick still surfaces, and carries only itself.
-  beginActionLog();
-  logDetail('Watcher pushed fresh data: roads.');
-  logActionError('Watcher push skipped: news.');
-  const noisy = await flushActionLog(envWith({}, kv));
-  assert.equal(noisy.posted, 1);
-  assert.match(posts[0].content, /push skipped/);
-  assert.doesNotMatch(posts[0].content, /pushed fresh data/);
 });

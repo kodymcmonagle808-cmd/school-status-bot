@@ -33,17 +33,18 @@ registration**, `wrangler deploy`).
   per change, no delete, no outbound fetch, and no second copy of any parser.
   Adding a source here means adding a `parse*FromBody` and a `store()` call;
   the live fetcher stays untouched as the dead-collector fallback.
-- `src/actionlog.js` — the "everything the Worker did" log, at **zero KV
-  cost**. Every line is a prefixed `console.log` (persisted by
-  `observability.logs`, queryable from Apps Script via `showLogs()`); what
-  differs is whether it also reaches Discord. `logAction()`/`logActionError()`
-  buffer the line and `flushActionLog()` posts the batch as one Discord message
-  per invocation; `logDetail()` is console-only. Routine plumbing — a stored
-  feed, a cache write — must use `logDetail`: the watcher pushes changed data
-  every few minutes all day, and sending that to the log channel buried the
-  lines that mattered. `postLog()` in `panel.js` feeds `logAction`. Never use
+- `src/actionlog.js` — the "everything the Worker did" log, at **zero KV cost
+  and zero Discord noise**. Every line is a prefixed `console.log` (persisted
+  by `observability.logs`, queryable from Apps Script via `showLogs()`) and
+  goes nowhere else; `logAction`/`logActionError`/`logDetail` differ only in
+  the level tag `showLogs()` filters on. **This module must never send a
+  Discord message.** It used to batch its lines into the log channel, which
+  buried the control panel under a running restatement of it. The only
+  user-facing log is the control panel's Recent Activity list, written by
+  `postLog()` in `panel.js` (which also emits the `logAction` line). Never use
   `postLog` as a general logger — it costs two KV writes a call and exists to
-  re-render the control panel.
+  re-render the control panel; routine plumbing (a stored feed, a cache write)
+  uses `logDetail` and stays out of KV and Discord both.
 - `src/check.js` — core check-and-post loop (`doCheckAndPost`): schedule
   matching, storm mode (15-min ticks, 4:30–7:30 AM + 10 AM–2 PM ET),
   conversion watch (7:45–9:30 when a delay is announced), posting, history.

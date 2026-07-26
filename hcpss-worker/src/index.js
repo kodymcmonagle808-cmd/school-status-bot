@@ -22,7 +22,7 @@ import { clearSnowfallCache } from './snowfall.js';
 import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handlePushData } from './pushdata.js';
-import { beginActionLog, logDetail, logActionError, flushActionLog } from './actionlog.js';
+import { logDetail, logActionError } from './actionlog.js';
 import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -141,7 +141,6 @@ export default {
     // This supersedes /context-hook (kept below for the older watcher build,
     // which stays deployed until the new script is pasted into Apps Script).
     if (url.pathname === '/push-data') {
-      beginActionLog();
       let payload = null;
       try { payload = await request.json(); } catch {}
       const result = await handlePushData(env, payload || {});
@@ -162,7 +161,6 @@ export default {
         } catch (e) {
           console.error('Push-data storm refresh failed', e);
         }
-        await flushActionLog(env);
       })());
       return jsonResponse(result, result.ok ? 200 : 400);
     }
@@ -274,13 +272,11 @@ export default {
       if (!ok) return new Response('Invalid request signature', { status: 401 });
 
       const body = await request.json();
-      beginActionLog();
-      const interactionResponse = await handleInteraction(body, env, ctx);
-      // Slash commands and panel clicks log through postLog, which feeds the
-      // action-log buffer. Flush after responding — Discord's 3-second
-      // deadline is not something a log post is allowed to eat into.
-      ctx.waitUntil(flushActionLog(env).catch(() => {}));
-      return interactionResponse;
+      // Slash commands and panel clicks record themselves through postLog,
+      // which re-renders the control panel and writes the ACT| line. Nothing
+      // extra is owed here — Discord's 3-second deadline is not something a
+      // log post is allowed to eat into.
+      return await handleInteraction(body, env, ctx);
     }
 
     const manualTriggerError = validateManualTrigger(request, env);
@@ -299,8 +295,6 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
-      beginActionLog();
-
       // Heartbeat for the external uptime monitor: proves the cron itself is
       // firing (a dead cron is otherwise invisible). Clock-gated to one write
       // per half hour — see isHeartbeatMinute for why the interval and the
@@ -315,8 +309,8 @@ export default {
 
       // Every watcher decides for itself whether this minute matters, and each
       // is isolated so one failure never blocks the rest. A watcher that did
-      // nothing logs nothing — the action log stays silent on a quiet tick and
-      // only a failure or a real action produces a line.
+      // nothing logs nothing — a quiet tick produces no lines at all, and only
+      // a failure or a real action shows up in the log store.
       const watchers = [
         ['check', () => doCheckAndPost(env, { source: 'scheduled' })],
         ['digest', () => maybeSendMorningDigests(env)],
@@ -344,8 +338,6 @@ export default {
           await recordWatcherError(env, name, e);
         }
       }
-
-      await flushActionLog(env);
     })());
   }
 };
