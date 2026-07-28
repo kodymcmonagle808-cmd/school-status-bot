@@ -88,15 +88,29 @@ export function hasPowerThreatAlert(alerts) {
   return (Array.isArray(alerts) ? alerts : []).some(isPowerThreatAlert);
 }
 
+// Convective events schools act on regardless of season: a tornado watch means
+// hold students inside and call off outdoor activities, a tornado warning
+// means shelter now, and a severe thunderstorm warning routinely holds
+// dismissal. Matched at watch/warning level only (NWS issues no advisory at
+// this tier).
+//
+// These are named explicitly rather than left to the severity check because
+// severity is not dependable here: NWS rates most tornado products Extreme,
+// but not all — a Tornado Watch commonly comes through as Severe, which used
+// to mean it announced or stayed silent depending on a field the bot has no
+// control over. For an alert this consequential that coin-flip isn't
+// acceptable, so the event name decides.
+const CONVECTIVE_EVENT_RE = /tornado|severe thunderstorm/i;
+
 // Alerts worth announcing the moment NWS issues them: the winter and heat
 // events school decisions hinge on, at watch/warning/advisory level (a
-// Winter Weather Advisory is the classic 2-hour-delay signal), plus anything
-// rated Extreme. Deliberately excludes Severe Thunderstorm Warnings and
-// other summer noise schools rarely act on.
+// Winter Weather Advisory is the classic 2-hour-delay signal), the convective
+// events above at watch/warning level, plus anything rated Extreme.
 export function isSchoolImpactIssuance(alert) {
   if (!alert) return false;
   if (alert.severity === 'Extreme') return true;
   const event = alert.event || '';
+  if (CONVECTIVE_EVENT_RE.test(event)) return /warning|watch/i.test(event);
   if (!WINTER_EVENT_RE.test(event) && !HEAT_EVENT_RE.test(event)) return false;
   return /warning|watch|advisory/i.test(event);
 }

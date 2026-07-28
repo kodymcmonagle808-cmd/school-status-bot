@@ -18,15 +18,28 @@ test('isSchoolImpactIssuance matches winter and heat watch/warning/advisory even
   assert.ok(isSchoolImpactIssuance({ event: 'Excessive Heat Warning', severity: 'Severe' }));
 });
 
+test('isSchoolImpactIssuance matches convective events at any severity', () => {
+  // The event name decides, not the severity: NWS rates most tornado products
+  // Extreme but not all, and a Tornado Watch commonly arrives as Severe. This
+  // used to make it announce or stay silent depending on that field alone.
+  assert.ok(isSchoolImpactIssuance({ event: 'Tornado Watch', severity: 'Severe' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Tornado Watch', severity: 'Moderate' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Tornado Warning', severity: 'Severe' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Severe Thunderstorm Watch', severity: 'Moderate' }));
+});
+
 test('isSchoolImpactIssuance includes Extreme severity regardless of event name', () => {
   assert.ok(isSchoolImpactIssuance({ event: 'Tornado Warning', severity: 'Extreme' }));
 });
 
-test('isSchoolImpactIssuance excludes summer noise and non-alert products', () => {
-  assert.ok(!isSchoolImpactIssuance({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
+test('isSchoolImpactIssuance excludes non-alert products and unrelated events', () => {
   assert.ok(!isSchoolImpactIssuance({ event: 'Flood Advisory', severity: 'Minor' }));
   assert.ok(!isSchoolImpactIssuance({ event: 'Special Weather Statement', severity: 'Moderate' }));
   assert.ok(!isSchoolImpactIssuance({ event: 'Winter Outlook', severity: 'Minor' })); // no watch/warning/advisory level
+  // Convective matching is scoped to watch/warning: NWS issues no advisory at
+  // that tier, and an outlook is not an alert.
+  assert.ok(!isSchoolImpactIssuance({ event: 'Severe Thunderstorm Outlook', severity: 'Minor' }));
   assert.ok(!isSchoolImpactIssuance(null));
 });
 
