@@ -76,7 +76,14 @@ registration**, `wrangler deploy`).
   itself; that is the collector's job),
   `decisionwatch.js` (live morning board), `stormrefresh.js`, `aqi.js`,
   `outlookaccuracy.js`, `recap.js`, `cleanup.js`, `greeter.js`,
-  `sourcehealth.js` (hourly silent-zero sweep).
+  `sourcehealth.js` (hourly silent-zero sweep), `weatheralerts.js` (NWS
+  issuance notices, plus a second cron pass that deletes each notice once its
+  alert ends). That cleanup pass is deliberately separate from the scan: the
+  scan returns early during quiet hours and skips any guild with no active
+  alert, which is exactly the state a just-expired alert leaves behind. The
+  posted message id lives in the `nws_alerts_seen:<guild>` entry it already
+  writes, so tracking it costs one extra write per notice actually posted and
+  nothing per scan.
 - `src/session.js` — "is school actually in session?", the gate storm mode,
   `decisionwatch.js`, and `headsup.js` consult before alerting. Pure and
   one-sided: `noSchoolReason()` returns a reason only when the bot is

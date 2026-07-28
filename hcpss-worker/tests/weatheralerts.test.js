@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { isSchoolImpactIssuance, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
-import { pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET } from '../src/weatheralerts.js';
+import {
+  pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET,
+  maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET
+} from '../src/weatheralerts.js';
 import worker from '../src/index.js';
 
 test('isSchoolImpactIssuance matches winter and heat watch/warning/advisory events', () => {
@@ -51,14 +54,14 @@ test('pickNewAlerts announces unseen events and marks them until their end time'
     now
   );
   assert.equal(newAlerts.length, 1);
-  assert.equal(updatedSeen['Winter Storm Warning'], ends);
+  assert.equal(updatedSeen['Winter Storm Warning'].until, ends);
 });
 
 test('pickNewAlerts stays quiet for already-seen events and prunes expired ones', () => {
   const now = 1_000_000;
   const seen = {
-    'Winter Storm Warning': now + 1000, // still active — skip
-    'Old Advisory': now - 1000 // expired — pruned
+    'Winter Storm Warning': { until: now + 1000 }, // still active — skip
+    'Old Advisory': { until: now - 1000 } // expired — pruned
   };
   const { newAlerts, updatedSeen } = pickNewAlerts(
     [{ event: 'Winter Storm Warning', endsMs: now + 5000 }],
@@ -67,13 +70,56 @@ test('pickNewAlerts stays quiet for already-seen events and prunes expired ones'
   );
   assert.equal(newAlerts.length, 0);
   assert.ok(!('Old Advisory' in updatedSeen));
-  assert.equal(updatedSeen['Winter Storm Warning'], now + 1000);
+});
+
+test('pickNewAlerts carries a later end time forward when NWS extends an alert', () => {
+  // NWS routinely extends an alert rather than reissuing it. The notice must
+  // not be deleted at the original end time while the alert is still running,
+  // and the extension must not re-announce.
+  const now = 1_000_000;
+  const seen = { 'Winter Storm Warning': { until: now + 1000, msg: 'm1', ch: 'c1' } };
+  const { newAlerts, updatedSeen } = pickNewAlerts(
+    [{ event: 'Winter Storm Warning', endsMs: now + 90_000 }],
+    seen,
+    now
+  );
+  assert.equal(newAlerts.length, 0, 'an extension is not a new alert');
+  assert.equal(updatedSeen['Winter Storm Warning'].until, now + 90_000);
+  // The posted message is still tracked, so it can be deleted at the new time.
+  assert.equal(updatedSeen['Winter Storm Warning'].msg, 'm1');
+  assert.equal(updatedSeen['Winter Storm Warning'].ch, 'c1');
+});
+
+test('pickNewAlerts reports expired entries that still have a notice to delete', () => {
+  const now = 1_000_000;
+  const seen = {
+    'Tornado Watch': { until: now - 1, msg: 'm1', ch: 'c1' }, // over — delete
+    'Winter Storm Warning': { until: now + 5000, msg: 'm2', ch: 'c1' }, // live — keep
+    'Ancient Advisory': { until: now - 5000 } // over, but predates id tracking
+  };
+  // An empty alert list is the cleanup pass's "what aged out?" query.
+  const { expired, updatedSeen } = pickNewAlerts([], seen, now);
+  assert.deepEqual(expired, [{ event: 'Tornado Watch', msg: 'm1', ch: 'c1' }]);
+  assert.deepEqual(Object.keys(updatedSeen), ['Winter Storm Warning']);
+});
+
+test('pickNewAlerts still dedupes against entries written before id tracking', () => {
+  // Legacy shape: a bare expiry number with no message to delete.
+  const now = 1_000_000;
+  const { newAlerts, updatedSeen, expired } = pickNewAlerts(
+    [{ event: 'Winter Storm Warning', endsMs: now + 5000 }],
+    { 'Winter Storm Warning': now + 1000 },
+    now
+  );
+  assert.equal(newAlerts.length, 0, 'a legacy entry must still suppress a repost');
+  assert.equal(updatedSeen['Winter Storm Warning'].until, now + 5000);
+  assert.deepEqual(expired, []);
 });
 
 test('pickNewAlerts falls back to 24h when the alert has no end time', () => {
   const now = 1_000_000;
   const { updatedSeen } = pickNewAlerts([{ event: 'Winter Storm Watch', endsMs: 0 }], {}, now);
-  assert.equal(updatedSeen['Winter Storm Watch'], now + 24 * 60 * 60 * 1000);
+  assert.equal(updatedSeen['Winter Storm Watch'].until, now + 24 * 60 * 60 * 1000);
 });
 
 test('formatIssuanceLines renders window and headline', () => {
@@ -237,6 +283,182 @@ test('/push-data does not run the issuance scan when no weather zone changed', a
   await Promise.all(waited);
 
   assert.ok(!kv.map.has('nws_alerts_seen:g1'), 'a roads-only push must not sweep guilds for alerts');
+});
+
+// --- Deleting a notice once its alert is over ---
+
+// A cleanup-gate minute. Deliberately at 2 AM UTC (9 PM ET) so these also
+// prove cleanup ignores the posting quiet hours: an alert ending late at night
+// must still get its notice removed.
+function cleanupNow(minuteOffset = 0) {
+  const d = new Date(Date.parse('2026-07-29T02:00:00Z'));
+  d.setUTCMinutes(CLEANUP_MINUTE_OFFSET + minuteOffset);
+  return d;
+}
+
+test('isNoticeCleanupMinute gates to one minute every quarter hour', () => {
+  assert.ok(isNoticeCleanupMinute(CLEANUP_MINUTE_OFFSET));
+  assert.ok(isNoticeCleanupMinute(CLEANUP_MINUTE_OFFSET + 15));
+  assert.ok(isNoticeCleanupMinute(CLEANUP_MINUTE_OFFSET + 45));
+  assert.ok(!isNoticeCleanupMinute(CLEANUP_MINUTE_OFFSET + 1));
+  assert.ok(!isNoticeCleanupMinute(CLEANUP_MINUTE_OFFSET + 7));
+});
+
+test('an expired notice is deleted and its entry dropped', async (t) => {
+  const now = cleanupNow();
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Watch': { until: now.getTime() - 60_000, msg: 'msg-1', ch: 'chan-1' }
+    })
+  });
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const result = await maybeCleanupExpiredAlertNotices(env, now);
+  assert.equal(result.deleted, 1);
+  assert.deepEqual(deletes, ['https://discord.com/api/v10/channels/chan-1/messages/msg-1']);
+  // Nothing left to track, so the key goes away entirely.
+  assert.ok(!kv.map.has('nws_alerts_seen:g1'));
+});
+
+test('a still-active alert keeps its notice', async (t) => {
+  const now = cleanupNow();
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Watch': { until: now.getTime() + 3_600_000, msg: 'msg-1', ch: 'chan-1' }
+    })
+  });
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const result = await maybeCleanupExpiredAlertNotices(env, now);
+  assert.equal(result.deleted, 0);
+  assert.deepEqual(deletes, []);
+  assert.ok(kv.map.has('nws_alerts_seen:g1'), 'a live alert must keep its entry');
+});
+
+test('a notice covering several alerts survives until the last one ends', async (t) => {
+  const now = cleanupNow();
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+
+  // One message announced both; the watch is over but the warning runs to 6 AM.
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Watch': { until: now.getTime() - 60_000, msg: 'msg-1', ch: 'chan-1' },
+      'Winter Storm Warning': { until: now.getTime() + 3_600_000, msg: 'msg-1', ch: 'chan-1' }
+    })
+  });
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const result = await maybeCleanupExpiredAlertNotices(env, now);
+  assert.equal(result.deleted, 0, 'deleting now would take the live warning with it');
+  assert.deepEqual(deletes, []);
+});
+
+test('an already-deleted notice (404) is treated as cleaned up', async (t) => {
+  const now = cleanupNow();
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 404 }));
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Watch': { until: now.getTime() - 60_000, msg: 'msg-1', ch: 'chan-1' }
+    })
+  });
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const result = await maybeCleanupExpiredAlertNotices(env, now);
+  assert.equal(result.deleted, 1);
+  assert.ok(!kv.map.has('nws_alerts_seen:g1'), 'a message already gone must not be retried forever');
+});
+
+test('a failed delete keeps the entry so the next pass retries', async (t) => {
+  const now = cleanupNow();
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 500 }));
+
+  const seen = JSON.stringify({
+    'Tornado Watch': { until: now.getTime() - 60_000, msg: 'msg-1', ch: 'chan-1' }
+  });
+  const kv = kvStub({ guild_index: JSON.stringify(['g1']), 'nws_alerts_seen:g1': seen });
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const result = await maybeCleanupExpiredAlertNotices(env, now);
+  assert.equal(result.deleted, 0);
+  assert.equal(kv.map.get('nws_alerts_seen:g1'), seen, 'the message id must not be lost');
+});
+
+test('off-gate minutes do no work at all', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw new Error('an off-gate cleanup must not touch Discord');
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Watch': { until: 1, msg: 'msg-1', ch: 'chan-1' }
+    })
+  });
+  const reads = [];
+  const origGet = kv.get.bind(kv);
+  kv.get = async (key) => { reads.push(key); return origGet(key); };
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+  const result = await maybeCleanupExpiredAlertNotices(env, cleanupNow(1));
+  assert.equal(result.deleted, 0);
+  assert.equal(reads.length, 0, 'the clock gate must come before any KV read');
+});
+
+test('a posted notice records where it landed so it can be deleted later', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-07T15:00:00Z') });
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (String(url).includes('/messages') && init && init.method === 'POST') {
+      return new Response(JSON.stringify({ id: 'posted-99' }), { status: 200 });
+    }
+    return new Response('{}', { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  // Severity Extreme is what carries a Tornado Watch past
+  // isSchoolImpactIssuance — the event classifier itself only covers winter
+  // and heat events, so a Severe-rated tornado watch never posts at all.
+  const zoneBody = JSON.stringify({
+    features: [{
+      properties: {
+        event: 'Tornado Watch', status: 'Actual', severity: 'Extreme',
+        ends: '2026-01-07T22:00:00Z'
+      }
+    }]
+  });
+  await worker.fetch(pushRequest('s3cret', { zones: { MDC027: zoneBody } }), env, ctx);
+  await Promise.all(waited);
+
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  assert.equal(seen['Tornado Watch'].msg, 'posted-99');
+  assert.equal(seen['Tornado Watch'].ch, 'chan-1');
+  assert.equal(seen['Tornado Watch'].until, Date.parse('2026-01-07T22:00:00Z'));
 });
 
 test('/status-hook requires the shared secret and acks a valid ping', async (t) => {

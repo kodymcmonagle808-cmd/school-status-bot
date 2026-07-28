@@ -14,7 +14,7 @@ import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
 import { maybeUpdateDecisionWatch, maybeCleanupDecisionWatch } from './decisionwatch.js';
 import { maybeSendAqiAlerts } from './aqi.js';
-import { maybeSendWeatherAlertNotices } from './weatheralerts.js';
+import { maybeSendWeatherAlertNotices, maybeCleanupExpiredAlertNotices } from './weatheralerts.js';
 import { clearWeatherAlertCache } from './weather.js';
 import { clearDistrictCache } from './districts.js';
 import { clearNewsSignalCache } from './crosscheck.js';
@@ -341,6 +341,7 @@ export default {
         ['outlookaccuracy', () => maybeTrackOutlookAccuracy(env)],
         ['aqi', () => maybeSendAqiAlerts(env)],
         ['weatheralerts', () => maybeSendWeatherAlertNotices(env)],
+        ['weatheralerts', () => maybeCleanupExpiredAlertNotices(env)],
         ['recap', () => maybeSendYearRecap(env)],
         ['cleanup', () => maybeCleanupDepartedGuilds(env)],
         ['serverwatch', () => maybeWatchServerMembership(env)],
