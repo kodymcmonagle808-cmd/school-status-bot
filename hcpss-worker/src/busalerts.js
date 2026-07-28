@@ -14,7 +14,7 @@
 // single-building announcements ("X Elementary closed for a water main
 // break"); this watcher surfaces those as low-key posts without pings.
 
-import { HCPSS_NEWS_FEED_URL, parseRssItems } from './crosscheck.js';
+import { getRecentNewsItems } from './crosscheck.js';
 import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
@@ -24,10 +24,7 @@ import { notifySchoolSubscribers } from './schoolsubs.js';
 const LAST_POSTED_KEY = 'bus_alert_last_ms';
 const ACTIVITY_LAST_KEY = 'activity_alert_last_ms';
 const SCHOOL_NOTICE_LAST_KEY = 'school_notice_last_ms';
-const FETCH_TIMEOUT_MS = 8000;
 const MAX_POSTS_PER_RUN = 2;
-
-const UA = 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)';
 
 // Only scan while buses actually run and families are awake.
 export const BUS_ALERT_START_HOUR = 5;
@@ -85,31 +82,24 @@ export function isBusScanMinute(etStr) {
   return Number.isFinite(m) && m % 10 === SCAN_MINUTE_OFFSET;
 }
 
-function timeoutSignal(ms) {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms);
-  return controller.signal;
-}
-
 // Scans the news feed (once per 10 minutes, on the clock-gate minute) and
 // posts any new transportation alerts to every opted-in guild. Never throws.
+//
+// The items come from the same pushed cache the cross-check reads, not a fetch
+// of this module's own. This used to download news.hcpss.org/feed/ directly on
+// every scan — ~102 fetches a day of a feed the Apps Script collector already
+// downloads every 5 minutes and pushes on change, which is exactly the
+// Worker-side scheduled polling that belongs up in the collector. A null read
+// means the items are genuinely unknown (unreadable feed, or a cache entry
+// predating stored items), and must not be classified as "no news".
 export async function maybeSendBusAlerts(env, now = new Date()) {
   if (!env || !env.STATUS_KV) return { sent: 0 };
   const etStr = getEasternTimeStr(now);
   if (!isWithinBusAlertHours(etStr)) return { sent: 0 };
   if (!isBusScanMinute(etStr)) return { sent: 0 };
 
-  let items = [];
-  try {
-    const r = await fetch(HCPSS_NEWS_FEED_URL, {
-      headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml, text/xml' },
-      signal: timeoutSignal(FETCH_TIMEOUT_MS)
-    });
-    if (!r.ok) throw new Error('News feed fetch failed ' + r.status);
-    items = parseRssItems(await r.text());
-  } catch {
-    return { sent: 0 };
-  }
+  const items = await getRecentNewsItems(env);
+  if (!Array.isArray(items) || !items.length) return { sent: 0 };
 
   // parseRssItems returns newest first; post oldest first so channels read in order.
   const lastBusMs = Number(await env.STATUS_KV.get(LAST_POSTED_KEY) || 0);

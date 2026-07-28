@@ -162,6 +162,83 @@ test('/nws-hook validates the zone and clears its alert cache', async (t) => {
   await Promise.all(waited);
 });
 
+// The regression this guards: shouldScanThisMinute drops the cron scan to once
+// an hour whenever NWS_HOOK_SECRET is set, because the push path is supposed to
+// force a scan the instant a zone's alerts move. /nws-hook did; /push-data
+// didn't when the collector moved to it, so a pushed warning sat in KV
+// unannounced for up to 59 minutes while showing up immediately on any manual
+// check. If the forced scan is ever dropped again, this fails.
+function pushRequest(token, body) {
+  return new Request('https://worker.example/push-data', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
+test('/push-data announces a pushed NWS alert instead of waiting for the hourly scan', async (t) => {
+  // 10:00 AM ET — inside the 6 AM-10 PM posting window, so the run is not
+  // silently skipped by quiet hours on whatever clock CI happens to have.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-07T15:00:00Z') });
+
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response('{}', { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const zoneBody = JSON.stringify({
+    features: [{
+      properties: {
+        event: 'Winter Storm Warning',
+        status: 'Actual',
+        severity: 'Severe',
+        ends: '2026-01-08T12:00:00Z'
+      }
+    }]
+  });
+
+  const resp = await worker.fetch(pushRequest('s3cret', { zones: { MDC027: zoneBody } }), env, ctx);
+  assert.equal(resp.status, 200);
+  assert.deepEqual((await resp.json()).written, ['weather:MDC027']);
+
+  await Promise.all(waited);
+
+  const announcement = posts.find(p => p.url.includes('/channels/chan-1/messages'));
+  assert.ok(announcement, `no issuance notice posted; calls: ${posts.map(p => p.url).join(', ')}`);
+  assert.match(announcement.body.embeds[0].title, /Winter Storm Warning/);
+  // Marked as seen, so a re-push of the same alert stays quiet.
+  assert.ok(kv.map.has('nws_alerts_seen:g1'));
+});
+
+test('/push-data does not run the issuance scan when no weather zone changed', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-07T15:00:00Z') });
+  t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  const waited = [];
+  const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
+  const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
+
+  const roads = '<Incidents></Incidents>';
+  const resp = await worker.fetch(pushRequest('s3cret', { bodies: { roads } }), env, ctx);
+  assert.equal(resp.status, 200);
+  await Promise.all(waited);
+
+  assert.ok(!kv.map.has('nws_alerts_seen:g1'), 'a roads-only push must not sweep guilds for alerts');
+});
+
 test('/status-hook requires the shared secret and acks a valid ping', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
   const waited = [];

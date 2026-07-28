@@ -89,10 +89,24 @@ export function countFeedItems(xml) {
   return (String(xml || '').match(/<item[\s>]/g) || []).length;
 }
 
-// Fetches (or reads from cache) both the operating-status signal and the raw
-// feed item count. Returns { signal, feedItems } — feedItems is -1 when the
-// feed could not be read at all, which is what separates "nothing to report"
-// from "the feed is broken".
+// The parsed items ride along in the cache so busalerts.js can classify them
+// without a fetch of its own. Bounded because this value is rewritten on every
+// real feed change: the recency filter already caps the list at 12 hours of
+// posts, and 3900 is what a Discord embed description can show anyway.
+export const MAX_CACHED_NEWS_ITEMS = 20;
+const MAX_CACHED_ITEM_CHARS = 3900;
+
+export function capNewsItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .slice(0, MAX_CACHED_NEWS_ITEMS)
+    .map(i => ({ text: String(i.text || '').slice(0, MAX_CACHED_ITEM_CHARS), atMs: i.atMs }));
+}
+
+// Fetches (or reads from cache) the operating-status signal, the raw feed item
+// count, and the parsed recent items. feedItems is -1 when the feed could not
+// be read at all, which is what separates "nothing to report" from "the feed is
+// broken"; items is null on entries cached before it was stored, which tells
+// the caller to fall back rather than read an empty list as "no news".
 async function loadNewsFeed(env) {
   if (env && env.STATUS_KV) {
     try {
@@ -103,7 +117,8 @@ async function loadNewsFeed(env) {
           return {
             signal: parsed.signal || null,
             // Entries cached before feedItems existed report "unknown".
-            feedItems: typeof parsed.feedItems === 'number' ? parsed.feedItems : null
+            feedItems: typeof parsed.feedItems === 'number' ? parsed.feedItems : null,
+            items: Array.isArray(parsed.items) ? parsed.items : null
           };
         }
       }
@@ -112,6 +127,7 @@ async function loadNewsFeed(env) {
 
   let signal = null;
   let feedItems = -1;
+  let items = [];
   try {
     const r = await fetch(HCPSS_NEWS_FEED_URL, {
       headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml, text/xml' },
@@ -120,23 +136,37 @@ async function loadNewsFeed(env) {
     if (!r.ok) throw new Error('News feed fetch failed ' + r.status);
     const xml = await r.text();
     feedItems = countFeedItems(xml);
-    signal = summarizeNewsItems(parseRssItems(xml));
+    items = capNewsItems(parseRssItems(xml));
+    signal = summarizeNewsItems(items);
   } catch {
-    return { signal: null, feedItems: -1 };
+    return { signal: null, feedItems: -1, items: null };
   }
 
   if (env && env.STATUS_KV) {
     await env.STATUS_KV.put(
       NEWS_CACHE_KEY,
-      JSON.stringify({ at: Date.now(), signal, feedItems }),
+      JSON.stringify({ at: Date.now(), signal, feedItems, items }),
       { expirationTtl: contextCacheTtl(env, NEWS_CACHE_TTL_SECONDS) }
     ).catch(() => {});
   }
-  return { signal, feedItems };
+  return { signal, feedItems, items };
 }
 
 export async function getNewsSignal(env) {
   return (await loadNewsFeed(env)).signal;
+}
+
+// Recent feed items for the news watchers, newest first — from the pushed
+// cache when the collector has stored one, otherwise a live fetch. Returns
+// null when the items are genuinely unknown (a cache entry written before
+// items were stored, or an unreadable feed), which callers must not treat as
+// "no news". Never throws.
+export async function getRecentNewsItems(env) {
+  try {
+    return (await loadNewsFeed(env)).items;
+  } catch {
+    return null;
+  }
 }
 
 // For source health: >0 healthy, 0 parsed-but-empty, -1 unreachable,

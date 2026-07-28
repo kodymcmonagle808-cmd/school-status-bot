@@ -29,7 +29,7 @@ import {
   parsePgcpsAlert,
   summarizeDistrictEntries
 } from './districts.js';
-import { parseRssItems, summarizeNewsItems, countFeedItems } from './crosscheck.js';
+import { parseRssItems, summarizeNewsItems, countFeedItems, capNewsItems } from './crosscheck.js';
 import { extractAccumulationLines } from './snowfall.js';
 import { summarizeWeatherAlerts, DEFAULT_NWS_ZONE } from './weather.js';
 import { parseChartIncidents } from './roads.js';
@@ -95,12 +95,16 @@ export function parseDistrictsFromBodies(bodies, nowMs = Date.now()) {
 }
 
 // HCPSS news RSS. feedItems separates "nothing to report" from "feed broken",
-// so an unreadable body returns null rather than a zero count.
+// so an unreadable body returns null rather than a zero count. The parsed
+// items ride along because busalerts.js classifies them directly — without
+// them in the cache it fetched this same feed itself every 10 minutes.
 export function parseNewsFromBody(xml, nowMs = Date.now()) {
   if (typeof xml !== 'string' || !xml) return null;
+  const items = capNewsItems(parseRssItems(xml, nowMs));
   return {
-    signal: summarizeNewsItems(parseRssItems(xml, nowMs)),
-    feedItems: countFeedItems(xml)
+    signal: summarizeNewsItems(items),
+    feedItems: countFeedItems(xml),
+    items
   };
 }
 

@@ -33,6 +33,14 @@ registration**, `wrangler deploy`).
   per change, no delete, no outbound fetch, and no second copy of any parser.
   Adding a source here means adding a `parse*FromBody` and a `store()` call;
   the live fetcher stays untouched as the dead-collector fallback.
+  **A pushed source that drives an alert must also trigger that alert here.**
+  Writing the cache is only half the job: `weatheralerts.js` drops its cron
+  scan to once an hour (`shouldScanThisMinute`) whenever `NWS_HOOK_SECRET` is
+  set, on the assumption that the push path announces new alerts the moment
+  they land — so `/push-data` forces `maybeSendWeatherAlertNotices` when it
+  writes a `weather:*` zone. When the collector moved off `/nws-hook` that
+  forced scan was left behind, and pushed warnings sat unannounced for up to
+  59 minutes while appearing instantly on any manual check.
 - `src/actionlog.js` — the "everything the Worker did" log, at **zero KV cost
   and zero Discord noise**. Every line is a prefixed `console.log` (persisted
   by `observability.logs`, queryable from Apps Script via `showLogs()`) and
@@ -54,7 +62,9 @@ registration**, `wrangler deploy`).
 - `src/interactions.js` — routes slash commands/components/modals to
   `commands.js`, `panel.js`, `panelcomponents.js`, `setupflow.js`, `modals.js`.
 - Watchers (all cron-driven, all per-guild-toggleable): `digest.js`,
-  `headsup.js` (7 PM + evening escalation), `busalerts.js` (news feed),
+  `headsup.js` (7 PM + evening escalation), `busalerts.js` (classifies the
+  pushed news items from `news_signal_cache` — it must never fetch the feed
+  itself; that is the collector's job),
   `decisionwatch.js` (live morning board), `stormrefresh.js`, `aqi.js`,
   `outlookaccuracy.js`, `recap.js`, `cleanup.js`, `greeter.js`,
   `sourcehealth.js` (hourly silent-zero sweep).

@@ -152,12 +152,30 @@ export default {
       if (result.skipped && result.skipped.length) {
         logActionError(`Watcher push skipped (unparseable or unwritable): ${result.skipped.join(', ')}.`);
       }
+      // A zone's alert set moved, so run the issuance scan now. This is not
+      // optional: shouldScanThisMinute drops the cron scan to once an hour
+      // (minute :06) whenever NWS_HOOK_SECRET is set, on the assumption that
+      // the push path forces a scan the moment alerts change. /nws-hook did
+      // that; when the collector moved to /push-data the forced scan was left
+      // behind, so a freshly pushed warning sat in KV unannounced for up to 59
+      // minutes — visible in the embed the moment anyone pressed Check now,
+      // which is exactly how the gap showed up. Quiet hours and the per-guild
+      // seen map still apply inside, so forcing it can't double-post.
+      const weatherChanged = (result.written || []).some(n => n.startsWith('weather:'));
       // A changed feed can change what a posted storm embed should say; this
       // pass is power-threat-gated and edit-throttled, so it is nearly free on
       // a quiet day.
       ctx.waitUntil((async () => {
+        const now = new Date();
+        if (weatherChanged) {
+          try {
+            await maybeSendWeatherAlertNotices(env, now, { force: true });
+          } catch (e) {
+            console.error('Push-data weather notice scan failed', e);
+          }
+        }
         try {
-          await maybeRefreshStormEmbeds(env, new Date(), { force: true });
+          await maybeRefreshStormEmbeds(env, now, { force: true });
         } catch (e) {
           console.error('Push-data storm refresh failed', e);
         }
