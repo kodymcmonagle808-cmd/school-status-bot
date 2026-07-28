@@ -58,7 +58,16 @@ registration**, `wrangler deploy`).
   conversion watch (7:45–9:30 when a delay is announced), posting, history.
 - `src/embeds.js` — builds status embeds (HCPSS scraper or district source),
   layering optional context fields (weather, snowfall, outages, roads,
-  districts, outlook, cross-check, snow-day budget).
+  districts, outlook, cross-check, snow-day budget). The live storm sections
+  (outages, roads, districts) render under `hasStormAlert` — advisories and
+  watches included. **`stormrefresh.js`'s gate must stay aligned with that**,
+  or the embed shows a field nothing ever refreshes: it gated on
+  `hasPowerThreatAlert` (warning-level only), so under a Winter Weather
+  Advisory the outage line stayed frozen at the number from when the post went
+  out while a manual check showed the real one. The gate now also opens for
+  any storm alert once `MIN_OUTAGE_CUSTOMERS_FOR_REFRESH` customers are out —
+  the outage floor is what keeps a July heat advisory (a storm alert by event
+  name) from running the refresh cascade all day for nothing.
 - `src/interactions.js` — routes slash commands/components/modals to
   `commands.js`, `panel.js`, `panelcomponents.js`, `setupflow.js`, `modals.js`.
 - Watchers (all cron-driven, all per-guild-toggleable): `digest.js`,

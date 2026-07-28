@@ -87,7 +87,7 @@ test('no storm alert means no refresh and no slot claim', async (t) => {
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
-test('advisory-level winter alerts do not trigger the refresh', async (t) => {
+test('advisory-level winter alerts with nobody without power do not trigger the refresh', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store);
   kv.store.set('weather_alerts_cache', JSON.stringify([
@@ -198,11 +198,14 @@ test('forced refresh without a power threat (and no recent refresh) is skipped',
   assert.equal(kv.store.has('last_storm_refresh_slot'), false);
 });
 
-test('advisory-level cached alerts do not qualify a forced refresh', async (t) => {
+test('a quiet heat advisory does not qualify a forced refresh', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store);
-  // An advisory is an active alert but not a power threat — the July
-  // heat-advisory failure mode that used to burn the KV write budget.
+  // A heat advisory is a storm alert by event name but not a power threat,
+  // and with nobody without power there is nothing for a refresh to update.
+  // This is the July failure mode that used to burn the KV write budget, and
+  // the outage floor is what still holds it shut now that the gate opens for
+  // advisory-level alerts.
   kv.store.set('weather_alerts_cache', JSON.stringify([
     { event: 'Heat Advisory', severity: 'Moderate', endsMs: 0 }
   ]));
@@ -313,6 +316,96 @@ test('cron refresh still requires an active power threat', async (t) => {
   const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
   assert.equal(result.updated, 0);
   assert.equal(patches.length, 0);
+});
+
+// The gap these cover: the embed renders its live storm sections under
+// hasStormAlert (advisories and watches included), but this module used to
+// refresh only under hasPowerThreatAlert (warning-level only). Under a Winter
+// Weather Advisory the embed therefore showed an outage line that nothing ever
+// updated — frozen at the number from when the post went out, while a manual
+// check showed the real one.
+function seedOutages(store, out) {
+  store.set('bge_outage_cache', JSON.stringify({
+    at: Date.now(),
+    summary: { stormMode: true, counties: { Howard: { out, served: 130377 } } }
+  }));
+}
+
+test('an advisory with real outages now refreshes the embed', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: 0 }
+  ]));
+  seedOutages(kv.store, 4200);
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 1);
+  assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
+});
+
+test('an advisory with only a handful of outages stays below the floor', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: 0 }
+  ]));
+  // Routine baseline outages, not a storm — must not open the gate.
+  seedOutages(kv.store, 120);
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+  assert.equal(kv.store.has('last_storm_refresh_slot'), false);
+});
+
+test('outages alone, with no storm alert at all, do not open the gate', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store, { storm: false });
+  seedOutages(kv.store, 9000);
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, new Date('2026-01-15T12:07:00Z'), { force: true });
+  // Without a storm alert the embed shows no storm sections, so there is
+  // nothing to refresh however many customers are out.
+  assert.equal(result.updated, 0);
+  assert.equal(patches.length, 0);
+});
+
+test('the cron path opens for an advisory with real outages too', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store);
+  kv.store.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: 0 }
+  ]));
+  seedOutages(kv.store, 4200);
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+  const result = await maybeRefreshStormEmbeds(env, GATE_NOW);
+  assert.equal(result.updated, 1);
+  assert.match(patches[0], /channels\/chan-g1\/messages\/msg-g1$/);
 });
 
 test('guilds with all storm sections disabled are skipped', async (t) => {

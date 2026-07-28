@@ -229,6 +229,42 @@ export async function getCountyOutagePicture(env, countyName) {
   };
 }
 
+// Total customers out across every county the bot serves, read from cache
+// only. This backs a gate (stormrefresh.js), so it must never fetch: reaching
+// out would turn a cheap "is anything happening?" probe into an outbound call
+// on every push. A miss reads as 0 — unknown data must not trigger work.
+// Overlapping territories are merged per county rather than summed twice.
+// Never throws.
+export async function getCachedOutageTotal(env) {
+  if (!env || !env.STATUS_KV) return 0;
+
+  const readSummary = async (key) => {
+    try {
+      const raw = await env.STATUS_KV.get(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' && 'summary' in parsed ? parsed.summary : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const byUtility = { bge: await readSummary(OUTAGE_CACHE_KEY) };
+  for (const [id, u] of Object.entries(KUBRA_UTILITIES)) {
+    byUtility[id] = await readSummary(u.cacheKey);
+  }
+
+  let total = 0;
+  for (const [county, utilities] of Object.entries(COUNTY_UTILITIES)) {
+    const summaries = utilities
+      .map(id => ({ label: id, summary: byUtility[id] }))
+      .filter(s => s.summary);
+    const entry = combineCountyOutages(summaries, county);
+    if (entry) total += entry.out;
+  }
+  return total;
+}
+
 // All non-BGE utility summaries, for the /outages command's full listing.
 export async function getKubraUtilitySummaries(env) {
   const results = [];

@@ -5,12 +5,12 @@
 // existing message in place — no new posts, no pings. Advisory-level events
 // don't trigger it.
 
-import { getActiveWeatherAlerts, getCachedWeatherAlerts, hasPowerThreatAlert } from './weather.js';
+import { getActiveWeatherAlerts, getCachedWeatherAlerts, hasPowerThreatAlert, hasStormAlert, DEFAULT_NWS_ZONE } from './weather.js';
 import { getDistrictMeta } from './districts.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { discordFetch } from './discord.js';
-import { clearOutageCaches } from './outages.js';
+import { clearOutageCaches, getCachedOutageTotal } from './outages.js';
 import { clearRoadsCache } from './roads.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
@@ -34,6 +34,50 @@ export function slotTimestampMs(slotVal) {
   const n = Number(forced ? slotVal.slice(1) : slotVal);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return n * (forced ? FORCED_INTERVAL_MS : REFRESH_INTERVAL_MS);
+}
+
+// Customers out (across every county the bot serves) below which a storm-level
+// alert alone is not worth a refresh. The gate below opens for any storm
+// alert, and "storm" matches heat events by name — without a floor, a July
+// heat advisory would run the refresh cascade all day for nothing, which is
+// the exact regression the warning-only gate was introduced to stop. The
+// collector buckets outage counts to the nearest 100, so anything under a few
+// hundred is noise it would never have pushed anyway.
+export const MIN_OUTAGE_CUSTOMERS_FOR_REFRESH = 500;
+
+// Is a refresh worth doing for this alert set?
+//
+// The embed renders its live storm sections (outages, roads, districts) under
+// hasStormAlert — advisories and watches included — but this module used to
+// refresh only under hasPowerThreatAlert, which is warning-level only. Under a
+// Winter Weather Advisory the embed therefore showed an outage line that
+// nothing ever updated: it stayed frozen at the number from when the post went
+// out, while a manual check showed the real one. Aligning the gate with what
+// the embed actually renders is the fix; the outage floor is what keeps the
+// wider gate from costing anything on a quiet advisory day.
+export function refreshWarranted(alerts, outageCustomers) {
+  if (hasPowerThreatAlert(alerts)) return true;
+  return hasStormAlert(alerts) && Number(outageCustomers || 0) >= MIN_OUTAGE_CUSTOMERS_FOR_REFRESH;
+}
+
+// The alerts for every zone the bot currently serves: the caller's
+// already-read default zone plus each guild's primary district. `read` is the
+// zone reader — cache-only for the forced path (a push-triggered gate must
+// never fetch), live-with-cache for the cron path, which is the fallback
+// detector when the collector is dead.
+async function alertsForServedZones(env, guildIds, read, defaultAlerts) {
+  const alerts = [...defaultAlerts];
+  const zones = new Set();
+  for (const gid of guildIds) {
+    const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
+    // The default zone is already in `alerts` — a guild following Howard must
+    // not cost a second read of it.
+    if (meta && meta.nwsZone && meta.nwsZone !== DEFAULT_NWS_ZONE) zones.add(meta.nwsZone);
+  }
+  for (const zone of zones) {
+    alerts.push(...(await read(env, zone)));
+  }
+  return alerts;
 }
 
 async function readGuildIds(env) {
@@ -77,51 +121,36 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
 
   let guildIds = null;
   if (force) {
-    // Cache-only power-threat probe (the weather cache only exists while
-    // alerts are active, and hook-armed freshness keeps it current): a
-    // quiet-day ping costs a couple of KV reads and no fetches, edits, or
-    // cache churn.
-    let threat = hasPowerThreatAlert(await getCachedWeatherAlerts(env));
-    if (!threat) {
+    // Cache-only probe (the weather cache only exists while alerts are active,
+    // and hook-armed freshness keeps it current): a quiet-day ping costs a
+    // couple of KV reads and no fetches, edits, or cache churn. A
+    // warning-level threat in the default zone short-circuits before any
+    // guild config is read.
+    const defaultAlerts = await getCachedWeatherAlerts(env);
+    let warranted = hasPowerThreatAlert(defaultAlerts);
+    if (!warranted) {
       guildIds = await readGuildIds(env);
-      const zones = new Set();
-      for (const gid of guildIds) {
-        const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
-        if (meta && meta.nwsZone) zones.add(meta.nwsZone);
-      }
-      for (const zone of zones) {
-        if (hasPowerThreatAlert(await getCachedWeatherAlerts(env, zone))) {
-          threat = true;
-          break;
-        }
-      }
+      const alerts = await alertsForServedZones(env, guildIds, getCachedWeatherAlerts, defaultAlerts);
+      warranted = refreshWarranted(alerts, await getCachedOutageTotal(env));
     }
-    if (!threat && now.getTime() - slotTimestampMs(lastSlot) > TRAILING_REFRESH_MS) {
+    if (!warranted && now.getTime() - slotTimestampMs(lastSlot) > TRAILING_REFRESH_MS) {
       return { updated: 0 };
     }
   } else {
-    // Cron path: refresh only while a power-threatening storm is active.
-    // Weather is checked before claiming the slot so quiet days cost no
-    // writes, and the first storm-time tick still runs the refresh.
-    const alerts = await getActiveWeatherAlerts(env);
-    let threat = hasPowerThreatAlert(alerts);
+    // Cron path: same gate, but reading alerts live-with-cache — this is the
+    // fallback detector when the collector is dead. Weather is checked before
+    // claiming the slot so quiet days cost no writes, and the first storm-time
+    // tick still runs the refresh.
+    const defaultAlerts = await getActiveWeatherAlerts(env);
+    let warranted = hasPowerThreatAlert(defaultAlerts);
 
-    if (!threat) {
-      // No threat in the default (Howard) zone: probe the zones of guilds whose
-      // primary district is a neighboring county.
+    if (!warranted) {
+      // No warning-level threat in the default (Howard) zone: widen to the
+      // zones of guilds whose primary district is a neighboring county.
       guildIds = await readGuildIds(env);
-      const zones = new Set();
-      for (const gid of guildIds) {
-        const meta = getDistrictMeta(getEffectiveConfig(await getConfig(env, gid)).primary_district);
-        if (meta && meta.nwsZone) zones.add(meta.nwsZone);
-      }
-      for (const zone of zones) {
-        if (hasPowerThreatAlert(await getActiveWeatherAlerts(env, zone))) {
-          threat = true;
-          break;
-        }
-      }
-      if (!threat) return { updated: 0 };
+      const alerts = await alertsForServedZones(env, guildIds, getActiveWeatherAlerts, defaultAlerts);
+      warranted = refreshWarranted(alerts, await getCachedOutageTotal(env));
+      if (!warranted) return { updated: 0 };
     }
   }
   await env.STATUS_KV.put(SLOT_KEY, slot);
