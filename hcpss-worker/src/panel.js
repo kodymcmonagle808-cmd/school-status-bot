@@ -23,6 +23,45 @@ import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
 
 const BAR_SEGMENTS = 20;
 
+// How many stored lines the Recent Logs page shows, and the ceiling their block
+// is allowed to occupy.
+//
+// Both numbers exist because this page had neither. It joined all 25 stored
+// lines into one description; a week of `✅ HCPSS status check posted … [Jump to
+// Message](…)` entries runs ~200 characters each, so the description measured
+// 4,949 against Discord's 4,096 limit. Discord rejects the whole interaction
+// response with a 400, which surfaces to the user as "the application did not
+// respond" — a size overflow that looks exactly like a dead Worker. Clamp
+// anything built from stored lines, and leave room for the surrounding copy.
+export const PANEL_LOG_DISPLAY_LINES = 12;
+const PANEL_LOG_BLOCK_LIMIT = 3400;
+
+// Formats stored `[time] message` lines for an embed description, hard-capped
+// on both count and characters. Exported for tests.
+export function renderPanelLogLines(logs, { maxLines = PANEL_LOG_DISPLAY_LINES, maxChars = PANEL_LOG_BLOCK_LIMIT } = {}) {
+  const stored = Array.isArray(logs) ? logs : [];
+  if (!stored.length) return '*Nothing recorded yet.*';
+
+  const lines = stored.slice(0, maxLines).map(line => {
+    const match = String(line).match(/^\[(.*?)\] (.*)$/);
+    return match ? `\`[${match[1]}]\` ${match[2]}` : String(line);
+  });
+
+  const kept = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length + 1 > maxChars) break;
+    kept.push(line);
+    used += line.length + 1;
+  }
+  if (!kept.length) return '*Log lines too long to display — see the System Logs page.*';
+  // Count against everything stored, not just the slice: lines dropped by the
+  // line cap are as hidden as lines dropped by the character cap.
+  const hidden = stored.length - kept.length;
+  if (hidden > 0) kept.push(`*…${hidden} older line(s) — see the System Logs page.*`);
+  return kept.join('\n');
+}
+
 function filledCount(value, max, segments = BAR_SEGMENTS) {
   return Math.min(segments, Math.max(0, Math.round((value / max) * segments)));
 }
@@ -1121,7 +1160,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     return { embeds: [embed], components };
   }
 
-  // Dashboard sub-page: Recent Logs
+  // Dashboard sub-page: Recent Logs — the status posts this server got. Every
+  // other action the Worker takes goes to Cloudflare's log store and is read
+  // back on the System Logs page, which is a link away in the actions row.
   if (page === 'dashboard_logs') {
     const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
     let logs = [];
@@ -1130,26 +1171,24 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       try { logs = JSON.parse(rawLogs); } catch {}
     }
 
-    const logsContent = logs.length ? logs.map(line => {
-      const match = line.match(/^\[(.*?)\] (.*)$/);
-      if (match) return `\`[${match[1]}]\` ${match[2]}`;
-      return line;
-    }).join('\n') : '*No logs yet.*';
+    const logsContent = renderPanelLogLines(logs);
 
     const embed = {
       title: '📋 Control Panel — Recent Logs',
       color: 0x9B59B6,
       description:
-        `### 📋 Recent Logs (last 25)\n` +
-        `${logsContent}`,
+        `### 📋 Status Posts & Alerts (most recent ${PANEL_LOG_DISPLAY_LINES})\n` +
+        `${logsContent}\n\n` +
+        `*Everything else the Worker did — watcher posts, config edits, failures — is on the* ` +
+        `***System Logs*** *page below.*`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
       getNavBarRow('dashboard_logs'),
       actionSelectRow([
-        { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📜' } },
-        { label: 'Clear Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
+        { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📜' } },
+        { label: 'Clear Logs', value: 'panel_clear_logs', description: 'Wipe this list (the web log is unaffected)', emoji: { name: '🗑️' } }
       ])
     ];
 
@@ -1248,9 +1287,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { label: 'Refresh Panel', value: 'panel_refresh', description: 'Refresh the control panel embed in the log channel', emoji: { name: '🔄' } },
       { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
       { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
-      { label: 'View Full Logs', value: 'panel_logs', description: 'Show all 25 stored log entries (private)', emoji: { name: '📋' } },
+      { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📋' } },
       { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
-      { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Permanently wipe the log history for this guild', emoji: { name: '🗑️' } }
+      { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Wipe the panel list (the web log is unaffected)', emoji: { name: '🗑️' } }
     ], '⚡ Quick Actions...'),
     {
       type: 1,
@@ -1277,6 +1316,16 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
 // Appends a line to the guild's KV log history and refreshes (or re-posts) the
 // persistent control panel message in the log channel.
+//
+// This is the *control panel* logger, not a general one: a line costs a KV
+// write plus a Discord edit, against 1,000 writes a day. It is reserved for the
+// two things a server's staff must see in Discord — a status check, and a
+// failure that stops updates reaching members (a broken alert channel, a source
+// gone quiet). Everything else the Worker does goes to Cloudflare's log store
+// through logAction() and is read back on the System Logs page, which is
+// unlimited, free, and survives the panel render failing. If the panel needs
+// re-rendering but the event doesn't belong in that list, use
+// refreshPanelMessage() below.
 export async function postLog(env, logChannelId, message, stats = {}, guildId = '') {
   const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
   const panelMsgIdKey = guildId ? `log_panel_message_id:${guildId}` : 'log_panel_message_id';
@@ -1377,6 +1426,14 @@ export async function postLog(env, logChannelId, message, stats = {}, guildId = 
       console.error('Failed to post control panel:', err);
     }
   }
+}
+
+// Re-renders the persistent panel message in place without adding a log line:
+// for changes the dashboard *displays* (an override taking effect, setup
+// finishing) whose record belongs in Cloudflare's log store instead of KV.
+// Costs one KV read and one Discord edit — no write.
+export function refreshPanelMessage(env, logChannelId, guildId = '') {
+  return postLog(env, logChannelId, null, {}, guildId);
 }
 
 // Applies a config change from a panel select-menu interaction and saves it.

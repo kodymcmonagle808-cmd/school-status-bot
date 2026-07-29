@@ -8,7 +8,7 @@ import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToD
 import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
-import { postLog } from './panel.js';
+import { refreshPanelMessage } from './panel.js';
 import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
 import { getCalendarEvent, putCalendarEvent, deleteCalendarEvent, listCalendarEvents } from './calendar.js';
@@ -24,6 +24,8 @@ import { toggleSubscriber, getSubscribers } from './subscriptions.js';
 import { getSchoolSubscriptions, setSchoolSubscription, clearSchoolSubscription, MAX_SCHOOL_NAME_LENGTH } from './schoolsubs.js';
 import { getGreetedUserIds } from './greeter.js';
 import { TERMS_MD, PRIVACY_MD } from './legal.js';
+import { buildLogsUrl } from './workerlogs.js';
+import { logAction } from './actionlog.js';
 
 export async function runCalendarCommand(env, guildId = '') {
   const checkedAt = new Date();
@@ -300,10 +302,13 @@ export async function runMyDataViewCommand(env, guildId) {
         `• **School subscriptions**: ${schoolSubCount} user(s) registered a school via \`/myschool\`\n` +
         `• **Welcomed members**: ${greetedCount} user ID(s) (so nobody is greeted twice)\n` +
         `• **Custom calendar events**: ${calendarCount}\n` +
-        `• **System log lines**: ${logCount}\n` +
+        `• **Panel log lines**: ${logCount} (the control panel's Recent Logs list)\n` +
         `• **Bookkeeping**: last posted message/channel IDs, last check timestamps\n\n` +
         'No message content, names, or other personal information is stored.\n' +
-        'Use `/mydata delete` to erase all of it, or simply remove the bot — departed servers are purged automatically within a day.',
+        'Use `/mydata delete` to erase all of it, or simply remove the bot — departed servers are purged automatically within a day.\n' +
+        'Separately, the bot writes an operational log of its own actions (what it posted, which settings ' +
+        'changed and by whom) to its hosting platform, readable on the panel\'s **System Logs** page. ' +
+        'Those lines age out on the platform\'s schedule in a few days and `/mydata delete` does not reach them.',
       timestamp: new Date().toISOString(),
       footer: { text: 'School Status' }
     }],
@@ -583,40 +588,43 @@ export async function runHealthCommand(env, guildId = '') {
   };
 }
 
-export async function runLogsCommand(env, guildId = '') {
-  const checkedAt = new Date();
-  const logKey = guildId ? `panel_logs:${guildId}` : 'panel_logs';
-  const rawLogs = await env.STATUS_KV.get(logKey);
-  let logs = [];
-  if (rawLogs) {
-    try {
-      logs = JSON.parse(rawLogs);
-    } catch (e) {
-      logs = [];
-    }
-  }
+// System Logs hands out a link to the web page rather than an embed. The old
+// version pasted the 25-line KV history into one description; on a normal week
+// that measured ~4,950 characters against Discord's 4,096 limit, so Discord
+// rejected the response and the click read as "the application did not
+// respond". The page also shows far more than the panel's 25 lines, because it
+// reads Cloudflare's log store directly (see workerlogs.js) instead of the KV
+// history — and that costs no KV at all.
+export async function runLogsCommand(env, guildId = '', invokerId = null) {
+  const ownerId = String(env.OWNER_ID || '').trim();
+  const isOwner = !!ownerId && invokerId === ownerId;
+  const url = await buildLogsUrl(env, { guildId, all: isOwner });
 
-  const embed = {
-    title: '📋 School Status - System Logs',
-    color: 10181046, // Purple
-    timestamp: checkedAt.toISOString(),
-    footer: { text: 'School Status' }
-  };
-
-  if (logs.length === 0) {
-    embed.description = 'No system logs recorded yet.';
-  } else {
-    embed.description = logs.map(line => {
-      const match = line.match(/^\[(.*?)\] (.*)$/);
-      if (match) {
-        return `\`[${match[1]}]\` ${match[2]}`;
-      }
-      return line;
-    }).join('\n');
+  if (!url) {
+    return {
+      content: '⚠️ The System Logs page is not configured on this Worker ' +
+        '(`PUBLIC_BASE_URL` is unset). Recent activity is still listed on the panel\'s **Recent Logs** page.',
+      flags: EPHEMERAL_FLAG
+    };
   }
 
   return {
-    embeds: [embed],
+    embeds: [{
+      title: '📋 School Status — System Logs',
+      color: 10181046, // Purple
+      description:
+        'Everything the Worker did, live from Cloudflare\'s log store — status checks, watcher posts, ' +
+        'config edits, and any failure.\n\n' +
+        `**[Open System Logs](${url})**\n\n` +
+        `The page filters by level and window (2h → 48h). ${isOwner ? 'Owner link: every server.' : 'Scoped to this server.'} ` +
+        'The link expires in 30 minutes — open this action again for a fresh one.',
+      timestamp: new Date().toISOString(),
+      footer: { text: 'School Status · the link is the credential — treat it like one' }
+    }],
+    components: [{
+      type: 1,
+      components: [{ type: 2, style: 5, label: 'Open System Logs', emoji: { name: '📋' }, url }]
+    }],
     flags: EPHEMERAL_FLAG
   };
 }
@@ -757,8 +765,7 @@ export async function runEventsCommand(body, env) {
 
     await putCalendarEvent(env, guildId, dateStr, eventStr);
 
-    const cfg = getEffectiveConfig(await getConfig(env, guildId));
-    await postLog(env, cfg.log_channel_id, `Calendar event added: **${dateStr}** - *${eventStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    logAction(`Calendar event added: **${dateStr}** - *${eventStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
 
     await updateInteractionOriginal(env, body.token, {
       content: `✅ Added calendar event for **${dateStr}**: *${eventStr}*`,
@@ -790,8 +797,7 @@ export async function runEventsCommand(body, env) {
 
     await deleteCalendarEvent(env, guildId, dateStr);
 
-    const cfg = getEffectiveConfig(await getConfig(env, guildId));
-    await postLog(env, cfg.log_channel_id, `Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    logAction(`Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
 
     await updateInteractionOriginal(env, body.token, {
       content: `✅ Removed calendar event for **${dateStr}** (was: *${existing}*)`,
@@ -908,7 +914,10 @@ export async function runOverrideCommand(body, env) {
   });
 
   const cfg = getEffectiveConfig(await getConfig(env, guildId));
-  await postLog(env, cfg.log_channel_id, `Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`, {}, guildId);
+  logAction(`Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`, { guildId });
+  // Unlike `/override clear`, this path posts no status check, so the panel's
+  // "Active Override" line only becomes true if we re-render it here.
+  await refreshPanelMessage(env, cfg.log_channel_id, guildId);
 
   await updateInteractionOriginal(env, body.token, {
     content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,
@@ -1008,7 +1017,7 @@ export async function handlePanelRefresh(body, env) {
   const config = getEffectiveConfig(stored);
   const logChannelId = config.log_channel_id;
   if (logChannelId) {
-    await postLog(env, logChannelId, null, {}, guildId);
+    await refreshPanelMessage(env, logChannelId, guildId);
   }
   await updateInteractionOriginal(env, body.token, {
     content: '✅ Control panel updated.',
@@ -1026,11 +1035,12 @@ export async function handlePanelClearLogs(body, env) {
   await env.STATUS_KV.put(logKey, JSON.stringify([]));
 
   if (logChannelId) {
-    await postLog(env, logChannelId, null, {}, guildId);
+    await refreshPanelMessage(env, logChannelId, guildId);
   }
 
   await updateInteractionOriginal(env, body.token, {
-    content: '✅ System logs cleared.',
+    content: '✅ Cleared the panel\'s Recent Logs list. The **System Logs** page is unaffected — ' +
+      'it reads Cloudflare\'s log store, which the bot cannot erase.',
     embeds: []
   });
 }

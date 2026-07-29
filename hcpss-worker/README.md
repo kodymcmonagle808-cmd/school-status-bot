@@ -36,6 +36,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 - Adds staff-only `/post-status` to publish a fresh public status from Discord.
 - Adds staff-only `/config` to set the alert channel, log channel, staff role, and emergency ping roles.
 - Logs scheduled checks, manual triggers, and `/post-status` runs to the configured log channel.
+- System Logs page: the control panel's **Open System Logs** action hands out a private link to `GET /logs`, which reads the Worker's action log straight out of Cloudflare's log store and renders it as a web page — filterable by level (actions / everything / errors only) and window (2h–48h), with far more history than the panel's 25-line list and no KV cost at all. The link is signed and expires 30 minutes after it is issued; a server's link shows that server's lines plus Worker-wide ones, and the owner's shows every server. Needs `PUBLIC_BASE_URL` (in `wrangler.toml`) plus a `CF_API_TOKEN` carrying **Account → Workers Observability → Read**; without that permission the page says exactly which one is missing. This replaced pasting the log into an embed, which broke outright once the stored lines exceeded Discord's 4,096-character description limit.
 - Adds `Last checked` timing to public and private embeds.
 - Posts an error embed if the HCPSS status page cannot be fetched.
 - Daily cleanup: once a day, checks each configured server for bot membership and automatically purges all stored KV data (config, logs, subscribers, calendar events, greeter records) for servers the bot has been removed from, as promised in the Privacy Policy.
@@ -56,7 +57,7 @@ This Worker checks the HCPSS status page, posts the current status to Discord, a
 
 Add these repository secrets under GitHub repo `Settings` > `Secrets and variables` > `Actions`:
 
-- `CF_API_TOKEN`
+- `CF_API_TOKEN` — needs Workers Scripts + KV edit for the deploy, **Account Analytics → Read** for the KV usage gauge, and **Workers Observability → Read** for the System Logs page
 - `CF_ACCOUNT_ID`
 - `DISCORD_BOT_TOKEN`
 - `DISCORD_CHANNEL_ID`

@@ -29,6 +29,7 @@ import { maybeWatchServerMembership } from './serverwatch.js';
 import { maybeSweepSourceHealth } from './sourcehealth.js';
 import { TERMS_MD, PRIVACY_MD, legalPageResponse } from './legal.js';
 import { statusPageResponse } from './statuspage.js';
+import { LOGS_PATH, logsPageResponse } from './workerlogs.js';
 import { recordWatcherError } from './watcherhealth.js';
 import { isHeartbeatMinute } from './timeutil.js';
 
@@ -74,6 +75,16 @@ export default {
       }
       if (url.pathname === '/privacy') {
         return legalPageResponse('Privacy Policy', PRIVACY_MD);
+      }
+      if (url.pathname === LOGS_PATH) {
+        // System Logs, read live from Cloudflare's log store. Access is the
+        // signed link the control panel mints; no KV is touched either way.
+        try {
+          return await logsPageResponse(env, url);
+        } catch (e) {
+          console.error('Logs page failed:', e);
+          return new Response('Log page unavailable.', { status: 500 });
+        }
       }
       if (url.pathname === '/health') {
         // Operational snapshot on top of the liveness check: how many servers

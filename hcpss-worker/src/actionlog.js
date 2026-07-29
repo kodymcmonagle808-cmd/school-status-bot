@@ -4,23 +4,24 @@
 // There are exactly two places a human-readable record of the Worker's actions
 // lives, and neither is a chat message:
 //
-//   1. The control panel's Recent Activity list. postLog() in panel.js keeps a
-//      25-line history array in KV and re-renders the panel message in place.
-//      That is the user-facing log, and it is the only thing the bot puts in
-//      the log channel.
-//   2. console.log with an ACT| prefix. Workers Logs (observability.logs in
+//   1. console.log with an ACT| prefix. Workers Logs (observability.logs in
 //      wrangler.toml) already persists these, they cost nothing, and they are
-//      queryable from outside Cloudflare — which is what gas/showLogs() reads.
-//      This is the authoritative record: it is written the instant the action
-//      happens and survives the panel render failing, the guild having no log
-//      channel, or Discord being down entirely.
+//      queryable from outside Cloudflare — which is what the control panel's
+//      System Logs page (src/workerlogs.js) and gas/showLogs() both read. This
+//      is the authoritative record of everything the Worker did: it is written
+//      the instant the action happens and survives the panel render failing,
+//      the guild having no log channel, or Discord being down entirely.
+//   2. The control panel's Recent Activity list. postLog() in panel.js keeps a
+//      25-line history array in KV and re-renders the panel message in place.
+//      A line there costs a KV write against a 1,000/day cap, so it is
+//      reserved for what a server's staff must see in Discord itself: status
+//      posts, and failures that stop updates reaching members.
 //
-// This module owns (2). It deliberately sends nothing to Discord. An earlier
-// version buffered lines and flushed them as a batched code-block message into
-// each guild's log channel; that turned the log channel into a firehose of
-// `07:20:02 · ✅ HCPSS status check posted …` lines restating what the control
-// panel above them already said. The panel is the log now — if a line belongs
-// in front of a human, it goes through postLog().
+// This module owns (1) and is where every other action goes. It deliberately
+// sends nothing to Discord. An earlier version buffered lines and flushed them
+// as a batched code-block message into each guild's log channel; that turned
+// the log channel into a firehose of `07:20:02 · ✅ HCPSS status check posted …`
+// lines restating what the control panel above them already said.
 
 const LEVELS = new Set(['info', 'error', 'detail']);
 
@@ -35,7 +36,10 @@ function writeConsole(level, guildId, text) {
 
 // Records one action worth a human's attention: a post that went out, a status
 // change, a configuration edit. `guildId` scopes the line to a single server;
-// omit it for Worker-wide actions. The level is what showLogs() filters on.
+// omit it for Worker-wide actions. Scoping matters for more than tidiness — the
+// System Logs page shows a guild only its own lines plus the unscoped ones, so
+// a line about server A tagged with no guild is visible to server B.
+// The level is what the page's filters and showLogs() key off.
 // Never throws — logging must never be able to break the thing it is logging.
 export function logAction(message, { guildId = '', level = 'info' } = {}) {
   const text = String(message || '').trim();

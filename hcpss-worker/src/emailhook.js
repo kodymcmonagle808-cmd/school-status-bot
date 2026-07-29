@@ -8,7 +8,7 @@
 
 import { discordFetch } from './discord.js';
 import { getConfig, getEffectiveConfig } from './config.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 
 // Dedupe window for Gmail message ids. The Apps Script only re-sends when a
 // worker ack was lost, so a week of memory is plenty.
@@ -77,7 +77,7 @@ export async function handleEmailHook(env, payload) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`Email notice post failed for guild ${gid}: ${resp.status}`);
       }

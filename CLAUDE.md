@@ -42,17 +42,41 @@ registration**, `wrangler deploy`).
   forced scan was left behind, and pushed warnings sat unannounced for up to
   59 minutes while appearing instantly on any manual check.
 - `src/actionlog.js` — the "everything the Worker did" log, at **zero KV cost
-  and zero Discord noise**. Every line is a prefixed `console.log` (persisted
-  by `observability.logs`, queryable from Apps Script via `showLogs()`) and
+  and zero Discord noise**. Every line is a prefixed `console.log`
+  (`ACT|<iso>|<level>|<guild>|<text>`, persisted by `observability.logs`) and
   goes nowhere else; `logAction`/`logActionError`/`logDetail` differ only in
-  the level tag `showLogs()` filters on. **This module must never send a
-  Discord message.** It used to batch its lines into the log channel, which
-  buried the control panel under a running restatement of it. The only
-  user-facing log is the control panel's Recent Activity list, written by
-  `postLog()` in `panel.js` (which also emits the `logAction` line). Never use
-  `postLog` as a general logger — it costs two KV writes a call and exists to
-  re-render the control panel; routine plumbing (a stored feed, a cache write)
-  uses `logDetail` and stays out of KV and Discord both.
+  the level tag the readers filter on. **This module must never send a Discord
+  message.** It used to batch its lines into the log channel, which buried the
+  control panel under a running restatement of it. **This is where a new log
+  line goes by default.** `postLog()` in `panel.js` is the *control panel*
+  logger, not a general one: it costs a KV write plus a Discord edit per call
+  against a 1,000-write day, so it is reserved for status posts and failures
+  that stop updates reaching members (broken alert channel, source gone
+  quiet). Everything else — watcher posts, config edits, calendar edits,
+  announcements, plumbing — is `logAction`/`logDetail`. When the panel needs
+  re-rendering but the event doesn't belong in that list, use
+  `refreshPanelMessage()` (a render with no log line, so no write).
+  Always pass `guildId` for anything server-specific: the System Logs page
+  shows a guild its own lines plus the *unscoped* ones, so an unscoped line
+  about server A is visible to server B.
+- `src/workerlogs.js` — the System Logs web page (`GET /logs`), which reads
+  those ACT lines back out of Cloudflare's log store through the Workers
+  Observability API (the same query `gas/showLogs()` runs) and renders them,
+  filterable by level and window. It exists because the panel used to paste
+  its stored 25-line KV history into an embed description with no clamp: at
+  ~200 characters per status-check line that measured **4,949 against
+  Discord's 4,096 limit**, so Discord rejected the interaction response with a
+  400 and the click read as *"the application did not respond"* — an overflow
+  that looks exactly like a dead Worker. **Anything built from a stored list
+  must be clamped** (`renderPanelLogLines` in `panel.js` caps both lines and
+  characters). Access is a signed 30-minute link the panel mints
+  (`buildLogsUrl`), because the link *is* the credential — there's no login,
+  so it must stay short-lived, ephemeral in Discord, and `no-store`/noindex on
+  the way out. Needs `PUBLIC_BASE_URL` (a `wrangler.toml` var — interactions
+  arrive over Discord's webhook, so the origin can't be inferred at click
+  time) and a `CF_API_TOKEN` with **Workers Observability → Read**, which is a
+  *different* permission from the Account Analytics one `kvanalytics.js` uses;
+  the page names the missing one rather than reading as "logs are broken".
 - `src/check.js` — core check-and-post loop (`doCheckAndPost`): schedule
   matching, storm mode (15-min ticks, 4:30–7:30 AM + 10 AM–2 PM ET),
   conversion watch (7:45–9:30 when a delay is announced), posting, history.

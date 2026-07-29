@@ -15,7 +15,7 @@ import {
 import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 import { noSchoolReason } from './session.js';
 
 const SLOT_KEY = 'last_decision_watch_slot';
@@ -211,7 +211,7 @@ export async function maybeUpdateDecisionWatch(env) {
         messageId: posted.id
       }));
       updated++;
-      await postLog(env, cfg.log_channel_id, `🌅 Decision Watch board posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+      logAction(`🌅 Decision Watch board posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
     } catch (e) {
       console.error(`Decision watch failed for guild ${gid}:`, e);
     }

@@ -26,7 +26,7 @@ import { getChartIncidents, formatRoadLines } from './roads.js';
 import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 import { noSchoolReason, addDaysYmd } from './session.js';
 
 export const HEADS_UP_TIME = '19:00';
@@ -228,7 +228,7 @@ export async function maybeSendHeadsUp(env) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `🌙 Night-before ${isEscalation ? 'outlook escalation' : 'heads-up'} (${ctx.outlook.level}) posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`🌙 Night-before ${isEscalation ? 'outlook escalation' : 'heads-up'} (${ctx.outlook.level}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`Heads-up post failed for guild ${gid}: ${resp.status}`);
       }

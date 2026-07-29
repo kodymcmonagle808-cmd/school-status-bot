@@ -18,7 +18,7 @@ import { getRecentNewsItems } from './crosscheck.js';
 import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 import { notifySchoolSubscribers } from './schoolsubs.js';
 
 const LAST_POSTED_KEY = 'bus_alert_last_ms';
@@ -200,7 +200,7 @@ export async function maybeSendBusAlerts(env, now = new Date()) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `📰 News watcher posted ${embeds.length} item(s) to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`📰 News watcher posted ${embeds.length} item(s) to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`News watcher post failed for guild ${gid}: ${resp.status}`);
       }

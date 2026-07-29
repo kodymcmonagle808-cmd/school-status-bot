@@ -15,7 +15,6 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { getDistrictMeta } from './districts.js';
 import { getActiveWeatherAlerts, isSchoolImpactIssuance, DEFAULT_NWS_ZONE } from './weather.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
 import { logAction } from './actionlog.js';
 
 const SEEN_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
@@ -210,7 +209,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           // up. Never let that turn into a thrown error.
           console.error(`NWS issuance id record failed for guild ${gid}:`, e);
         }
-        await postLog(env, cfg.log_channel_id, `⚠️ NWS issuance notice (${newAlerts.map(a => a.event).join(', ')}) posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`⚠️ NWS issuance notice (${newAlerts.map(a => a.event).join(', ')}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`NWS issuance post failed for guild ${gid}: ${resp.status}`);
       }

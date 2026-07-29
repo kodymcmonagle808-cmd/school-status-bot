@@ -23,7 +23,8 @@ import { delay, formatScheduleTimeLabel } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
 import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride } from './config.js';
 import { splitEmbeds } from './embeds.js';
-import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload, postLog } from './panel.js';
+import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload } from './panel.js';
+import { logAction } from './actionlog.js';
 import { isGuildBlocked, setGuildBlocked } from './blocklist.js';
 import { doCheckAndPost } from './check.js';
 import {
@@ -143,7 +144,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       return interactionResponse(payload);
     }
     if (action === 'panel_logs') {
-      const payload = await runLogsCommand(env, guildId);
+      const payload = await runLogsCommand(env, guildId, getInvokerId(body));
       return interactionResponse(payload);
     }
     if (action === 'panel_kv_debug') {
@@ -181,7 +182,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   }
 
   if (customId === 'panel_logs') {
-    const payload = await runLogsCommand(env, guildId);
+    const payload = await runLogsCommand(env, guildId, getInvokerId(body));
     return interactionResponse(payload);
   }
 
@@ -247,7 +248,9 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     storedCfg.check_schedule = [...DEFAULT_CHECK_SCHEDULE];
     await setConfig(env, guildId, storedCfg);
     const invokerId = getInvokerId(body);
-    await postLog(env, getEffectiveConfig(storedCfg).log_channel_id, `🗓️ Check schedule reset to defaults${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    // The type-7 response below re-renders the panel message itself, so this
+    // needs no panel write — only the Cloudflare log line.
+    logAction(`🗓️ Check schedule reset to defaults${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
     const payload = await buildControlPanelPayload(env, guildId, storedCfg);
     return jsonResponse({ type: 7, data: payload });
   }
@@ -307,7 +310,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     await setConfig(env, guildId, storedCfg);
 
     const invokerId = getInvokerId(body);
-    await postLog(env, getEffectiveConfig(storedCfg).log_channel_id, `🗓️ Check time added: **${formatScheduleTimeLabel(newTime)}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    logAction(`🗓️ Check time added: **${formatScheduleTimeLabel(newTime)}**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
 
     await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
     const payload = await buildControlPanelPayload(env, guildId, storedCfg, 'config_schedule');
@@ -500,7 +503,6 @@ export function handleTestAlert(body, env, ctx, guildId) {
       const stored = await getConfig(env, guildId);
       const config = getEffectiveConfig(stored);
       const alertChannelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
-      const logChannelId = config.log_channel_id;
 
       if (!alertChannelId) {
         await updateInteractionOriginal(env, body.token, {
@@ -592,13 +594,7 @@ export function handleTestAlert(body, env, ctx, guildId) {
         throw new Error(`Discord API error posting test message: ${postResp.status} ${errTxt}`);
       }
 
-      await postLog(
-        env,
-        logChannelId,
-        `🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}>.`,
-        {},
-        guildId
-      );
+      logAction(`🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}>.`, { guildId });
 
       await updateInteractionOriginal(env, body.token, {
         content: `✅ **Diagnostic Test Successful!**\n\n` +

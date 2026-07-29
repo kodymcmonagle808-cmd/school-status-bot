@@ -10,7 +10,7 @@
 
 import { discordFetch } from './discord.js';
 import { getConfig, getEffectiveConfig } from './config.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 
 const KNOWN_GUILDS_KEY = 'known_guilds';
 
@@ -81,7 +81,7 @@ export async function maybeWatchServerMembership(env, now = new Date()) {
       headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: lines.join('\n'), allowed_mentions: { parse: [] } })
     }).catch(() => {});
-    await postLog(env, channelId, `🌐 Server membership change: +${joined.length} / −${left.length}.`, {}, env.DISCORD_GUILD_ID || '');
+    logAction(`🌐 Server membership change: +${joined.length} / −${left.length}.`, { guildId: env.DISCORD_GUILD_ID || '' });
   }
 
   return { changes: joined.length + left.length };

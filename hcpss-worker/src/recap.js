@@ -5,7 +5,7 @@
 import { getEasternTimeStr, matchesScheduleTime, formatYmdNY } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel } from './history.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 
 export const RECAP_MONTH_DAY = '06-15';
 export const RECAP_TIME = '12:00';
@@ -103,7 +103,7 @@ export async function maybeSendYearRecap(env) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `🎓 School year recap posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`🎓 School year recap posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`Recap post failed for guild ${gid}: ${resp.status}`);
       }

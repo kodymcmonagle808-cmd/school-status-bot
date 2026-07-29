@@ -1,6 +1,6 @@
 # Privacy Policy for School Status
 
-**Last Updated: July 21, 2026**
+**Last Updated: July 29, 2026**
 
 This Privacy Policy explains what information the "School Status" Discord bot ("the Bot," "we," "us," or "our") collects, how it is used, and your rights regarding that information.
 
@@ -40,6 +40,7 @@ We do not sell, rent, or share collected data with third parties for advertising
 
 - Configuration data (Guild ID, Channel ID, Role ID) is stored in a secure database associated with the Bot's hosting infrastructure.
 - Reasonable technical measures are used to protect stored data from unauthorized access.
+- The Bot also writes an operational log of its own actions — what it posted, to which channel, and which configuration settings were changed (including the Discord ID of the person who changed one). These lines are held by the hosting platform for a few days and then discarded automatically. Your server's staff can read them from the control panel's **System Logs** page, which is reachable only through a private link that expires 30 minutes after it is issued and shows no other server's activity.
 - No system can be guaranteed 100% secure; data is stored and processed at your own risk.
 
 ## 4. Data Retention and Deletion
@@ -47,6 +48,7 @@ We do not sell, rent, or share collected data with third parties for advertising
 - Server configuration data is retained only as long as the Bot remains in your server.
 - If the Bot is removed from a server, associated configuration data is deleted automatically or within a reasonable period afterward.
 - Server admins may erase all of their server's data at any time with the `/mydata delete` command, or request manual deletion through the Bot's support channel.
+- The operational log described in Section 3 is the one exception: those lines age out on the hosting platform's own schedule and cannot be deleted on request. They record the Bot's actions, not message content.
 
 ## 5. Third-Party Services
 

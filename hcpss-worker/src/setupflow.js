@@ -10,7 +10,8 @@ import {
   createGuildRole
 } from './discord.js';
 import { getConfig, setConfig } from './config.js';
-import { postLog } from './panel.js';
+import { refreshPanelMessage } from './panel.js';
+import { logAction } from './actionlog.js';
 
 export function handleSetupCommand(body, env, guildId, setupDone) {
   if (setupDone === 'true') {
@@ -206,7 +207,9 @@ export function handleSetupFinalize(body, env, ctx, guildId, selectedChannelId, 
       await setConfig(env, guildId, config);
       await env.STATUS_KV.put(setupDoneKey, 'true');
 
-      await postLog(env, selectedChannelId, 'Bot setup completed successfully. Notification roles created and registered.', {}, guildId);
+      logAction('Bot setup completed successfully. Notification roles created and registered.', { guildId });
+      // This is what publishes the control panel message for the first time.
+      await refreshPanelMessage(env, selectedChannelId, guildId);
 
       const roleList = createdRoles.map(r => `• **${r.name}**: <@&${r.id}>`).join('\n');
       await updateInteractionOriginal(env, body.token, {

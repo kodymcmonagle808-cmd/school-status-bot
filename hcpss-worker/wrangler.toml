@@ -37,6 +37,12 @@ DISCORD_GUILD_ID = ""
 # Same id as the STATUS_KV binding below, as a plain var so the Worker can
 # query Cloudflare's KV analytics for the owner Worker Updates usage gauge.
 KV_NAMESPACE_ID = "f0ecd441d95a4cbca41035b619a94705"
+# Where this Worker answers, used to build the absolute System Logs link the
+# control panel hands out (`GET /logs`). Interactions arrive over Discord's
+# webhook, not this hostname, so it can't be inferred at click time. If the
+# Worker moves to a custom domain, change it here — a wrong value produces a
+# dead link, and an empty one makes the panel say the page isn't configured.
+PUBLIC_BASE_URL = "https://hcpss-worker.kodymcmonagle808.workers.dev"
 
 [[kv_namespaces]]
 binding = "STATUS_KV"

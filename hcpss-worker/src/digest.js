@@ -17,7 +17,7 @@ import {
 import { getCalendarEvent } from './calendar.js';
 import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 
 export const DIGEST_TIME = '6:00';
 
@@ -143,7 +143,7 @@ export async function maybeSendMorningDigests(env) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `🌅 Morning digest posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`🌅 Morning digest posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`Digest post failed for guild ${gid}: ${resp.status}`);
       }

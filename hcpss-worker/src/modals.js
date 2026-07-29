@@ -11,12 +11,12 @@ import {
 import {
   getConfig,
   setConfig,
-  getEffectiveConfig,
   canUseCommands,
   canConfigure,
   setOverride
 } from './config.js';
-import { buildControlPanelPayload, postLog } from './panel.js';
+import { buildControlPanelPayload } from './panel.js';
+import { logAction } from './actionlog.js';
 import { doCheckAndPost } from './check.js';
 import { putCalendarEvent, deleteCalendarEvent } from './calendar.js';
 
@@ -76,9 +76,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
       });
     }
 
-    const stored = await getConfig(env, guildId);
-    const cfg = getEffectiveConfig(stored);
-    await postLog(env, cfg.log_channel_id, `📣 Announcement posted to <#${channelId}>${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    logAction(`📣 Announcement posted to <#${channelId}>${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
 
     return interactionResponse({
       content: `✅ Announcement posted to <#${channelId}>!`,
@@ -138,7 +136,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       await putCalendarEvent(env, guildId, dateStr, descStr);
       const invokerId = getInvokerId(body);
-      await postLog(env, config.log_channel_id, `📅 Calendar event added: **${dateStr}** - *${descStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+      logAction(`📅 Calendar event added: **${dateStr}** - *${descStr}*${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
       updated = true;
     } else {
       return interactionResponse({
@@ -153,7 +151,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       await deleteCalendarEvent(env, guildId, dateStr);
       const invokerId = getInvokerId(body);
-      await postLog(env, config.log_channel_id, `📅 Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+      logAction(`📅 Calendar event removed for date: **${dateStr}**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
       updated = true;
     } else {
       return interactionResponse({
@@ -190,8 +188,10 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     await setOverride(env, guildId, overrideObj);
 
     const invokerId = getInvokerId(body);
-    await postLog(env, config.log_channel_id, `🛠️ Status override enabled: **${statusLabel}** for **${daysParsed} days**${invokerId ? ` by <@${invokerId}>` : ''}.`, {}, guildId);
+    logAction(`🛠️ Status override enabled: **${statusLabel}** for **${daysParsed} days**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
 
+    // The check this kicks off posts the override and re-renders the panel, so
+    // the dashboard's "Active Override" line updates without a log write here.
     ctx.waitUntil(doCheckAndPost(env, { source: 'override-set', invokerId, guildId }));
 
     await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');

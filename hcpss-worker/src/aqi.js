@@ -9,7 +9,7 @@ import { getEasternTimeStr, formatYmdNY } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { getDistrictMeta } from './districts.js';
 import { discordFetch } from './discord.js';
-import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 import { contextCacheTtl } from './hookmode.js';
 
 const AQI_API_URL = 'https://airnowgovapi.com/reportingarea/get_state';
@@ -216,7 +216,7 @@ export async function maybeSendAqiAlerts(env, now = new Date()) {
       });
       if (resp.ok) {
         sent++;
-        await postLog(env, cfg.log_channel_id, `😷 Air quality alert (AQI ${worst.aqi}) posted to <#${cfg.alert_channel_id}>.`, {}, gid);
+        logAction(`😷 Air quality alert (AQI ${worst.aqi}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
       } else {
         console.error(`AQI alert post failed for guild ${gid}: ${resp.status}`);
       }

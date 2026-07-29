@@ -11,6 +11,7 @@ import { getConfig, getEffectiveConfig } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { postMessageToChannel, discordFetch } from './discord.js';
 import { postLog } from './panel.js';
+import { logAction } from './actionlog.js';
 import { getBlockedGuilds } from './blocklist.js';
 import { noSchoolReason } from './session.js';
 
@@ -561,7 +562,8 @@ export async function doCheckAndPost(env, options = {}) {
       if (guildSourceChanged && !builtStatus.isOverride) {
         const dmCount = await notifySubscribers(env, guildId, builtStatus.payload.embeds);
         if (dmCount > 0) {
-          await postLog(env, logChannelId, `🔔 Status change DM sent to ${dmCount} subscriber(s).`, {}, guildId);
+          // A detail of the post logged just above, not its own panel entry.
+          logAction(`🔔 Status change DM sent to ${dmCount} subscriber(s).`, { guildId });
         }
       }
 
