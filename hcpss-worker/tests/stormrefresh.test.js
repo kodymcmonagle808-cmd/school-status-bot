@@ -258,6 +258,41 @@ test('the trailing window closes: an hours-old slot no longer opens the gate', a
   assert.equal(patches.length, 0);
 });
 
+// The regression that made this module the top KV writer on the account: the
+// trailing window was measured from the last refresh, and every trailing
+// refresh rewrote the slot, so each one re-armed the window it was supposed to
+// be running out. One storm kept the cascade firing on every push forever.
+test('the trailing window runs out under a steady push stream after the storm ends', async (t) => {
+  const kv = makeKv();
+  seedCommon(kv.store); // storm active for the first refresh
+  seedGuild(kv.store, 'g1');
+  kv.store.set('guild_index', JSON.stringify(['g1']));
+
+  const patches = [];
+  mockFetch(t, patches);
+  const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token', DISCORD_GUILD_ID: '' };
+
+  const start = new Date('2026-01-15T12:00:00Z').getTime();
+  const armed = await maybeRefreshStormEmbeds(env, new Date(start), { force: true });
+  assert.equal(armed.updated, 1, 'the storm itself warrants a refresh');
+
+  // Storm over. The collector keeps pushing roads/news/outages every 5 minutes
+  // all day, as it does on any quiet day.
+  kv.store.set('weather_alerts_cache', JSON.stringify([]));
+  const during = [];
+  for (let i = 1; i <= 24; i++) {
+    const r = await maybeRefreshStormEmbeds(env, new Date(start + i * 5 * 60 * 1000), { force: true });
+    during.push(r.updated);
+  }
+
+  // The first hour of pushes still refreshes (that tail is deliberate — it
+  // clears the embed's storm sections). After that it must stop, and stay
+  // stopped no matter how many more pushes arrive.
+  assert.equal(during.slice(0, 12).every(n => n === 1), true, 'one-hour tail still refreshes');
+  assert.equal(during.slice(12).every(n => n === 0), true, 'tail closes and stays closed');
+  assert.equal(patches.length, 13, 'the storm refresh plus exactly one hour of tail');
+});
+
 test('a quiet-day forced refresh leaves the flagged data caches alone', async (t) => {
   const kv = makeKv();
   seedCommon(kv.store, { storm: false });

@@ -67,7 +67,22 @@ registration**, `wrangler deploy`).
   out while a manual check showed the real one. The gate now also opens for
   any storm alert once `MIN_OUTAGE_CUSTOMERS_FOR_REFRESH` customers are out —
   the outage floor is what keeps a July heat advisory (a storm alert by event
-  name) from running the refresh cascade all day for nothing.
+  name) from running the refresh cascade all day for nothing. **The floor is
+  set well below the measured quiet-day baseline** (BGE alone ran ~2,900
+  customers out across served counties on a clear day with no alert anywhere,
+  against a floor of 500), so today it stops nothing — only `hasStormAlert`
+  being false does. Re-measure before trusting it.
+  The forced path also keeps refreshing for `TRAILING_REFRESH_MS` after the
+  last **warranted** refresh, so the ping following an alert's expiry still
+  clears the embed's storm sections. That window must be anchored to the last
+  refresh that weather actually justified — never to the last refresh that
+  *ran*. It was anchored to the stored slot, which every trailing refresh
+  rewrites, so each one re-armed the window it was meant to be running out:
+  one Severe alert on 2026-07-28 left the cascade firing on every push for
+  days with no alert active, taking KV writes from ~300/day to ~900/day
+  against a 1,000/day cap. The armed-at timestamp now rides in the slot value
+  (`<bucket>@<ms>`) so it costs no extra key — compare the **bucket only**
+  when deduping, or the dedupe silently never matches.
 - `src/interactions.js` — routes slash commands/components/modals to
   `commands.js`, `panel.js`, `panelcomponents.js`, `setupflow.js`, `modals.js`.
 - Watchers (all cron-driven, all per-guild-toggleable): `digest.js`,

@@ -30,10 +30,37 @@ const TRAILING_REFRESH_MS = 60 * 60 * 1000;
 // value is missing or unparseable (treated as "no recent refresh").
 export function slotTimestampMs(slotVal) {
   if (typeof slotVal !== 'string' || !slotVal) return 0;
-  const forced = slotVal.startsWith('f');
-  const n = Number(forced ? slotVal.slice(1) : slotVal);
+  const bucket = slotVal.split('@')[0];
+  const forced = bucket.startsWith('f');
+  const n = Number(forced ? bucket.slice(1) : bucket);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return n * (forced ? FORCED_INTERVAL_MS : REFRESH_INTERVAL_MS);
+}
+
+// A stored slot is `<bucket>` (or `f<bucket>`) optionally followed by
+// `@<ms>` — the last time a refresh was actually *warranted* by live weather.
+//
+// That timestamp is why the suffix exists. The trailing window used to be
+// measured from the stored slot itself, i.e. from the last refresh that ran —
+// but every trailing refresh rewrites the slot, so each one re-armed the
+// window it was supposed to be running out. One storm therefore kept the
+// cascade firing on every push indefinitely: a single Severe alert on the
+// evening of 2026-07-28 left it refreshing every 5 minutes for days with no
+// alert active anywhere, which is what pushed KV writes from ~300/day to
+// ~900/day against a 1,000/day cap. Anchoring the window to the storm instead
+// of to the refresh makes it a real one-hour tail.
+//
+// Legacy values carry no `@`, so they fall back to the old meaning for at most
+// one hour and then self-correct.
+export function parseSlot(slotVal) {
+  const raw = typeof slotVal === 'string' ? slotVal : '';
+  const cut = raw.indexOf('@');
+  const bucket = cut === -1 ? raw : raw.slice(0, cut);
+  const armed = cut === -1 ? NaN : Number(raw.slice(cut + 1));
+  return {
+    bucket,
+    armedAt: Number.isFinite(armed) && armed > 0 ? armed : slotTimestampMs(bucket)
+  };
 }
 
 // Customers out (across every county the bot serves) below which a storm-level
@@ -116,10 +143,14 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
   const slot = force
     ? `f${Math.floor(now.getTime() / FORCED_INTERVAL_MS)}`
     : String(Math.floor(now.getTime() / REFRESH_INTERVAL_MS));
-  const lastSlot = await env.STATUS_KV.get(SLOT_KEY);
-  if (lastSlot === slot) return { updated: 0 };
+  // Compare the bucket only — the stored value also carries the armed-at
+  // timestamp, and comparing the raw string would never match, defeating the
+  // dedupe and refreshing on every single push.
+  const { bucket: lastBucket, armedAt: lastArmedAt } = parseSlot(await env.STATUS_KV.get(SLOT_KEY));
+  if (lastBucket === slot) return { updated: 0 };
 
   let guildIds = null;
+  let warranted = false;
   if (force) {
     // Cache-only probe (the weather cache only exists while alerts are active,
     // and hook-armed freshness keeps it current): a quiet-day ping costs a
@@ -127,13 +158,15 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
     // warning-level threat in the default zone short-circuits before any
     // guild config is read.
     const defaultAlerts = await getCachedWeatherAlerts(env);
-    let warranted = hasPowerThreatAlert(defaultAlerts);
+    warranted = hasPowerThreatAlert(defaultAlerts);
     if (!warranted) {
       guildIds = await readGuildIds(env);
       const alerts = await alertsForServedZones(env, guildIds, getCachedWeatherAlerts, defaultAlerts);
       warranted = refreshWarranted(alerts, await getCachedOutageTotal(env));
     }
-    if (!warranted && now.getTime() - slotTimestampMs(lastSlot) > TRAILING_REFRESH_MS) {
+    // Measured from the last *warranted* refresh, so the tail actually runs
+    // out. See parseSlot.
+    if (!warranted && now.getTime() - lastArmedAt > TRAILING_REFRESH_MS) {
       return { updated: 0 };
     }
   } else {
@@ -142,7 +175,7 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
     // claiming the slot so quiet days cost no writes, and the first storm-time
     // tick still runs the refresh.
     const defaultAlerts = await getActiveWeatherAlerts(env);
-    let warranted = hasPowerThreatAlert(defaultAlerts);
+    warranted = hasPowerThreatAlert(defaultAlerts);
 
     if (!warranted) {
       // No warning-level threat in the default (Howard) zone: widen to the
@@ -153,7 +186,10 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
       if (!warranted) return { updated: 0 };
     }
   }
-  await env.STATUS_KV.put(SLOT_KEY, slot);
+  // A warranted refresh re-arms the trailing window; a trailing one carries
+  // the original arm time forward untouched, so the tail expires an hour after
+  // the storm rather than an hour after the last push.
+  await env.STATUS_KV.put(SLOT_KEY, `${slot}@${warranted ? now.getTime() : lastArmedAt}`);
 
   // Only once a refresh is definitely happening: drop the data caches the
   // caller flagged as stale, so the rebuild fetches live. Clearing before
