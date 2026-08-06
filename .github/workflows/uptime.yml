@@ -22,6 +22,20 @@ name: Worker uptime check
 # Dedupe via a GitHub issue: the first failure opens "Worker health check
 # failing" and pings the log channel; repeat failures stay quiet while the
 # issue is open; the first healthy run closes it and posts a recovery line.
+#
+# Not every red run means the Worker is down. A run that lasts ~15 minutes and
+# is annotated "The job was not acquired by Runner of type hosted even after
+# multiple attempts" never got a machine: zero steps ran, so nothing probed
+# anything and no alert was sent. That is a GitHub capacity failure, not an
+# outage — check the run duration before believing the X. Healthy runs finish
+# in well under a minute, and nothing here can prevent the acquisition
+# failure, so the only response is to ignore it or re-run the job.
+#
+# The probe itself retries once before failing. A single unreachable /health
+# is far more often a transient egress or edge blip than a dead Worker, and
+# the alert path is loud (GitHub issue + Discord ping), so one bad sample must
+# not be enough to fire it — the same one-missed-tick tolerance already built
+# into MAX_CRON_AGE_MINUTES.
 
 on:
   workflow_dispatch:
@@ -43,27 +57,36 @@ jobs:
     steps:
       - name: Probe /health
         id: probe
+        timeout-minutes: 5
         run: |
-          set +e
-          BODY=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 "$HEALTH_URL")
-          CURL_RC=$?
-          set -e
           REASON=""
-          if [ "$CURL_RC" -ne 0 ]; then
-            REASON="Worker unreachable (curl exit ${CURL_RC})"
-          elif ! echo "$BODY" | jq -e '.ok == true' >/dev/null 2>&1; then
-            REASON="Worker responded but not healthy: $(echo "$BODY" | head -c 300)"
-          else
-            TICK=$(echo "$BODY" | jq -r '.lastCronTickAt // empty')
-            if [ -z "$TICK" ]; then
-              REASON="No cron heartbeat recorded yet (lastCronTickAt is null)"
+          for ATTEMPT in 1 2; do
+            REASON=""
+            set +e
+            BODY=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 "$HEALTH_URL")
+            CURL_RC=$?
+            set -e
+            if [ "$CURL_RC" -ne 0 ]; then
+              REASON="Worker unreachable (curl exit ${CURL_RC})"
+            elif ! echo "$BODY" | jq -e '.ok == true' >/dev/null 2>&1; then
+              REASON="Worker responded but not healthy: $(echo "$BODY" | head -c 300)"
             else
-              AGE_MIN=$(( ( $(date +%s) - $(date -d "$TICK" +%s) ) / 60 ))
-              if [ "$AGE_MIN" -gt "$MAX_CRON_AGE_MINUTES" ]; then
-                REASON="Cron heartbeat is ${AGE_MIN} minutes old (limit ${MAX_CRON_AGE_MINUTES}) — the cron may have stopped firing"
+              TICK=$(echo "$BODY" | jq -r '.lastCronTickAt // empty')
+              if [ -z "$TICK" ]; then
+                REASON="No cron heartbeat recorded yet (lastCronTickAt is null)"
+              else
+                AGE_MIN=$(( ( $(date +%s) - $(date -d "$TICK" +%s) ) / 60 ))
+                if [ "$AGE_MIN" -gt "$MAX_CRON_AGE_MINUTES" ]; then
+                  REASON="Cron heartbeat is ${AGE_MIN} minutes old (limit ${MAX_CRON_AGE_MINUTES}) — the cron may have stopped firing"
+                fi
               fi
             fi
-          fi
+            if [ -z "$REASON" ]; then break; fi
+            if [ "$ATTEMPT" -lt 2 ]; then
+              echo "Attempt ${ATTEMPT} failed: ${REASON} — retrying in 45s"
+              sleep 45
+            fi
+          done
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
           if [ -n "$REASON" ]; then
             echo "::error::$REASON"
@@ -71,8 +94,12 @@ jobs:
           fi
           echo "Healthy. gitSha=$(echo "$BODY" | jq -r .gitSha) lastCronTickAt=$(echo "$BODY" | jq -r .lastCronTickAt)"
 
+      # Guarded on the probe's own verdict, not bare failure(): only a probe
+      # that actually ran and actually judged the Worker unhealthy may open an
+      # issue and ping Discord. Anything else failing the job is a CI problem
+      # and must stay off the log channel.
       - name: Alert on first failure
-        if: failure()
+        if: failure() && steps.probe.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
