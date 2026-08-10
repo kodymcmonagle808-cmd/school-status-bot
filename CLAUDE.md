@@ -123,6 +123,28 @@ registration**, `wrangler deploy`).
   posted message id lives in the `nws_alerts_seen:<guild>` entry it already
   writes, so tracking it costs one extra write per notice actually posted and
   nothing per scan.
+  Inside that scan sits a second tier: `isEmergencyAlert` (`weather.js`) picks
+  out the act-now alerts — tornado warning, extreme wind, hurricane warning,
+  civil emergency, or anything NWS rates **Extreme**, which is what separates a
+  Flash Flood *Emergency* from the ordinary warning it is filed under — and
+  those post their own `@everyone` message instead of riding the routine
+  notice. Everything about the routine notice is wrong for them: it is
+  deliberately quiet ("no decision has been announced"), it never pings, and it
+  is deleted when the alert ends. So the emergency post is separate, has its
+  own toggles (`toggle_emergency_alerts`, `toggle_emergency_ping`), ignores
+  quiet hours, and is **never recorded for cleanup** — an `@everyone` ping
+  whose message is gone by the time anyone opens the server reads as a false
+  alarm. **The emergency set must stay a strict subset of
+  `isSchoolImpactIssuance`** (which is why that function now leads with the
+  emergency check): the scan only ever sees school-impact alerts, so an
+  emergency failing that filter is dropped before anything can announce it — a
+  Hurricane Warning matches neither the winter nor the heat pattern. Quiet
+  hours now filter the alert list **before** `pickNewAlerts`, never after:
+  anything held back must stay out of the seen map, or a 3 AM Winter Storm
+  Warning is marked announced and never posts at 6.
+  Keep the emergency list short. Its whole value is that the ping is rare —
+  Severe Thunderstorm and Flash Flood Warnings are routine summer products
+  here, and a ping that fires a dozen times a season is one the server mutes.
 - `src/session.js` — "is school actually in session?", the gate storm mode,
   `decisionwatch.js`, and `headsup.js` consult before alerting. Pure and
   one-sided: `noSchoolReason()` returns a reason only when the bot is

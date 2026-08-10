@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isSchoolImpactIssuance, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
+import { isSchoolImpactIssuance, isEmergencyAlert, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
 import {
   pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET,
-  maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET
+  maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET,
+  maybeSendWeatherAlertNotices, splitEmergencyAlerts, buildEmergencyMessage, emergencyActionLine
 } from '../src/weatheralerts.js';
 import worker from '../src/index.js';
 
@@ -454,13 +455,13 @@ test('a posted notice records where it landed so it can be deleted later', async
   const ctx = { waitUntil(p) { waited.push(Promise.resolve(p).catch(() => {})); } };
   const env = { NWS_HOOK_SECRET: 's3cret', STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
 
-  // Severity Extreme is what carries a Tornado Watch past
-  // isSchoolImpactIssuance — the event classifier itself only covers winter
-  // and heat events, so a Severe-rated tornado watch never posts at all.
+  // A routine notice, so it is the tier that gets tracked for deletion. Note
+  // the severity: Extreme would make this an emergency alert, and those are
+  // deliberately never recorded for cleanup (see the emergency tests below).
   const zoneBody = JSON.stringify({
     features: [{
       properties: {
-        event: 'Tornado Watch', status: 'Actual', severity: 'Extreme',
+        event: 'Tornado Watch', status: 'Actual', severity: 'Severe',
         ends: '2026-01-07T22:00:00Z'
       }
     }]
@@ -472,6 +473,317 @@ test('a posted notice records where it landed so it can be deleted later', async
   assert.equal(seen['Tornado Watch'].msg, 'posted-99');
   assert.equal(seen['Tornado Watch'].ch, 'chan-1');
   assert.equal(seen['Tornado Watch'].until, Date.parse('2026-01-07T22:00:00Z'));
+});
+
+// --- The emergency tier ---
+
+test('isEmergencyAlert covers the act-now events by name and by Extreme severity', () => {
+  // By name, because NWS severity on tornado products is not dependable.
+  assert.ok(isEmergencyAlert({ event: 'Tornado Warning', severity: 'Severe' }));
+  assert.ok(isEmergencyAlert({ event: 'Extreme Wind Warning', severity: 'Severe' }));
+  assert.ok(isEmergencyAlert({ event: 'Civil Emergency Message', severity: 'Unknown' }));
+  // By severity: a Flash Flood Emergency arrives as an Extreme-rated Flash
+  // Flood Warning, which is the only thing separating it from the routine one.
+  assert.ok(isEmergencyAlert({ event: 'Flash Flood Warning', severity: 'Extreme' }));
+});
+
+test('isEmergencyAlert leaves the routine storm products alone', () => {
+  // These are the ones that would train a server to ignore the ping.
+  assert.ok(!isEmergencyAlert({ event: 'Tornado Watch', severity: 'Severe' }));
+  assert.ok(!isEmergencyAlert({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
+  assert.ok(!isEmergencyAlert({ event: 'Flash Flood Warning', severity: 'Severe' }));
+  assert.ok(!isEmergencyAlert({ event: 'Winter Storm Warning', severity: 'Severe' }));
+  assert.ok(!isEmergencyAlert({ event: 'Heat Advisory', severity: 'Minor' }));
+  assert.ok(!isEmergencyAlert(null));
+});
+
+test('every emergency alert also passes the school-impact filter', () => {
+  // The notice pass only ever sees school-impact alerts, so an emergency that
+  // failed this filter would be dropped before anything could announce it.
+  // A Hurricane Warning matches neither the winter nor the heat pattern.
+  for (const a of [
+    { event: 'Tornado Warning', severity: 'Severe' },
+    { event: 'Hurricane Warning', severity: 'Severe' },
+    { event: 'Civil Emergency Message', severity: 'Unknown' },
+    { event: 'Flash Flood Warning', severity: 'Extreme' }
+  ]) {
+    assert.ok(isEmergencyAlert(a) && isSchoolImpactIssuance(a), `${a.event} must survive both filters`);
+  }
+});
+
+test('summarizeWeatherAlerts keeps NWS instructions for emergencies only', () => {
+  const [emergency] = summarizeWeatherAlerts([{
+    properties: {
+      event: 'Tornado Warning', status: 'Actual', severity: 'Severe',
+      instruction: 'TAKE COVER NOW!  Move to a basement or an\n  interior room.'
+    }
+  }]);
+  assert.equal(emergency.instruction, 'TAKE COVER NOW! Move to a basement or an interior room.');
+
+  // A routine alert must not carry it: this list is cached and read on every
+  // embed render, for text only the emergency message displays.
+  const [routine] = summarizeWeatherAlerts([{
+    properties: {
+      event: 'Winter Storm Warning', status: 'Actual', severity: 'Severe',
+      instruction: 'Slow down and use caution while traveling.'
+    }
+  }]);
+  assert.ok(!('instruction' in routine));
+});
+
+test('emergencyActionLine gives each event something to do in the next minute', () => {
+  assert.match(emergencyActionLine('Tornado Warning'), /^TAKE SHELTER NOW/);
+  assert.match(emergencyActionLine('Flash Flood Warning'), /^MOVE TO HIGHER GROUND NOW/);
+  assert.match(emergencyActionLine('Evacuation Immediate'), /^EVACUATE NOW/);
+  assert.match(emergencyActionLine('Some Unmapped Warning'), /TAKE SHELTER NOW/);
+  assert.match(emergencyActionLine(''), /TAKE SHELTER NOW/);
+});
+
+test('splitEmergencyAlerts separates the loud tier from the routine one', () => {
+  const { emergency, routine } = splitEmergencyAlerts([
+    { event: 'Winter Weather Advisory', severity: 'Minor' },
+    { event: 'Tornado Warning', severity: 'Severe' },
+    null
+  ]);
+  assert.deepEqual(emergency.map(a => a.event), ['Tornado Warning']);
+  assert.deepEqual(routine.map(a => a.event), ['Winter Weather Advisory']);
+});
+
+test('buildEmergencyMessage pings @everyone and leads with the action', () => {
+  const msg = buildEmergencyMessage([{
+    event: 'Tornado Warning',
+    severity: 'Extreme',
+    endsMs: 1750050000000,
+    instruction: 'TAKE COVER NOW!'
+  }], { county: 'Howard', footer: 'School Status', nowIso: '2026-07-29T20:00:00.000Z' });
+
+  assert.deepEqual(msg.allowed_mentions, { parse: ['everyone'] });
+  assert.match(msg.content, /^@everyone\n/);
+  // Markdown headings are the only way to make the text physically bigger.
+  assert.match(msg.content, /^@everyone\n# 🚨 TORNADO WARNING\n## Howard County — TAKE SHELTER NOW/);
+  assert.equal(msg.embeds[0].color, 0xFF0000);
+  assert.match(msg.embeds[0].title, /🚨 TORNADO WARNING — Howard County/);
+  assert.match(msg.embeds[0].description, /TAKE SHELTER NOW/);
+  assert.equal(msg.embeds[0].fields[0].value, 'TAKE COVER NOW!');
+  assert.ok(msg.content.length <= 2000);
+});
+
+test('buildEmergencyMessage drops the ping but keeps the alert when pings are off', () => {
+  const msg = buildEmergencyMessage([{ event: 'Tornado Warning' }], { county: 'Carroll', ping: false });
+  assert.deepEqual(msg.allowed_mentions, { parse: [] });
+  assert.ok(!msg.content.includes('@everyone'));
+  assert.match(msg.content, /# 🚨 TORNADO WARNING/);
+  // No NWS instruction text came through, so there is no empty field.
+  assert.ok(!msg.embeds[0].fields);
+});
+
+test('buildEmergencyMessage folds several emergencies into one banner', () => {
+  const msg = buildEmergencyMessage([
+    { event: 'Tornado Warning' },
+    { event: 'Flash Flood Warning', severity: 'Extreme' }
+  ], { county: 'Howard' });
+  assert.match(msg.content, /# 🚨 2 EMERGENCY ALERTS/);
+  // The first match wins, so the most urgent action leads.
+  assert.match(msg.content, /TAKE SHELTER NOW/);
+  assert.match(msg.embeds[0].description, /Tornado Warning[\s\S]*Flash Flood Warning/);
+});
+
+test('buildEmergencyMessage returns null with nothing to announce', () => {
+  assert.equal(buildEmergencyMessage([]), null);
+  assert.equal(buildEmergencyMessage(null), null);
+  assert.equal(buildEmergencyMessage([{ severity: 'Extreme' }]), null); // no event name
+});
+
+// The emergency path's whole reason for existing: quiet hours must not sit on
+// a tornado warning, and the notice must not be deleted out from under the
+// ping. Both are the opposite of what routine issuance notices do.
+function emergencyEnv(kv, extra = {}) {
+  return { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok', ...extra };
+}
+
+// A cached zone holding one live Tornado Warning, so the scan needs no fetch.
+function tornadoZone(kv, now) {
+  kv.map.set('weather_alerts_cache', JSON.stringify([{
+    event: 'Tornado Warning', severity: 'Extreme', endsMs: now.getTime() + 1_800_000, onsetMs: 0, headline: ''
+  }]));
+}
+
+test('an emergency alert posts in the middle of the night, when a routine one waits', async (t) => {
+  // 2:06 AM ET — deep inside quiet hours, on a scan gate minute.
+  const now = new Date(Date.parse('2026-07-29T06:06:00Z'));
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-1' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' }),
+    // Cached so the scan needs no live fetch: a Tornado Warning plus a routine
+    // advisory, both new.
+    weather_alerts_cache: JSON.stringify([
+      { event: 'Tornado Warning', severity: 'Extreme', endsMs: now.getTime() + 1_800_000, onsetMs: 0, headline: '' },
+      { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    ])
+  });
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1, 'only the emergency may post overnight');
+
+  const sentPosts = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(sentPosts.length, 1);
+  assert.match(sentPosts[0].body.content, /@everyone/);
+  assert.match(sentPosts[0].body.content, /TORNADO WARNING/);
+
+  // The advisory was held back rather than marked seen, so it still announces
+  // at 6 AM instead of being silenced for good.
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  assert.ok(seen['Tornado Warning']);
+  assert.ok(!seen['Winter Weather Advisory'], 'a held-back alert must not be marked seen');
+});
+
+test('an emergency notice is never deleted when its alert ends', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ id: 'm-99' }), { status: 200 }));
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  tornadoZone(kv, now);
+
+  await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  // No msg/ch recorded: an @everyone ping whose message has been deleted by the
+  // time anyone opens the server reads as a false alarm.
+  assert.equal(seen['Tornado Warning'].msg, undefined);
+  assert.equal(seen['Tornado Warning'].ch, undefined);
+
+  // And the cleanup pass finds nothing to remove once it expires.
+  const later = cleanupNow();
+  kv.map.set('nws_alerts_seen:g1', JSON.stringify({
+    'Tornado Warning': { until: later.getTime() - 1000 }
+  }));
+  const cleaned = await maybeCleanupExpiredAlertNotices(emergencyEnv(kv), later);
+  assert.equal(cleaned.deleted, 0);
+});
+
+test('an emergency alert still posts for a guild that turned routine notices off', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z'));
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-1' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', toggle_nws_alerts: false })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Tornado Warning', severity: 'Extreme', endsMs: now.getTime() + 1_800_000, onsetMs: 0, headline: '' },
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+  assert.match(posts.find(p => p.url.includes('/messages')).body.content, /TORNADO WARNING/);
+});
+
+test('both emergency toggles are honored', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z'));
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-1' }), { status: 200 });
+  });
+
+  // Ping off: the alert still posts, just without the mention.
+  const noPing = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', toggle_emergency_ping: false })
+  });
+  tornadoZone(noPing, now);
+  await maybeSendWeatherAlertNotices(emergencyEnv(noPing), now);
+  const posted = posts.find(p => p.url.includes('/messages'));
+  assert.ok(posted, 'the alert must still post with pings disabled');
+  assert.ok(!posted.body.content.includes('@everyone'));
+
+  // Feature off: nothing posts at all.
+  posts.length = 0;
+  const off = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1', toggle_emergency_alerts: false, toggle_nws_alerts: false
+    })
+  });
+  tornadoZone(off, now);
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(off), now);
+  assert.equal(result.sent, 0);
+  assert.equal(posts.filter(p => p.url.includes('/messages')).length, 0);
+  assert.ok(!off.map.has('nws_alerts_seen:g1'), 'a disabled guild must not be marked seen either');
+});
+
+test('a failed emergency post is unmarked so the next scan retries it', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z'));
+  let fail = true;
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (fail) return new Response('{}', { status: 500 });
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-1' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  tornadoZone(kv, now);
+
+  const failed = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(failed.sent, 0);
+  // Mark-before-post is right everywhere else, but here it would trade a
+  // duplicate tornado warning for a missing one.
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1') || '{}');
+  assert.ok(!seen['Tornado Warning'], 'a failed emergency must not stay marked as announced');
+
+  fail = false;
+  const retried = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(retried.sent, 1);
+  assert.match(posts.find(p => p.url.includes('/messages')).body.content, /@everyone/);
+});
+
+test('an emergency and a routine alert in one scan post as separate messages', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Tornado Warning', severity: 'Extreme', endsMs: now.getTime() + 1_800_000, onsetMs: 0, headline: '' },
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 2, 'folding the tornado into the heat advisory is the bug this guards');
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 2);
+  assert.match(messages[0].body.content, /@everyone/);
+  assert.equal(messages[1].body.content, undefined);
+  assert.match(messages[1].body.embeds[0].title, /Heat Advisory/);
+
+  // Only the routine one is tracked for deletion.
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  assert.equal(seen['Heat Advisory'].msg, 'm-routine');
+  assert.equal(seen['Tornado Warning'].msg, undefined);
 });
 
 test('/status-hook requires the shared secret and acks a valid ping', async (t) => {

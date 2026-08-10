@@ -587,6 +587,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const yearRecap = config.toggle_year_recap !== false;
     const aqiAlerts = config.toggle_aqi_alerts !== false;
     const nwsAlerts = config.toggle_nws_alerts !== false;
+    const emergencyAlerts = config.toggle_emergency_alerts !== false;
+    const emergencyPing = config.toggle_emergency_ping !== false;
     const emailAlerts = config.toggle_email_alerts !== false;
     const sessionGate = config.toggle_session_gate !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
@@ -615,6 +617,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
                    `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
                    `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
+                   `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — a big red take-shelter post for tornado warnings and other life-safety alerts, any hour\n` +
+                   `• ${emergencyPing ? '🟢' : '🔴'} **Emergency @everyone Ping** — let those emergency alerts ping @everyone (needs the bot to have *Mention Everyone*)\n` +
                    `• ${emailAlerts ? '🟢' : '🔴'} **HCPSS Email Notices** — post announcement emails that never reach the status page (no pings)\n` +
                    `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
@@ -748,6 +752,20 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Post when a school-impacting NWS alert is issued (no pings)',
         emoji: { name: '⚠️' },
         default: nwsAlerts
+      },
+      {
+        label: 'Emergency Alerts',
+        value: 'toggle_emergency_alerts',
+        description: 'Big red take-shelter post for tornado warnings and the like, any hour',
+        emoji: { name: '🚨' },
+        default: emergencyAlerts
+      },
+      {
+        label: 'Emergency @everyone Ping',
+        value: 'toggle_emergency_ping',
+        description: 'Let emergency alerts ping @everyone (needs Mention Everyone)',
+        emoji: { name: '📣' },
+        default: emergencyPing
       },
       {
         label: 'HCPSS Email Notices',
@@ -1498,6 +1516,8 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_year_recap = selected.includes('toggle_year_recap');
     next.toggle_aqi_alerts = selected.includes('toggle_aqi_alerts');
     next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
+    next.toggle_emergency_alerts = selected.includes('toggle_emergency_alerts');
+    next.toggle_emergency_ping = selected.includes('toggle_emergency_ping');
     next.toggle_email_alerts = selected.includes('toggle_email_alerts');
     next.toggle_session_gate = selected.includes('toggle_session_gate');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {

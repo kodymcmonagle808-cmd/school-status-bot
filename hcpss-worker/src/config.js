@@ -74,6 +74,8 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_year_recap !== 'boolean') next.toggle_year_recap = true;
   if (typeof next.toggle_aqi_alerts !== 'boolean') next.toggle_aqi_alerts = true;
   if (typeof next.toggle_nws_alerts !== 'boolean') next.toggle_nws_alerts = true;
+  if (typeof next.toggle_emergency_alerts !== 'boolean') next.toggle_emergency_alerts = true;
+  if (typeof next.toggle_emergency_ping !== 'boolean') next.toggle_emergency_ping = true;
   if (typeof next.toggle_email_alerts !== 'boolean') next.toggle_email_alerts = true;
   if (typeof next.toggle_session_gate !== 'boolean') next.toggle_session_gate = true;
   if (!next.primary_district) next.primary_district = 'hcpss';

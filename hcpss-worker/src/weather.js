@@ -31,13 +31,21 @@ export function summarizeWeatherAlerts(features) {
     const endsRaw = p.ends || p.expires;
     const endsMs = endsRaw ? Date.parse(endsRaw) : 0;
     const onsetMs = p.onset ? Date.parse(p.onset) : 0;
-    alerts.push({
+    const alert = {
       event: p.event,
       severity: p.severity || 'Unknown',
       endsMs: Number.isFinite(endsMs) ? endsMs : 0,
       onsetMs: Number.isFinite(onsetMs) ? onsetMs : 0,
       headline: typeof p.headline === 'string' ? p.headline.slice(0, 300) : ''
-    });
+    };
+    // NWS's own "what to do right now" text, kept for the emergency tier only.
+    // It runs several hundred characters and is shown in exactly one place (the
+    // emergency alert); carrying it on every alert would grow a cached list
+    // that every embed render reads, for text nothing displays.
+    if (isEmergencyAlert(alert) && typeof p.instruction === 'string') {
+      alert.instruction = p.instruction.replace(/\s+/g, ' ').trim().slice(0, 600);
+    }
+    alerts.push(alert);
   }
 
   alerts.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4));
@@ -102,13 +110,43 @@ export function hasPowerThreatAlert(alerts) {
 // acceptable, so the event name decides.
 const CONVECTIVE_EVENT_RE = /tornado|severe thunderstorm/i;
 
+// The emergency tier: alerts where the correct response is to act in the next
+// minute, not to watch the forecast. This is the only thing in the bot that
+// pings @everyone, so the list stays deliberately short — a Severe
+// Thunderstorm Warning or a Flash Flood Warning is a routine summer product
+// here, and a ping that fires a dozen times a season is one the server learns
+// to ignore, which is the failure that matters for an alert like this.
+//
+// Extreme severity counts on its own because NWS reserves it for exactly this
+// tier: it is what separates a Flash Flood *Emergency* from the ordinary
+// warning it is filed under (both arrive as event "Flash Flood Warning"). The
+// named events are listed anyway because severity is not dependable for
+// tornado products — see CONVECTIVE_EVENT_RE above; a Tornado Warning must
+// never come down to a field the bot has no control over.
+const EMERGENCY_EVENT_RE = /tornado warning|extreme wind warning|hurricane warning|civil emergency|evacuation immediate/i;
+
+export function isEmergencyAlert(alert) {
+  if (!alert) return false;
+  if (alert.severity === 'Extreme') return true;
+  return EMERGENCY_EVENT_RE.test(alert.event || '');
+}
+
+export function hasEmergencyAlert(alerts) {
+  return (Array.isArray(alerts) ? alerts : []).some(isEmergencyAlert);
+}
+
 // Alerts worth announcing the moment NWS issues them: the winter and heat
 // events school decisions hinge on, at watch/warning/advisory level (a
 // Winter Weather Advisory is the classic 2-hour-delay signal), the convective
-// events above at watch/warning level, plus anything rated Extreme.
+// events above at watch/warning level, plus the emergency tier.
+//
+// The emergency check leads so that tier is a strict subset of this one: an
+// emergency that failed the classifier below would be filtered out before the
+// notice pass ever saw it (a Hurricane Warning matches neither the winter nor
+// the heat pattern), and the loudest alert the bot has would go unsent.
 export function isSchoolImpactIssuance(alert) {
   if (!alert) return false;
-  if (alert.severity === 'Extreme') return true;
+  if (isEmergencyAlert(alert)) return true;
   const event = alert.event || '';
   if (CONVECTIVE_EVENT_RE.test(event)) return /warning|watch/i.test(event);
   if (!WINTER_EVENT_RE.test(event) && !HEAT_EVENT_RE.test(event)) return false;
