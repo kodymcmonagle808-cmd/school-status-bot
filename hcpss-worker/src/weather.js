@@ -14,10 +14,54 @@ export const MAX_ALERT_LINES = 3;
 
 const SEVERITY_ORDER = { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3, Unknown: 4 };
 
+// --- Wireless Emergency Alert detection ---
+//
+// NWS says outright, in the feed, which products it is pushing to phones as a
+// WEA — the full-screen "Emergency Alert" that overrides silent mode. That is
+// a far better line than any list of event names the bot could keep: it is
+// NWS's own judgment, per product, and it is the line people already
+// recognize, because they just felt their phone go off.
+//
+// `parameters` values are arrays of strings.
+function alertParam(properties, key) {
+  const v = properties && properties.parameters && properties.parameters[key];
+  return Array.isArray(v) ? v.map(x => String(x)) : [];
+}
+
+// True when this product is a WEA. Two independent signals, because neither
+// alone survives the whole life of an alert:
+//
+//   WEAHandling: ["Imminent Threat"] rides the *original* product only. NWS
+//   drops it from the continuation/update products so phones don't re-alert
+//   every few minutes — so an alert first seen mid-life has no WEAHandling
+//   even though it screamed at everyone ten minutes ago. BLOCKCHANNEL is the
+//   inverse check: an ordinary warning carries CMAS in its blocked list,
+//   meaning "not for phones", and a WEA product does not.
+//
+//   The damage-threat tags are what promote a warning into that tier in the
+//   first place, and unlike WEAHandling they *persist* on the continuations —
+//   which is what makes them the reliable half. DESTRUCTIVE (80+ mph winds or
+//   2.75"+ hail) is the threshold NWS itself uses to send a severe
+//   thunderstorm warning to phones; CONSIDERABLE deliberately does not
+//   qualify, and must not, or half of every summer squall line pings.
+export function isWeaAlert(properties) {
+  if (!properties) return false;
+  const handling = alertParam(properties, 'WEAHandling');
+  const blocked = alertParam(properties, 'BLOCKCHANNEL').map(s => s.toUpperCase());
+  if (handling.length && !blocked.includes('CMAS')) return true;
+  if (alertParam(properties, 'thunderstormDamageThreat').some(v => /destructive/i.test(v))) return true;
+  if (alertParam(properties, 'flashFloodDamageThreat').some(v => /catastrophic/i.test(v))) return true;
+  // Any tornado damage tag at all: CONSIDERABLE is a particularly dangerous
+  // situation, CATASTROPHIC is a tornado emergency. Untagged tornado warnings
+  // are already covered by name.
+  if (alertParam(properties, 'tornadoDamageThreat').length) return true;
+  return false;
+}
+
 // Reduces raw NWS GeoJSON features to a small sorted list of
 // { event, severity, endsMs } objects, deduped by event name.
 export function summarizeWeatherAlerts(features) {
-  const seen = new Set();
+  const indexByEvent = new Map();
   const alerts = [];
 
   for (const f of Array.isArray(features) ? features : []) {
@@ -25,8 +69,16 @@ export function summarizeWeatherAlerts(features) {
     if (!p || !p.event) continue;
     if (p.status && p.status !== 'Actual') continue;
     if (p.messageType === 'Cancel') continue;
-    if (seen.has(p.event)) continue;
-    seen.add(p.event);
+
+    // One event name, several concurrent products: NWS issues the tagged
+    // version (DESTRUCTIVE winds, a PDS tornado) as its own product covering
+    // its own polygon, right alongside an ordinary warning of the same name.
+    // First-one-wins would therefore drop the phone-alerting one whenever it
+    // happened to sort second, so a WEA product always displaces a kept
+    // non-WEA one. Otherwise the first is kept, as before.
+    const existing = indexByEvent.get(p.event);
+    const wea = isWeaAlert(p);
+    if (existing !== undefined && !(wea && !alerts[existing].wea)) continue;
 
     const endsRaw = p.ends || p.expires;
     const endsMs = endsRaw ? Date.parse(endsRaw) : 0;
@@ -38,14 +90,27 @@ export function summarizeWeatherAlerts(features) {
       onsetMs: Number.isFinite(onsetMs) ? onsetMs : 0,
       headline: typeof p.headline === 'string' ? p.headline.slice(0, 300) : ''
     };
+    if (wea) alert.wea = true;
     // NWS's own "what to do right now" text, kept for the emergency tier only.
     // It runs several hundred characters and is shown in exactly one place (the
     // emergency alert); carrying it on every alert would grow a cached list
     // that every embed render reads, for text nothing displays.
-    if (isEmergencyAlert(alert) && typeof p.instruction === 'string') {
-      alert.instruction = p.instruction.replace(/\s+/g, ' ').trim().slice(0, 600);
+    //
+    // CMAMlongtext is preferred where it exists: it is the exact wording that
+    // went to phones, so the Discord alert reads as the same message someone
+    // just got rather than a paraphrase of it.
+    if (isEmergencyAlert(alert)) {
+      const wea = alertParam(p, 'CMAMlongtext')[0];
+      const text = wea || (typeof p.instruction === 'string' ? p.instruction : '');
+      if (text) alert.instruction = text.replace(/\s+/g, ' ').trim().slice(0, 600);
     }
-    alerts.push(alert);
+
+    if (existing !== undefined) {
+      alerts[existing] = alert;
+    } else {
+      indexByEvent.set(p.event, alerts.length);
+      alerts.push(alert);
+    }
   }
 
   alerts.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4));
@@ -125,8 +190,14 @@ const CONVECTIVE_EVENT_RE = /tornado|severe thunderstorm/i;
 // never come down to a field the bot has no control over.
 const EMERGENCY_EVENT_RE = /tornado warning|extreme wind warning|hurricane warning|civil emergency|evacuation immediate/i;
 
+// `wea` leads: if NWS pushed it to phones, it is an emergency by definition,
+// whatever it is called. The name and severity checks stay as the floor —
+// WEAHandling is absent from continuation products, so an alert first seen
+// mid-life can be a tornado warning that already alerted every phone in the
+// county and carries no tag at all by the time the bot looks.
 export function isEmergencyAlert(alert) {
   if (!alert) return false;
+  if (alert.wea) return true;
   if (alert.severity === 'Extreme') return true;
   return EMERGENCY_EVENT_RE.test(alert.event || '');
 }

@@ -42,12 +42,18 @@ const POST_UNTIL_MIN = 22 * 60;
 // One entry in the seen map, normalized. Entries written before notices were
 // deletable are a bare expiry number and carry no message to clean up — they
 // still dedupe correctly, they just can't be deleted.
+// `tier` is 'e' (announced as an emergency) or 'r' (announced as a routine
+// notice), and is absent on entries written before the tiers existed. Absent
+// is deliberately not the same as 'r': it means "unknown", and only a known
+// 'r' can escalate, so a deploy mid-alert can't re-announce everything active.
 function seenEntry(value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) && value > 0 ? { until: value } : null;
   }
   if (value && typeof value === 'object' && Number(value.until) > 0) {
-    return { until: Number(value.until), msg: value.msg || '', ch: value.ch || '' };
+    const entry = { until: Number(value.until), msg: value.msg || '', ch: value.ch || '' };
+    if (value.tier === 'e' || value.tier === 'r') entry.tier = value.tier;
+    return entry;
   }
   return null;
 }
@@ -79,13 +85,31 @@ export function pickNewAlerts(alerts, seen, nowMs) {
     if (!a || !a.event) continue;
     const until = a.endsMs && a.endsMs > nowMs ? a.endsMs : nowMs + SEEN_FALLBACK_TTL_MS;
     if (cleaned[a.event]) {
+      const prev = cleaned[a.event];
       // Already announced, so stay quiet — but NWS routinely extends an alert
       // instead of reissuing it. Carry the later end time forward, or the
       // notice would be deleted while the alert is still running.
-      if (until > cleaned[a.event].until) cleaned[a.event] = { ...cleaned[a.event], until };
+      const next = until > prev.until ? { ...prev, until } : prev;
+
+      // The exception: NWS also *upgrades* a warning in place. An ordinary
+      // Severe Thunderstorm Warning becomes a DESTRUCTIVE one tagged for
+      // phones, and it is still called "Severe Thunderstorm Warning" — which
+      // is how dedupe-by-event-name ends up swallowing precisely the version
+      // worth pinging for. It happened on 2026-08-10: ordinary warnings at
+      // 3:55 and 3:57 PM, then the 80 mph destructive one at 4:10.
+      //
+      // msg/ch are carried through, so the routine notice already posted is
+      // still cleaned up when the alert ends; only the emergency message
+      // (which records no id) outlives it.
+      if (prev.tier === 'r' && isEmergencyAlert(a)) {
+        cleaned[a.event] = { ...next, tier: 'e' };
+        newAlerts.push(a);
+        continue;
+      }
+      cleaned[a.event] = next;
       continue;
     }
-    cleaned[a.event] = { until };
+    cleaned[a.event] = { until, tier: isEmergencyAlert(a) ? 'e' : 'r' };
     newAlerts.push(a);
   }
   return { newAlerts, updatedSeen: cleaned, expired };

@@ -767,19 +767,49 @@ function fetchZoneBody(zone) {
 // tomorrow-morning outlook) also means a routine reissue of an unchanged
 // alert no longer pings. A reworded headline alone won't push either — the
 // hourly cache TTL is the safety net for that.
+// The WEA flag is part of the fingerprint because NWS upgrades a warning in
+// place: the ordinary Severe Thunderstorm Warning at 3:55 PM on 2026-08-10 and
+// the DESTRUCTIVE 80 mph one at 4:10 PM share an event name, a severity, and
+// an end time, so without this the fingerprint never moves, nothing is pushed,
+// and the Worker doesn't see the upgrade until its hourly fallback scan — for
+// the one alert class where minutes are the whole point.
 function alertFingerprintParts(features) {
-  var seen = {};
-  var parts = [];
+  var byEvent = Object.create(null);
   (Array.isArray(features) ? features : []).forEach(function (f) {
     var p = (f && f.properties) || {};
     if (!p.event) return;
     if (p.status && p.status !== 'Actual') return;
     if (p.messageType === 'Cancel') return;
-    if (seen[p.event]) return;
-    seen[p.event] = true;
-    parts.push(p.event + '|' + (p.severity || 'Unknown') + '|' + (p.ends || p.expires || ''));
+    var wea = isWeaAlert(p);
+    var prev = byEvent[p.event];
+    // Mirrors summarizeWeatherAlerts: first wins, except a WEA product
+    // displaces a kept non-WEA one of the same name.
+    if (prev && !(wea && !prev.wea)) return;
+    byEvent[p.event] = {
+      wea: wea,
+      part: p.event + '|' + (p.severity || 'Unknown') + '|' + (p.ends || p.expires || '') + '|' + (wea ? 'WEA' : '')
+    };
   });
-  return parts.sort();
+  return Object.keys(byEvent).map(function (k) { return byEvent[k].part; }).sort();
+}
+
+// Hand-copy of isWeaAlert in hcpss-worker/src/weather.js — the tags NWS uses
+// to mark a product for delivery to phones. tests/gaswatcher.test.js
+// cross-checks the two so they cannot drift.
+function alertParam(p, key) {
+  var v = p && p.parameters && p.parameters[key];
+  return Array.isArray(v) ? v.map(function (x) { return String(x); }) : [];
+}
+
+function isWeaAlert(p) {
+  if (!p) return false;
+  var handling = alertParam(p, 'WEAHandling');
+  var blocked = alertParam(p, 'BLOCKCHANNEL').map(function (s) { return s.toUpperCase(); });
+  if (handling.length && blocked.indexOf('CMAS') === -1) return true;
+  if (alertParam(p, 'thunderstormDamageThreat').some(function (v) { return /destructive/i.test(v); })) return true;
+  if (alertParam(p, 'flashFloodDamageThreat').some(function (v) { return /catastrophic/i.test(v); })) return true;
+  if (alertParam(p, 'tornadoDamageThreat').length) return true;
+  return false;
 }
 
 // Run once manually to install the 5-minute trigger (replaces any existing

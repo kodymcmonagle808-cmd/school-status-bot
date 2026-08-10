@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 
-import { summarizeWeatherAlerts } from '../src/weather.js';
+import { summarizeWeatherAlerts, isWeaAlert } from '../src/weather.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gasSource = readFileSync(join(here, '..', '..', 'gas', 'nws-alert-watcher.js'), 'utf8');
@@ -117,6 +117,70 @@ test('alertFingerprintParts keeps exactly the alerts the Worker keeps', () => {
 
   assert.deepEqual(watcherEvents, workerEvents);
   assert.deepEqual(workerEvents, ['Heat Advisory', 'Winter Storm Warning']);
+});
+
+// --- WEA tier ---
+//
+// The watcher decides whether the Worker is pinged at all, so an upgrade it
+// can't see is an upgrade the Worker announces up to an hour late — for the
+// one alert class where minutes are the entire point.
+
+const tstorm = (over) => feature(Object.assign({
+  event: 'Severe Thunderstorm Warning',
+  status: 'Actual',
+  messageType: 'Alert',
+  severity: 'Severe',
+  ends: '2026-08-10T16:45:00-04:00'
+}, over || {}));
+
+const ordinaryParams = { windThreat: ['OBSERVED'], BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] };
+const destructiveParams = {
+  windThreat: ['RADAR INDICATED'],
+  thunderstormDamageThreat: ['DESTRUCTIVE'],
+  BLOCKCHANNEL: ['EAS', 'NWEM'],
+  WEAHandling: ['Imminent Threat']
+};
+
+test('alertFingerprintParts moves when a warning is upgraded to the WEA tier', () => {
+  // The real 2026-08-10 sequence: same event, same severity, same end time.
+  // Without the WEA flag in the fingerprint this is byte-identical and nothing
+  // is ever pushed.
+  const ordinary = alertFingerprintParts([tstorm({ parameters: ordinaryParams })]);
+  const destructive = alertFingerprintParts([tstorm({ parameters: destructiveParams })]);
+  assert.notDeepEqual(destructive, ordinary, 'the destructive upgrade must push');
+});
+
+test('alertFingerprintParts prefers the WEA product when both share a name', () => {
+  const both = [tstorm({ parameters: ordinaryParams }), tstorm({ parameters: destructiveParams })];
+  const reversed = [both[1], both[0]];
+  assert.deepEqual(alertFingerprintParts(both), alertFingerprintParts(reversed), 'feed order must not decide');
+  assert.ok(alertFingerprintParts(both)[0].endsWith('|WEA'));
+});
+
+test('the watcher and the Worker agree on which alerts are WEA', () => {
+  // Anti-drift guard: isWeaAlert is hand-copied into the Apps Script file,
+  // which CI does not deploy. If the two ever disagree, the watcher either
+  // withholds an emergency or pushes for one the Worker treats as routine.
+  const cases = [
+    ordinaryParams,
+    destructiveParams,
+    { thunderstormDamageThreat: ['CONSIDERABLE'], BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] },
+    { tornadoDamageThreat: ['CATASTROPHIC'] },
+    { flashFloodDamageThreat: ['CATASTROPHIC'] },
+    { flashFloodDamageThreat: ['CONSIDERABLE'] },
+    { WEAHandling: ['Imminent Threat'], BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] },
+    { BLOCKCHANNEL: ['EAS'] },
+    {}
+  ];
+  for (const parameters of cases) {
+    const props = { event: 'X', status: 'Actual', severity: 'Severe', parameters };
+    assert.equal(
+      sandbox.isWeaAlert(props),
+      isWeaAlert(props),
+      `watcher and Worker disagree on ${JSON.stringify(parameters)}`
+    );
+  }
+  assert.equal(sandbox.isWeaAlert(null), isWeaAlert(null));
 });
 
 test('aqiFingerprintParts only reacts to today, which is all the Worker reads', () => {

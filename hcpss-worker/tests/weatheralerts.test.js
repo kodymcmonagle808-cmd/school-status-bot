@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isSchoolImpactIssuance, isEmergencyAlert, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
+import { isSchoolImpactIssuance, isEmergencyAlert, isWeaAlert, summarizeWeatherAlerts, clearWeatherAlertCache } from '../src/weather.js';
 import {
   pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET,
   maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET,
@@ -476,6 +476,138 @@ test('a posted notice records where it landed so it can be deleted later', async
 });
 
 // --- The emergency tier ---
+//
+// Fixtures are the real properties NWS published for Howard County (MDC027)
+// on 2026-08-10, the afternoon a tornado warning and a destructive-wind severe
+// thunderstorm warning both went to phones.
+
+// The 4:10 PM product: 80 mph winds, tagged for phones.
+const destructiveTstorm = {
+  event: 'Severe Thunderstorm Warning', status: 'Actual', messageType: 'Alert',
+  severity: 'Severe', urgency: 'Immediate', certainty: 'Observed',
+  ends: '2026-08-10T16:45:00-04:00',
+  parameters: {
+    windThreat: ['RADAR INDICATED'],
+    thunderstormDamageThreat: ['DESTRUCTIVE'],
+    BLOCKCHANNEL: ['EAS', 'NWEM'],
+    WEAHandling: ['Imminent Threat'],
+    CMAMlongtext: ['National Weather Service: SEVERE THUNDERSTORM WARNING in effect for this area until 4:45 PM EDT for DESTRUCTIVE 80 mph winds. Take shelter in a sturdy building, away from windows. Flying debris may be deadly to those caught without shelter.']
+  }
+};
+
+// The 3:55 PM product: same event name, same end time, no phone alert.
+const ordinaryTstorm = {
+  event: 'Severe Thunderstorm Warning', status: 'Actual', messageType: 'Alert',
+  severity: 'Severe', urgency: 'Immediate', certainty: 'Observed',
+  ends: '2026-08-10T16:45:00-04:00',
+  parameters: {
+    windThreat: ['OBSERVED'],
+    thunderstormDamageThreat: ['CONSIDERABLE'],
+    BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS']
+  }
+};
+
+// The 4:22 PM continuation of the tornado warning: WEAHandling is gone,
+// because phones were already alerted at 4:14.
+const tornadoContinuation = {
+  event: 'Tornado Warning', status: 'Actual', messageType: 'Update',
+  severity: 'Extreme', ends: '2026-08-10T16:45:00-04:00',
+  parameters: { BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] }
+};
+
+test('isWeaAlert matches exactly the products NWS sent to phones', () => {
+  assert.ok(isWeaAlert(destructiveTstorm), 'the 80 mph warning alerted every phone in the county');
+  assert.ok(!isWeaAlert(ordinaryTstorm), 'CMAS in BLOCKCHANNEL is NWS saying "not for phones"');
+  // CONSIDERABLE is the tag one step below the WEA threshold. If this ever
+  // starts returning true, half of every summer squall line pings @everyone.
+  assert.ok(!isWeaAlert({ parameters: { thunderstormDamageThreat: ['CONSIDERABLE'], BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] } }));
+  assert.ok(!isWeaAlert({ parameters: { BLOCKCHANNEL: ['EAS', 'NWEM', 'CMAS'] } }));
+  assert.ok(!isWeaAlert({}));
+  assert.ok(!isWeaAlert(null));
+});
+
+test('isWeaAlert reads the damage tags that outlive WEAHandling', () => {
+  // These persist on continuation products, which is what makes an alert first
+  // seen mid-life still recognizable as the phone-alerting tier.
+  assert.ok(isWeaAlert({ parameters: { tornadoDamageThreat: ['CONSIDERABLE'] } }));
+  assert.ok(isWeaAlert({ parameters: { tornadoDamageThreat: ['CATASTROPHIC'] } }));
+  assert.ok(isWeaAlert({ parameters: { flashFloodDamageThreat: ['CATASTROPHIC'] } }));
+  assert.ok(!isWeaAlert({ parameters: { flashFloodDamageThreat: ['CONSIDERABLE'] } }));
+});
+
+test('a WEA-tagged alert is an emergency whatever it is called', () => {
+  const [alert] = summarizeWeatherAlerts([{ properties: destructiveTstorm }]);
+  assert.equal(alert.wea, true);
+  assert.ok(isEmergencyAlert(alert), 'if it went to phones, it pings @everyone');
+
+  // The same event name without the tag stays in the quiet tier.
+  const [ordinary] = summarizeWeatherAlerts([{ properties: ordinaryTstorm }]);
+  assert.ok(!ordinary.wea);
+  assert.ok(!isEmergencyAlert(ordinary));
+});
+
+test('a tornado warning first seen mid-life is still an emergency', () => {
+  // WEAHandling is absent by 4:22 PM, so name and severity are what carry it.
+  const [alert] = summarizeWeatherAlerts([{ properties: tornadoContinuation }]);
+  assert.ok(!alert.wea, 'the continuation genuinely is not a WEA product');
+  assert.ok(isEmergencyAlert(alert), 'but it is still a live tornado warning');
+});
+
+test('the emergency message quotes the text that went to phones', () => {
+  const [alert] = summarizeWeatherAlerts([{ properties: destructiveTstorm }]);
+  // CMAMlongtext is preferred over the generic instruction block, so the
+  // Discord alert reads as the same message someone just got on their phone.
+  assert.match(alert.instruction, /^National Weather Service: SEVERE THUNDERSTORM WARNING/);
+  const msg = buildEmergencyMessage([alert], { county: 'Howard' });
+  assert.match(msg.embeds[0].fields[0].value, /DESTRUCTIVE 80 mph winds/);
+  assert.match(msg.content, /@everyone/);
+});
+
+test('a WEA product wins over an ordinary one of the same name', () => {
+  // Both are active at once, covering different polygons. Whichever sorts
+  // first in the feed is not something to bet the ping on.
+  for (const order of [[ordinaryTstorm, destructiveTstorm], [destructiveTstorm, ordinaryTstorm]]) {
+    const alerts = summarizeWeatherAlerts(order.map(properties => ({ properties })));
+    assert.equal(alerts.length, 1, 'still one entry per event name');
+    assert.equal(alerts[0].wea, true, 'the phone-alerting product must be the one kept');
+  }
+});
+
+test('an in-place upgrade to the WEA tier re-announces as an emergency', () => {
+  // 2026-08-10: ordinary warnings at 3:55 and 3:57 PM, then the destructive
+  // one at 4:10 — same event name, same end time. Plain dedupe swallows it.
+  const now = 1_000_000;
+  const [ordinary] = summarizeWeatherAlerts([{ properties: ordinaryTstorm }]);
+  const [destructive] = summarizeWeatherAlerts([{ properties: destructiveTstorm }]);
+
+  const first = pickNewAlerts([ordinary], {}, now);
+  assert.equal(first.newAlerts.length, 1);
+  assert.equal(first.updatedSeen['Severe Thunderstorm Warning'].tier, 'r');
+
+  // Pretend the routine notice recorded where it landed.
+  const seen = {
+    'Severe Thunderstorm Warning': { ...first.updatedSeen['Severe Thunderstorm Warning'], msg: 'm1', ch: 'c1' }
+  };
+  const second = pickNewAlerts([destructive], seen, now);
+  assert.equal(second.newAlerts.length, 1, 'the upgrade must break through the dedupe');
+  const entry = second.updatedSeen['Severe Thunderstorm Warning'];
+  assert.equal(entry.tier, 'e');
+  // The routine notice is still tracked, so it is still cleaned up later.
+  assert.equal(entry.msg, 'm1');
+
+  // And it escalates exactly once.
+  const third = pickNewAlerts([destructive], second.updatedSeen, now);
+  assert.equal(third.newAlerts.length, 0);
+});
+
+test('an entry written before tiers existed never re-announces', () => {
+  // A deploy mid-alert must not re-ping for everything currently active, so
+  // "no tier recorded" is unknown, not "routine".
+  const now = 1_000_000;
+  const [destructive] = summarizeWeatherAlerts([{ properties: destructiveTstorm }]);
+  const legacy = { 'Severe Thunderstorm Warning': { until: now + 60_000, msg: 'm1', ch: 'c1' } };
+  assert.equal(pickNewAlerts([destructive], legacy, now).newAlerts.length, 0);
+});
 
 test('isEmergencyAlert covers the act-now events by name and by Extreme severity', () => {
   // By name, because NWS severity on tornado products is not dependable.

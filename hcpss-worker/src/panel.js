@@ -617,7 +617,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
                    `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
                    `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
-                   `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — a big yellow take-shelter post for tornado warnings and other life-safety alerts, any hour\n` +
+                   `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — a big yellow take-shelter post for the alerts NWS pushes to phones (tornado warning, destructive winds), any hour\n` +
                    `• ${emergencyPing ? '🟢' : '🔴'} **Emergency @everyone Ping** — let those emergency alerts ping @everyone (needs the bot to have *Mention Everyone*)\n` +
                    `• ${emailAlerts ? '🟢' : '🔴'} **HCPSS Email Notices** — post announcement emails that never reach the status page (no pings)\n` +
                    `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n\n` +
@@ -756,7 +756,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       {
         label: 'Emergency Alerts',
         value: 'toggle_emergency_alerts',
-        description: 'Big yellow take-shelter post for tornado warnings and the like, any hour',
+        description: 'The alerts that set off phone Emergency Alerts — tornado, destructive winds',
         emoji: { name: '🚨' },
         default: emergencyAlerts
       },
