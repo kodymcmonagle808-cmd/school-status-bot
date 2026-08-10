@@ -120,9 +120,20 @@ registration**, `wrangler deploy`).
   alert ends). That cleanup pass is deliberately separate from the scan: the
   scan returns early during quiet hours and skips any guild with no active
   alert, which is exactly the state a just-expired alert leaves behind. The
-  posted message id lives in the `nws_alerts_seen:<guild>` entry it already
-  writes, so tracking it costs one extra write per notice actually posted and
-  nothing per scan.
+  posted message ids live in the `nws_alerts_seen:<guild>` entry it already
+  writes (a `msgs` list, because one alert can produce both a quiet notice and
+  a later emergency post — a single id meant the second overwrote the first and
+  orphaned that message), so tracking costs one extra write per notice actually
+  posted and nothing per scan.
+  **Every path that drops an aged-out entry must delete its messages first.**
+  `pickNewAlerts` prunes expired entries and reports them in `expired`; the
+  cleanup pass acted on that list but the scan ignored it and wrote the pruned
+  map anyway, so any notice that expired between two scans lost its id and sat
+  in the channel forever with nothing left that knew it existed. On 2026-08-10
+  the 4:49 PM scan orphaned the tornado warning notice that had expired at
+  4:45, four minutes before cleanup would have taken it. Both writers now go
+  through `removeExpiredNotices`, which also puts back anything it could not
+  delete so the next pass retries instead of losing the id.
   Inside that scan sits a second tier: `isEmergencyAlert` (`weather.js`) picks
   out the act-now alerts and posts them as their own `@everyone` message
   instead of riding the routine notice. **The line is NWS's own, not a list
@@ -149,13 +160,15 @@ registration**, `wrangler deploy`).
   name, which is exactly what dedupe-by-event-name would swallow. A missing
   `tier` means *unknown*, never `'r'`, so a deploy mid-alert can't re-ping
   everything active. The GAS fingerprint carries the WEA flag for the same
-  reason: without it the upgrade is byte-identical and never pushes. Everything about the routine notice is wrong for them: it is
-  deliberately quiet ("no decision has been announced"), it never pings, and it
-  is deleted when the alert ends. So the emergency post is separate, has its
-  own toggles (`toggle_emergency_alerts`, `toggle_emergency_ping`), ignores
-  quiet hours, and is **never recorded for cleanup** — an `@everyone` ping
-  whose message is gone by the time anyone opens the server reads as a false
-  alarm. **The emergency set must stay a strict subset of
+  reason: without it the upgrade is byte-identical and never pushes.
+  The emergency post is a separate message rather than a louder routine
+  notice, because the routine one is deliberately quiet ("no decision has been
+  announced") and never pings. It has its own toggles
+  (`toggle_emergency_alerts`, `toggle_emergency_ping`) and ignores quiet hours,
+  but is cleaned up like any other notice — a "TAKE SHELTER NOW" banner still
+  at the top of the channel an hour after the tornado passed is its own kind of
+  wrong, and the log keeps the history. **The emergency set must stay a strict
+  subset of
   `isSchoolImpactIssuance`** (which is why that function now leads with the
   emergency check): the scan only ever sees school-impact alerts, so an
   emergency failing that filter is dropped before anything can announce it — a

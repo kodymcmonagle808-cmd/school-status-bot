@@ -46,16 +46,45 @@ const POST_UNTIL_MIN = 22 * 60;
 // notice), and is absent on entries written before the tiers existed. Absent
 // is deliberately not the same as 'r': it means "unknown", and only a known
 // 'r' can escalate, so a deploy mid-alert can't re-announce everything active.
+//
+// `msgs` is a *list* of the messages this alert has produced, as {m, c} pairs.
+// One alert can produce two: the quiet notice, and then the emergency post
+// when NWS upgrades it to the phone tier under the same event name. A single
+// msg/ch pair meant the second post overwrote the first one's id and orphaned
+// that message in the channel — the same leak as the pruning one, one level
+// down. Entries written before this are a bare msg/ch pair and normalize in.
 function seenEntry(value) {
   if (typeof value === 'number') {
-    return Number.isFinite(value) && value > 0 ? { until: value } : null;
+    return Number.isFinite(value) && value > 0 ? { until: value, msgs: [] } : null;
   }
   if (value && typeof value === 'object' && Number(value.until) > 0) {
-    const entry = { until: Number(value.until), msg: value.msg || '', ch: value.ch || '' };
+    const entry = { until: Number(value.until), msgs: [] };
     if (value.tier === 'e' || value.tier === 'r') entry.tier = value.tier;
+    for (const m of Array.isArray(value.msgs) ? value.msgs : []) {
+      if (m && m.m && m.c) entry.msgs.push({ m: String(m.m), c: String(m.c) });
+    }
+    // Falls back rather than branching on which key is present: an empty
+    // `msgs` must not shadow a legacy pair sitting beside it.
+    if (!entry.msgs.length && value.msg && value.ch) {
+      entry.msgs.push({ m: String(value.msg), c: String(value.ch) });
+    }
     return entry;
   }
   return null;
+}
+
+// Adds a posted message to every alert it announced, so all of them are
+// deleted when the alert is over. Returns whether anything was recorded.
+export function recordNotice(updatedSeen, alerts, messageId, channelId) {
+  if (!messageId || !channelId) return false;
+  let recorded = false;
+  for (const a of Array.isArray(alerts) ? alerts : []) {
+    const entry = a && a.event ? updatedSeen[a.event] : null;
+    if (!entry) continue;
+    entry.msgs = [...(entry.msgs || []), { m: String(messageId), c: String(channelId) }];
+    recorded = true;
+  }
+  return recorded;
 }
 
 // Splits currently active school-impact alerts into ones not yet announced for
@@ -75,8 +104,10 @@ export function pickNewAlerts(alerts, seen, nowMs) {
     if (!entry) continue;
     if (entry.until > nowMs) {
       cleaned[event] = entry;
-    } else if (entry.msg && entry.ch) {
-      expired.push({ event, msg: entry.msg, ch: entry.ch });
+    } else if (entry.msgs.length) {
+      // `until` rides along so a failed delete can be put back in the map and
+      // retried, instead of leaving a message nothing knows about any more.
+      expired.push({ event, until: entry.until, msgs: entry.msgs });
     }
   }
 
@@ -98,9 +129,9 @@ export function pickNewAlerts(alerts, seen, nowMs) {
       // worth pinging for. It happened on 2026-08-10: ordinary warnings at
       // 3:55 and 3:57 PM, then the 80 mph destructive one at 4:10.
       //
-      // msg/ch are carried through, so the routine notice already posted is
-      // still cleaned up when the alert ends; only the emergency message
-      // (which records no id) outlives it.
+      // The already-posted quiet notice stays in `msgs`, and the emergency
+      // post appends to it rather than replacing it, so both come down when
+      // the alert ends.
       if (prev.tier === 'r' && isEmergencyAlert(a)) {
         cleaned[a.event] = { ...next, tier: 'e' };
         newAlerts.push(a);
@@ -109,7 +140,7 @@ export function pickNewAlerts(alerts, seen, nowMs) {
       cleaned[a.event] = next;
       continue;
     }
-    cleaned[a.event] = { until, tier: isEmergencyAlert(a) ? 'e' : 'r' };
+    cleaned[a.event] = { until, tier: isEmergencyAlert(a) ? 'e' : 'r', msgs: [] };
     newAlerts.push(a);
   }
   return { newAlerts, updatedSeen: cleaned, expired };
@@ -302,6 +333,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
   const alertsByZone = new Map();
   const nowMs = now.getTime();
   let sent = 0;
+  let deletedByScan = 0;
 
   for (const gid of guildIds) {
     try {
@@ -340,8 +372,18 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
         if (rawSeen) seen = JSON.parse(rawSeen) || {};
       } catch {}
 
-      const { newAlerts, updatedSeen } = pickNewAlerts(eligible, seen, nowMs);
+      const { newAlerts, updatedSeen, expired } = pickNewAlerts(eligible, seen, nowMs);
+      // Nothing to announce: leave the map alone. Any aged-out entries stay
+      // put and the cleanup pass takes them, which is why this returns before
+      // touching `expired` rather than after.
       if (!newAlerts.length) continue;
+
+      // The write below drops the aged-out entries — and their message ids with
+      // them — so their notices have to come down first or they are orphaned in
+      // the channel with nothing left that knows they exist.
+      if (expired.length) {
+        deletedByScan += (await removeExpiredNotices(env, expired, updatedSeen)).deleted;
+      }
 
       // Mark before posting so a delayed cron tick can't double-post.
       await env.STATUS_KV.put(`nws_alerts_seen:${gid}`, JSON.stringify(updatedSeen));
@@ -372,10 +414,11 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           logActionError(`🚨 EMERGENCY alert (${events}) FAILED to post to <#${cfg.alert_channel_id}> — retrying next scan.`, { guildId: gid });
         } else {
           sent++;
-          // Note what is *not* recorded: no msg/ch, so the cleanup pass leaves
-          // this message alone. An @everyone ping whose message has been
-          // deleted by the time anyone opens the server reads as a false alarm,
-          // and this is the one notice worth keeping as a record.
+          // Recorded for cleanup like any other notice, so it comes down when
+          // the alert ends. A live "TAKE SHELTER NOW" banner still sitting at
+          // the top of the channel an hour after the tornado passed is its own
+          // kind of wrong, and the alert history lives in the logs regardless.
+          if (recordNotice(updatedSeen, emergency, posted, cfg.alert_channel_id)) seenDirty = true;
           logAction(`🚨 EMERGENCY alert (${events}) posted to <#${cfg.alert_channel_id}>${cfg.toggle_emergency_ping !== false ? ' with @everyone' : ''}.`, { guildId: gid });
         }
       }
@@ -404,14 +447,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           // can delete it once the alert is over. A second write, but only on a
           // real post (a handful per storm) — it cannot replace the
           // mark-before-post write above without reopening the double-post hole.
-          if (posted) {
-            for (const a of routine) {
-              if (updatedSeen[a.event]) {
-                updatedSeen[a.event] = { ...updatedSeen[a.event], msg: posted, ch: cfg.alert_channel_id };
-              }
-            }
-            seenDirty = true;
-          }
+          if (recordNotice(updatedSeen, routine, posted, cfg.alert_channel_id)) seenDirty = true;
           logAction(`⚠️ NWS issuance notice (${routine.map(a => a.event).join(', ')}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
         }
       }
@@ -429,7 +465,8 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
       console.error(`NWS issuance notice failed for guild ${gid}:`, e);
     }
   }
-  return { sent };
+  if (deletedByScan) logAction(`Deleted ${deletedByScan} expired NWS notice(s) while announcing new ones.`);
+  return { sent, deleted: deletedByScan };
 }
 
 // --- Deleting notices once their alert is over ---
@@ -440,13 +477,14 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
 // skips a guild entirely when no school-impact alert is active — which is
 // exactly the state a just-expired alert leaves behind.
 //
-// Every 15 minutes, so a notice outlives its alert by at most that. A clock
-// gate costs zero KV ops; the per-guild reads only happen on the gate minute,
-// and nothing is written unless something was actually deleted.
-export const CLEANUP_MINUTE_OFFSET = 9;
+// Every 5 minutes, so a notice outlives its alert by at most that. A clock
+// gate costs zero KV ops; the per-guild reads only happen on the gate minute
+// (a read, not a write — 288/day/guild against a 100,000/day read budget), and
+// nothing is written unless something was actually deleted.
+export const CLEANUP_MINUTE_OFFSET = 4;
 
 export function isNoticeCleanupMinute(minuteOfHour) {
-  return minuteOfHour % 15 === CLEANUP_MINUTE_OFFSET;
+  return minuteOfHour % 5 === CLEANUP_MINUTE_OFFSET;
 }
 
 // Removes one posted notice. A 404 means it is already gone (deleted by hand,
@@ -465,6 +503,47 @@ async function deleteNotice(env, channelId, messageId) {
     console.error('NWS notice delete threw:', e);
     return false;
   }
+}
+
+// Deletes the notices for entries that just aged out of the seen map, and puts
+// any that could not be deleted back into it so the next pass retries rather
+// than losing the message id.
+//
+// Shared by both writers of `nws_alerts_seen`, which is the whole point:
+// **every path that drops an aged-out entry must delete its message first.**
+// The scan used to prune entries and write the pruned map without ever looking
+// at `expired`, so any notice that expired between two scans was orphaned —
+// its id gone from KV, the message left in the channel forever. On 2026-08-10
+// the 4:49 PM scan silently orphaned the tornado warning notice that had
+// expired at 4:45, four minutes before the cleanup pass would have removed it.
+async function removeExpiredNotices(env, expired, updatedSeen) {
+  // One message can announce several alerts at once. Don't delete it while any
+  // alert still riding on it is active — otherwise a notice covering a watch
+  // until 10 PM and a warning until 6 AM vanishes at 10 PM.
+  const stillLive = new Set();
+  for (const entry of Object.values(updatedSeen)) {
+    for (const m of (entry && entry.msgs) || []) stillLive.add(m.m);
+  }
+
+  const handled = new Set();
+  let deleted = 0;
+  for (const e of expired) {
+    const failed = [];
+    for (const m of e.msgs || []) {
+      if (stillLive.has(m.m) || handled.has(m.m)) continue;
+      if (await deleteNotice(env, m.c, m.m)) {
+        handled.add(m.m);
+        deleted++;
+      } else {
+        failed.push(m);
+      }
+    }
+    // Keep whatever wouldn't delete. Its `until` is already in the past, so it
+    // is pruned and retried immediately next time — and because it stays out
+    // of the live map, a re-issued alert of the same name still announces.
+    if (failed.length) updatedSeen[e.event] = { until: e.until, msgs: failed };
+  }
+  return { deleted };
 }
 
 // Runs from the per-minute cron. Deletes each guild's issuance notices whose
@@ -492,28 +571,9 @@ export async function maybeCleanupExpiredAlertNotices(env, now = new Date()) {
       const { updatedSeen, expired } = pickNewAlerts([], seen, nowMs);
       if (!expired.length) continue;
 
-      // One message can announce several alerts at once. Don't delete it while
-      // any alert still riding on it is active — otherwise a notice covering a
-      // watch until 10 PM and a warning until 6 AM vanishes at 10 PM.
-      const stillLive = new Set(
-        Object.values(updatedSeen).map(e => e && e.msg).filter(Boolean)
-      );
-
-      let allCleared = true;
-      const handled = new Set();
-      for (const e of expired) {
-        if (stillLive.has(e.msg) || handled.has(e.msg)) continue;
-        if (await deleteNotice(env, e.ch, e.msg)) {
-          handled.add(e.msg);
-          deleted++;
-        } else {
-          allCleared = false;
-        }
-      }
-
-      // Only drop the entries once their message is actually gone, so a failed
-      // delete retries on the next pass instead of leaking the message id.
-      if (!allCleared) continue;
+      // Puts anything it couldn't delete back into updatedSeen, so the write
+      // below never loses a message id.
+      deleted += (await removeExpiredNotices(env, expired, updatedSeen)).deleted;
 
       if (Object.keys(updatedSeen).length) {
         await env.STATUS_KV.put(`nws_alerts_seen:${gid}`, JSON.stringify(updatedSeen));

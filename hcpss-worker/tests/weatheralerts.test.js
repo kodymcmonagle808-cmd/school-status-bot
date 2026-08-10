@@ -5,7 +5,8 @@ import { isSchoolImpactIssuance, isEmergencyAlert, isWeaAlert, summarizeWeatherA
 import {
   pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET,
   maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET,
-  maybeSendWeatherAlertNotices, splitEmergencyAlerts, buildEmergencyMessage, emergencyActionLine
+  maybeSendWeatherAlertNotices, splitEmergencyAlerts, buildEmergencyMessage, emergencyActionLine,
+  recordNotice
 } from '../src/weatheralerts.js';
 import worker from '../src/index.js';
 
@@ -100,8 +101,7 @@ test('pickNewAlerts carries a later end time forward when NWS extends an alert',
   assert.equal(newAlerts.length, 0, 'an extension is not a new alert');
   assert.equal(updatedSeen['Winter Storm Warning'].until, now + 90_000);
   // The posted message is still tracked, so it can be deleted at the new time.
-  assert.equal(updatedSeen['Winter Storm Warning'].msg, 'm1');
-  assert.equal(updatedSeen['Winter Storm Warning'].ch, 'c1');
+  assert.deepEqual(updatedSeen['Winter Storm Warning'].msgs, [{ m: 'm1', c: 'c1' }]);
 });
 
 test('pickNewAlerts reports expired entries that still have a notice to delete', () => {
@@ -113,7 +113,7 @@ test('pickNewAlerts reports expired entries that still have a notice to delete',
   };
   // An empty alert list is the cleanup pass's "what aged out?" query.
   const { expired, updatedSeen } = pickNewAlerts([], seen, now);
-  assert.deepEqual(expired, [{ event: 'Tornado Watch', msg: 'm1', ch: 'c1' }]);
+  assert.deepEqual(expired, [{ event: 'Tornado Watch', until: now - 1, msgs: [{ m: 'm1', c: 'c1' }] }]);
   assert.deepEqual(Object.keys(updatedSeen), ['Winter Storm Warning']);
 });
 
@@ -407,15 +407,19 @@ test('a failed delete keeps the entry so the next pass retries', async (t) => {
   const now = cleanupNow();
   t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 500 }));
 
-  const seen = JSON.stringify({
-    'Tornado Watch': { until: now.getTime() - 60_000, msg: 'msg-1', ch: 'chan-1' }
+  const until = now.getTime() - 60_000;
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'nws_alerts_seen:g1': JSON.stringify({ 'Tornado Watch': { until, msg: 'msg-1', ch: 'chan-1' } })
   });
-  const kv = kvStub({ guild_index: JSON.stringify(['g1']), 'nws_alerts_seen:g1': seen });
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'tok' };
 
   const result = await maybeCleanupExpiredAlertNotices(env, now);
   assert.equal(result.deleted, 0);
-  assert.equal(kv.map.get('nws_alerts_seen:g1'), seen, 'the message id must not be lost');
+  // Kept (normalized to the list shape) so the next pass retries it.
+  assert.deepEqual(JSON.parse(kv.map.get('nws_alerts_seen:g1')), {
+    'Tornado Watch': { until, msgs: [{ m: 'msg-1', c: 'chan-1' }] }
+  }, 'the message id must not be lost');
 });
 
 test('off-gate minutes do no work at all', async (t) => {
@@ -470,8 +474,7 @@ test('a posted notice records where it landed so it can be deleted later', async
   await Promise.all(waited);
 
   const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
-  assert.equal(seen['Tornado Watch'].msg, 'posted-99');
-  assert.equal(seen['Tornado Watch'].ch, 'chan-1');
+  assert.deepEqual(seen['Tornado Watch'].msgs, [{ m: 'posted-99', c: 'chan-1' }]);
   assert.equal(seen['Tornado Watch'].until, Date.parse('2026-01-07T22:00:00Z'));
 });
 
@@ -584,16 +587,16 @@ test('an in-place upgrade to the WEA tier re-announces as an emergency', () => {
   assert.equal(first.newAlerts.length, 1);
   assert.equal(first.updatedSeen['Severe Thunderstorm Warning'].tier, 'r');
 
-  // Pretend the routine notice recorded where it landed.
-  const seen = {
-    'Severe Thunderstorm Warning': { ...first.updatedSeen['Severe Thunderstorm Warning'], msg: 'm1', ch: 'c1' }
-  };
+  // The routine notice records where it landed.
+  recordNotice(first.updatedSeen, first.newAlerts, 'm1', 'c1');
+  const seen = first.updatedSeen;
   const second = pickNewAlerts([destructive], seen, now);
   assert.equal(second.newAlerts.length, 1, 'the upgrade must break through the dedupe');
   const entry = second.updatedSeen['Severe Thunderstorm Warning'];
   assert.equal(entry.tier, 'e');
-  // The routine notice is still tracked, so it is still cleaned up later.
-  assert.equal(entry.msg, 'm1');
+  // The quiet notice is still tracked, so it is still cleaned up later — the
+  // emergency post appends to this list rather than replacing it.
+  assert.deepEqual(entry.msgs, [{ m: 'm1', c: 'c1' }]);
 
   // And it escalates exactly once.
   const third = pickNewAlerts([destructive], second.updatedSeen, now);
@@ -775,9 +778,13 @@ test('an emergency alert posts in the middle of the night, when a routine one wa
   assert.ok(!seen['Winter Weather Advisory'], 'a held-back alert must not be marked seen');
 });
 
-test('an emergency notice is never deleted when its alert ends', async (t) => {
+test('an emergency notice is deleted once its alert ends, like any other', async (t) => {
   const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET
-  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ id: 'm-99' }), { status: 200 }));
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response(JSON.stringify({ id: 'm-99' }), { status: 200 });
+  });
 
   const kv = kvStub({
     guild_index: JSON.stringify(['g1']),
@@ -787,18 +794,127 @@ test('an emergency notice is never deleted when its alert ends', async (t) => {
 
   await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
   const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
-  // No msg/ch recorded: an @everyone ping whose message has been deleted by the
-  // time anyone opens the server reads as a false alarm.
-  assert.equal(seen['Tornado Warning'].msg, undefined);
-  assert.equal(seen['Tornado Warning'].ch, undefined);
+  assert.deepEqual(seen['Tornado Warning'].msgs, [{ m: 'm-99', c: 'chan-1' }]);
 
-  // And the cleanup pass finds nothing to remove once it expires.
+  // A "TAKE SHELTER NOW" banner still at the top of the channel an hour after
+  // the tornado passed is its own kind of wrong.
   const later = cleanupNow();
   kv.map.set('nws_alerts_seen:g1', JSON.stringify({
-    'Tornado Warning': { until: later.getTime() - 1000 }
+    'Tornado Warning': { until: later.getTime() - 1000, msgs: [{ m: 'm-99', c: 'chan-1' }] }
   }));
   const cleaned = await maybeCleanupExpiredAlertNotices(emergencyEnv(kv), later);
-  assert.equal(cleaned.deleted, 0);
+  assert.equal(cleaned.deleted, 1);
+  assert.deepEqual(deletes, ['https://discord.com/api/v10/channels/chan-1/messages/m-99']);
+  assert.ok(!kv.map.has('nws_alerts_seen:g1'));
+});
+
+// The 2026-08-10 leak. pickNewAlerts prunes aged-out entries and reports them
+// in `expired`; the cleanup pass acted on that list but the scan ignored it,
+// then wrote the pruned map anyway. Any notice that expired between two scans
+// lost its message id and was left in the channel with nothing that knew it
+// existed — that afternoon's 4:49 PM scan orphaned the tornado warning notice
+// that had expired at 4:45, four minutes before cleanup would have taken it.
+test('the scan deletes the notices it prunes instead of orphaning them', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response(JSON.stringify({ id: 'm-new' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' }),
+    // Already announced and already over — exactly the state the scan used to
+    // drop on the floor.
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Tornado Warning': { until: now.getTime() - 60_000, msgs: [{ m: 'stale-1', c: 'chan-1' }] }
+    })
+  });
+  // A brand-new alert, so the scan posts and rewrites the map.
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.deleted, 1, 'the expired notice must come down');
+  assert.deepEqual(deletes, ['https://discord.com/api/v10/channels/chan-1/messages/stale-1']);
+
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  assert.ok(!seen['Tornado Warning'], 'and only then leave the map');
+  assert.deepEqual(seen['Heat Advisory'].msgs, [{ m: 'm-new', c: 'chan-1' }]);
+});
+
+test('a scan with nothing to announce leaves expired entries for the cleanup pass', async (t) => {
+  // The early return must come before the deletion, not after: the cleanup
+  // pass is what handles this case, and doing it here too would just add
+  // Discord calls to every quiet scan.
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z'));
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+
+  const stale = JSON.stringify({
+    // Over, its notice still up.
+    'Tornado Warning': { until: now.getTime() - 60_000, msgs: [{ m: 'stale-1', c: 'chan-1' }] },
+    // Still running and already announced, so the scan finds nothing new.
+    'Heat Advisory': { until: now.getTime() + 36_000_000, msgs: [{ m: 'live-1', c: 'chan-1' }] }
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' }),
+    'nws_alerts_seen:g1': stale,
+    weather_alerts_cache: JSON.stringify([
+      { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    ])
+  });
+
+  await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.deepEqual(deletes, []);
+  assert.equal(kv.map.get('nws_alerts_seen:g1'), stale, 'the entry survives for the cleanup pass');
+});
+
+test('an escalated alert keeps both its messages and deletes both', async (t) => {
+  // The quiet notice went out first, then NWS upgraded the same event to the
+  // phone tier. Recording only the latest message id would orphan the first.
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z'));
+  const deletes = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (init && init.method === 'DELETE') deletes.push(String(url).split('/messages/')[1]);
+    return new Response(JSON.stringify({ id: 'emergency-msg' }), { status: 200 });
+  });
+
+  const [destructive] = summarizeWeatherAlerts([{ properties: destructiveTstorm }]);
+  const endsMs = now.getTime() + 1_800_000;
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' }),
+    'nws_alerts_seen:g1': JSON.stringify({
+      'Severe Thunderstorm Warning': { until: endsMs, tier: 'r', msgs: [{ m: 'quiet-msg', c: 'chan-1' }] }
+    }),
+    weather_alerts_cache: JSON.stringify([{ ...destructive, endsMs }])
+  });
+
+  await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
+  assert.deepEqual(seen['Severe Thunderstorm Warning'].msgs, [
+    { m: 'quiet-msg', c: 'chan-1' },
+    { m: 'emergency-msg', c: 'chan-1' }
+  ], 'both posts must stay tracked');
+
+  // When it ends, both come down.
+  const later = cleanupNow();
+  kv.map.set('nws_alerts_seen:g1', JSON.stringify({
+    'Severe Thunderstorm Warning': {
+      until: later.getTime() - 1000,
+      msgs: [{ m: 'quiet-msg', c: 'chan-1' }, { m: 'emergency-msg', c: 'chan-1' }]
+    }
+  }));
+  const cleaned = await maybeCleanupExpiredAlertNotices(emergencyEnv(kv), later);
+  assert.equal(cleaned.deleted, 2);
+  assert.deepEqual(deletes.sort(), ['emergency-msg', 'quiet-msg']);
 });
 
 test('an emergency alert still posts for a guild that turned routine notices off', async (t) => {
@@ -912,10 +1028,10 @@ test('an emergency and a routine alert in one scan post as separate messages', a
   assert.equal(messages[1].body.content, undefined);
   assert.match(messages[1].body.embeds[0].title, /Heat Advisory/);
 
-  // Only the routine one is tracked for deletion.
+  // Both are tracked for deletion, each pointing at its own message.
   const seen = JSON.parse(kv.map.get('nws_alerts_seen:g1'));
-  assert.equal(seen['Heat Advisory'].msg, 'm-routine');
-  assert.equal(seen['Tornado Warning'].msg, undefined);
+  assert.deepEqual(seen['Heat Advisory'].msgs, [{ m: 'm-routine', c: 'chan-1' }]);
+  assert.deepEqual(seen['Tornado Warning'].msgs, [{ m: 'm-routine', c: 'chan-1' }]);
 });
 
 test('/status-hook requires the shared secret and acks a valid ping', async (t) => {
