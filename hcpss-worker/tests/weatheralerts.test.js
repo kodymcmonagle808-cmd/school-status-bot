@@ -561,7 +561,7 @@ test('buildEmergencyMessage pings @everyone and leads with the action', () => {
   assert.match(msg.content, /^@everyone\n/);
   // Markdown headings are the only way to make the text physically bigger.
   assert.match(msg.content, /^@everyone\n# 🚨 TORNADO WARNING\n## Howard County — TAKE SHELTER NOW/);
-  assert.equal(msg.embeds[0].color, 0xFF0000);
+  assert.equal(msg.embeds[0].color, 0xFFD700);
   assert.match(msg.embeds[0].title, /🚨 TORNADO WARNING — Howard County/);
   assert.match(msg.embeds[0].description, /TAKE SHELTER NOW/);
   assert.equal(msg.embeds[0].fields[0].value, 'TAKE COVER NOW!');

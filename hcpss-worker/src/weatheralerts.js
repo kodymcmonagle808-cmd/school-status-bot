@@ -117,7 +117,10 @@ export function issuanceEmbedColor(alerts) {
 // the same pass, and folding the first into the second is how a life-safety
 // alert ends up as the second bullet of a forecast summary.
 
-const EMERGENCY_COLOR = 0xFF0000;
+// Gold rather than the 0xF1C40F the advisory-tier issuance notice uses — the
+// two sit next to each other in the same channel, so the emergency needs to be
+// the brighter of the two at a glance.
+const EMERGENCY_COLOR = 0xFFD700;
 const DISCORD_CONTENT_LIMIT = 2000;
 const EMBED_FIELD_LIMIT = 1024;
 
