@@ -36,6 +36,25 @@ name: Worker uptime check
 # the alert path is loud (GitHub issue + Discord ping), so one bad sample must
 # not be enough to fire it — the same one-missed-tick tolerance already built
 # into MAX_CRON_AGE_MINUTES.
+#
+# The issue bookkeeping is equally untrustworthy and must never be load-
+# bearing. Both `gh` steps talk to api.github.com, both assign the result with
+# `EXISTING=$(gh issue list ...)`, and under `bash -e` that assignment failing
+# kills the step outright. On 2026-08-11 the 23:21 run probed the Worker,
+# reported it healthy, and then went red because that lookup hit a transient
+# "tls: failed to verify certificate" from GitHub's own API — a red uptime
+# check on a Worker that was fine, which is precisely the signal this workflow
+# is supposed to reserve for an outage. Every `gh` call here now retries and
+# then degrades to a warning, and the recovery step carries
+# continue-on-error so bookkeeping can never colour the job.
+#
+# The two paths degrade in opposite directions on purpose. Recovery is
+# cosmetic: if it can't reach the API, stay quiet and let the next healthy run
+# close the issue. Alerting is not: if the dedupe lookup can't be resolved,
+# post to Discord anyway. A duplicate ping during an outage is cheap; a
+# swallowed one is the whole failure this workflow exists to prevent. For the
+# same reason the Discord post is the last thing in the step and nothing that
+# touches an issue is allowed to abort before it.
 
 on:
   workflow_dispatch:
@@ -106,28 +125,78 @@ jobs:
           LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
           REASON: ${{ steps.probe.outputs.reason }}
         run: |
-          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          find_issue() {
+            local found=""
+            for i in 1 2 3; do
+              if found=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                  --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty'); then
+                printf '%s' "$found"
+                return 0
+              fi
+              echo "Issue lookup attempt ${i} failed." >&2
+              sleep $(( i * 5 ))
+            done
+            return 1
+          }
+
+          # A lookup we could not resolve must not silence the alert: fall
+          # through to Discord without the issue, and let the next failing run
+          # open one once the API is reachable again.
+          DEDUPE_KNOWN=1
+          if ! EXISTING=$(find_issue); then
+            echo "::warning::Could not reach the GitHub API to check for an open issue — alerting anyway."
+            EXISTING=""
+            DEDUPE_KNOWN=0
+          fi
           if [ -n "$EXISTING" ]; then
             echo "Issue #$EXISTING already open — still failing, staying quiet."
             exit 0
           fi
-          gh issue create --repo "${{ github.repository }}" --title "$ISSUE_TITLE" \
-            --body "The live Worker health check failed: ${REASON:-unknown reason}. This issue auto-closes when the check recovers."
+          if [ "$DEDUPE_KNOWN" = "1" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --body "The live Worker health check failed: ${REASON:-unknown reason}. This issue auto-closes when the check recovers." \
+              || echo "::warning::Could not open the tracking issue — sending the Discord alert regardless."
+          fi
           CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
           jq -n --arg content "🚨 **Worker health check failed** — ${REASON:-unknown reason}. Checks run every 20 minutes; you'll get a recovery log when it comes back." '{content: $content}' \
             | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
                 -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null
 
+      # Bookkeeping only, so continue-on-error: the probe has already declared
+      # the Worker healthy by this point and nothing here may overturn that
+      # verdict. Without it a bad minute at api.github.com prints an X on a
+      # run that proved the Worker up.
       - name: Close issue on recovery
         if: success()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
         run: |
-          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty')
+          find_issue() {
+            local found=""
+            for i in 1 2 3; do
+              if found=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                  --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number // empty'); then
+                printf '%s' "$found"
+                return 0
+              fi
+              echo "Issue lookup attempt ${i} failed." >&2
+              sleep $(( i * 5 ))
+            done
+            return 1
+          }
+
+          # Nothing here is urgent: an unreachable API just means the next
+          # healthy run posts the recovery instead of this one.
+          if ! EXISTING=$(find_issue); then
+            echo "::warning::Could not reach the GitHub API to check for an open issue — leaving recovery to the next run."
+            exit 0
+          fi
           if [ -z "$EXISTING" ]; then exit 0; fi
-          gh issue close "$EXISTING" --repo "${{ github.repository }}" --comment "Health check recovered."
+          gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" --comment "Health check recovered." \
+            || echo "::warning::Could not close issue #${EXISTING} — posting the recovery line anyway."
           CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
           jq -n --arg content "✅ **Worker health check recovered** — /health is responding and the cron heartbeat is fresh." '{content: $content}' \
             | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
