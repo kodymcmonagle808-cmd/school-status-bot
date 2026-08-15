@@ -5,6 +5,14 @@ name: Worker uptime check
 # mode nothing else catches: a deployed Worker whose cron silently stopped
 # firing.
 #
+# That last one is not hypothetical and not a bug in this repo: Cloudflare's
+# scheduler drops Workers silently and it has happened here. When it does, the
+# "Re-arm the cron trigger" step below fixes it automatically by deleting and
+# re-adding the schedule — see that step's comment for why a plain re-PUT is
+# not enough. Detection is still bounded by the poll interval below, so the
+# outage lasts until a run notices; the step only removes the human from the
+# recovery.
+#
 # The schedule below asks for every 20 minutes but does NOT get it: GitHub
 # throttles scheduled workflows, and the observed gap between runs is a median
 # of 95 minutes (min 59, max 213 over a two-day sample). Real notice of a dead
@@ -79,23 +87,29 @@ jobs:
         timeout-minutes: 5
         run: |
           REASON=""
+          VERDICT=""
           for ATTEMPT in 1 2; do
             REASON=""
+            VERDICT=""
             set +e
             BODY=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 "$HEALTH_URL")
             CURL_RC=$?
             set -e
             if [ "$CURL_RC" -ne 0 ]; then
+              VERDICT="unreachable"
               REASON="Worker unreachable (curl exit ${CURL_RC})"
             elif ! echo "$BODY" | jq -e '.ok == true' >/dev/null 2>&1; then
+              VERDICT="unhealthy"
               REASON="Worker responded but not healthy: $(echo "$BODY" | head -c 300)"
             else
               TICK=$(echo "$BODY" | jq -r '.lastCronTickAt // empty')
               if [ -z "$TICK" ]; then
+                VERDICT="no_heartbeat"
                 REASON="No cron heartbeat recorded yet (lastCronTickAt is null)"
               else
                 AGE_MIN=$(( ( $(date +%s) - $(date -d "$TICK" +%s) ) / 60 ))
                 if [ "$AGE_MIN" -gt "$MAX_CRON_AGE_MINUTES" ]; then
+                  VERDICT="stale_heartbeat"
                   REASON="Cron heartbeat is ${AGE_MIN} minutes old (limit ${MAX_CRON_AGE_MINUTES}) — the cron may have stopped firing"
                 fi
               fi
@@ -107,11 +121,120 @@ jobs:
             fi
           done
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          echo "verdict=${VERDICT:-ok}" >> "$GITHUB_OUTPUT"
           if [ -n "$REASON" ]; then
             echo "::error::$REASON"
             exit 1
           fi
           echo "Healthy. gitSha=$(echo "$BODY" | jq -r .gitSha) lastCronTickAt=$(echo "$BODY" | jq -r .lastCronTickAt)"
+
+      # Only the re-arm below needs the repo (for wrangler.toml), and it only
+      # runs on one specific failure — so this is gated the same way rather
+      # than checked out on every run. A healthy check stays a single curl.
+      - name: Checkout
+        if: failure() && steps.probe.outputs.verdict == 'stale_heartbeat'
+        uses: actions/checkout@v7
+
+      # Cloudflare's cron scheduler drops Workers silently: the trigger stays
+      # registered and readable, the Worker keeps serving fetch normally, and
+      # scheduled() simply stops being invoked with no error, no exception and
+      # no log anywhere. It is a platform bug with many public reports, not
+      # something a change in this repo can prevent. On 2026-08-15 it stopped
+      # at 10:21 UTC and stayed dead for four hours; Cloudflare's own
+      # /schedules endpoint still reported `* * * * *` the whole time, and
+      # re-PUTting that same expression did NOT restore it — only deleting the
+      # schedule and re-adding it, which mints a fresh `created_on`, brought
+      # the scheduler back (first tick landed ~20s later).
+      #
+      # So the recovery is mechanical and known, which makes it worth doing
+      # automatically rather than paging a human to run three curls. Gated
+      # hard on `stale_heartbeat`: that is the one verdict this actually fixes.
+      # An unreachable or unhealthy Worker is a different failure and re-arming
+      # its trigger would be superstition, so those alert without touching
+      # anything.
+      #
+      # It re-adds whatever was registered rather than a hardcoded expression,
+      # so this can never drift from wrangler.toml's `[triggers] crons`.
+      #
+      # continue-on-error, and every failure path still sets an output: the
+      # alert below is the point of the workflow and nothing here may abort
+      # before it runs. A heal that worked is still reported — a cron that
+      # died and was resurrected is exactly the kind of thing you want to see
+      # in the log channel, not silently swallowed.
+      - name: Re-arm the cron trigger
+        id: heal
+        if: failure() && steps.probe.outputs.verdict == 'stale_heartbeat'
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          WORKER_NAME: hcpss-worker
+        run: |
+          set +e
+          emit() { echo "healed=$1" >> "$GITHUB_OUTPUT"; echo "detail=$2" >> "$GITHUB_OUTPUT"; echo "$2"; }
+
+          if [ -z "$CF_API_TOKEN" ] || [ -z "$CF_ACCOUNT_ID" ]; then
+            emit "false" "CF_API_TOKEN/CF_ACCOUNT_ID not available, so the trigger could not be re-armed automatically."
+            exit 0
+          fi
+
+          API="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}/schedules"
+          AUTH="Authorization: Bearer ${CF_API_TOKEN}"
+
+          CURRENT=$(curl -sS --max-time 20 -H "$AUTH" "$API")
+          if ! echo "$CURRENT" | jq -e '.success == true' >/dev/null 2>&1; then
+            emit "false" "Could not read the current cron schedule from Cloudflare, so it was left untouched."
+            exit 0
+          fi
+
+          PAYLOAD=$(echo "$CURRENT" | jq -c '[.result.schedules[] | {cron: .cron}]')
+          COUNT=$(echo "$PAYLOAD" | jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
+            # Nothing registered at all. The likeliest cause is an earlier run
+            # of this very step dying between the clear and the re-add below —
+            # a state strictly worse than the stale trigger it was fixing, and
+            # one the Worker cannot recover from on its own. Rebuild it from
+            # wrangler.toml (the same source the deploy uses) instead of
+            # waiting for a human to notice and push.
+            TOML_CRONS=$(sed -n 's/^[[:space:]]*crons[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' hcpss-worker/wrangler.toml 2>/dev/null | head -1)
+            PAYLOAD=$(echo "[${TOML_CRONS}]" | jq -c '[.[] | {cron: .}]' 2>/dev/null)
+            COUNT=$(echo "${PAYLOAD:-[]}" | jq 'length' 2>/dev/null || echo 0)
+            if [ "${COUNT:-0}" -eq 0 ]; then
+              emit "false" "No cron trigger is registered and none could be read from wrangler.toml — re-deploy the Worker."
+              exit 0
+            fi
+            echo "Nothing was registered; rebuilding from wrangler.toml."
+          fi
+          echo "Re-arming schedule: $PAYLOAD"
+
+          # Delete then re-add. Re-PUTting the same expression is not enough —
+          # it only bumps modified_on and the scheduler stays stuck.
+          CLEARED=$(curl -sS --max-time 20 -X PUT -H "$AUTH" -H "Content-Type: application/json" -d '[]' "$API")
+          if ! echo "$CLEARED" | jq -e '.success == true' >/dev/null 2>&1; then
+            emit "false" "Could not clear the cron schedule; it is unchanged and still registered."
+            exit 0
+          fi
+          sleep 10
+
+          RESTORED=$(curl -sS --max-time 20 -X PUT -H "$AUTH" -H "Content-Type: application/json" -d "$PAYLOAD" "$API")
+          if ! echo "$RESTORED" | jq -e '.success == true' >/dev/null 2>&1; then
+            # The schedule is now empty and that is far worse than stale, so
+            # retry hard before giving up and shouting about it.
+            for i in 1 2 3; do
+              sleep $(( i * 5 ))
+              RESTORED=$(curl -sS --max-time 20 -X PUT -H "$AUTH" -H "Content-Type: application/json" -d "$PAYLOAD" "$API")
+              if echo "$RESTORED" | jq -e '.success == true' >/dev/null 2>&1; then break; fi
+            done
+          fi
+          if ! echo "$RESTORED" | jq -e '.success == true' >/dev/null 2>&1; then
+            emit "false" "@here the cron schedule was cleared but could NOT be restored — re-deploy the Worker to re-register it."
+            echo "::error::Cron schedule cleared but not restored."
+            exit 0
+          fi
+
+          NEWCRON=$(echo "$RESTORED" | jq -r '[.result.schedules[].cron] | join(", ")')
+          emit "true" "Re-armed the cron trigger (${NEWCRON}). The next check confirms whether ticks resumed."
 
       # Guarded on the probe's own verdict, not bare failure(): only a probe
       # that actually ran and actually judged the Worker unhealthy may open an
@@ -124,6 +247,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           LOG_CHANNEL: ${{ secrets.DISCORD_LOG_CHANNEL_ID }}
           REASON: ${{ steps.probe.outputs.reason }}
+          HEAL_DETAIL: ${{ steps.heal.outputs.detail }}
         run: |
           find_issue() {
             local found=""
@@ -154,11 +278,16 @@ jobs:
           fi
           if [ "$DEDUPE_KNOWN" = "1" ]; then
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
-              --body "The live Worker health check failed: ${REASON:-unknown reason}. This issue auto-closes when the check recovers." \
+              --body "The live Worker health check failed: ${REASON:-unknown reason}. ${HEAL_DETAIL} This issue auto-closes when the check recovers." \
               || echo "::warning::Could not open the tracking issue — sending the Discord alert regardless."
           fi
+          # The heal line replaces the stock "wait for it to come back" tail
+          # when a re-arm ran, because in that case something was actively done
+          # about it and saying otherwise reads as a shrug.
           CHANNEL="${LOG_CHANNEL:-1524911607942221965}"
-          jq -n --arg content "🚨 **Worker health check failed** — ${REASON:-unknown reason}. Checks run every 20 minutes; you'll get a recovery log when it comes back." '{content: $content}' \
+          TAIL="Checks run every 20 minutes; you'll get a recovery log when it comes back."
+          if [ -n "$HEAL_DETAIL" ]; then TAIL="$HEAL_DETAIL"; fi
+          jq -n --arg content "🚨 **Worker health check failed** — ${REASON:-unknown reason}. ${TAIL}" '{content: $content}' \
             | curl -sS -H "Authorization: Bot ${BOT_TOKEN}" -H "Content-Type: application/json" \
                 -d @- "https://discord.com/api/v10/channels/${CHANNEL}/messages" >/dev/null
 
