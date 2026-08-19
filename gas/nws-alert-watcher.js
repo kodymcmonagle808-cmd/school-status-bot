@@ -39,10 +39,10 @@
 //   5. Context sources — the six district feeds, the HCPSS news RSS, the NWS
 //      snowfall forecast, and AirNow AQI, all fetched in one parallel batch.
 //   6. HCPSS emails — this Google account's Gmail, forwarded to /email-hook.
-//      Needs the Gmail permission: after pasting this version, run
-//      runWatchers() once by hand and approve the new consent prompt. If your
-//      HCPSS mail arrives elsewhere, forward it to this Gmail; if the sender
-//      isn't @hcpss.org, set an EMAIL_QUERY script property.
+//      Only reads emails from no-reply@hcpss.org. Needs the Gmail permission:
+//      after pasting this version, run runWatchers() once by hand and approve
+//      the new consent prompt. If your HCPSS mail arrives elsewhere, forward
+//      it to this Gmail; override the sender with an EMAIL_QUERY script property.
 //
 // Everything from 1, 3, 4 and 5 is batched into a single /push-data request
 // per run, so a stormy five minutes where every feed moved still costs the
@@ -88,10 +88,9 @@ var HCPSS_STATUS_URL = 'https://status.hcpss.org';
 
 // Gmail label marking already-forwarded HCPSS emails, and the search query
 // for finding them. Override the query with an EMAIL_QUERY script property if
-// your HCPSS emails come from a different sender (check the From address on
-// one of them).
+// your HCPSS emails come from a different sender.
 var EMAIL_LABEL = 'school-status-bot-forwarded';
-var DEFAULT_EMAIL_QUERY = 'from:(hcpss.org OR hcpssnews.com)';
+var DEFAULT_EMAIL_QUERY = 'from:no-reply@hcpss.org';
 
 // The only counties the bot can serve — every fingerprint below is filtered
 // to these, so a crash in Garrett County or an outage in Delaware never
