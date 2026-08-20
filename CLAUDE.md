@@ -147,11 +147,16 @@ registration**, `wrangler deploy`).
   Two traps in those tags, both load-bearing:
   **`WEAHandling` rides the original product only** — NWS drops it from the
   continuations so phones don't re-alert, so an alert first seen mid-life
-  carries no tag (today's 4:22 PM tornado continuation). The event-name and
-  Extreme-severity checks stay as the floor for exactly that; don't remove
-  them in favor of the tag. **`CONSIDERABLE` is not `DESTRUCTIVE`** — it is
+  carries no tag (today's 4:22 PM tornado continuation). The Extreme-severity
+  check catches those — NWS rates most tornado warnings Extreme.
+  **`CONSIDERABLE` is not `DESTRUCTIVE`** — it is
   the tier just below the WEA threshold, and treating it as emergency pings
   for half of every summer squall line.
+  **Tornado warnings are NOT listed by name in `EMERGENCY_EVENT_RE`** — a
+  normal Tornado Warning (severity Severe, no WEA tags) is a routine
+  school-impact notice, not an @everyone emergency. Only the truly exceptional
+  ones reach the emergency tier: WEA-tagged products (DESTRUCTIVE, PDS) and
+  those NWS rates Extreme. This keeps the ping rare and meaningful.
   A WEA product also *displaces* a same-named non-WEA one in
   `summarizeWeatherAlerts` (both are live at once over different polygons, and
   feed order is not something to bet the ping on), and an in-place upgrade
@@ -176,12 +181,12 @@ registration**, `wrangler deploy`).
   hours now filter the alert list **before** `pickNewAlerts`, never after:
   anything held back must stay out of the seen map, or a 3 AM Winter Storm
   Warning is marked announced and never posts at 6.
-  Keep the tier tied to the WEA tags. Its whole value is that the ping is rare
-  and means the same thing every time — "your phone just went off too". An
-  ordinary Severe Thunderstorm or Flash Flood Warning is a routine summer
-  product here and NWS deliberately blocks it from phones; promoting one by
-  event name would fire a dozen times a season, which is a ping the server
-  mutes.
+  Keep the tier tied to the WEA tags and Extreme severity. Its whole value is
+  that the ping is rare and means the same thing every time — "your phone just
+  went off too" or "NWS considers this Extreme". An ordinary Tornado Warning,
+  Severe Thunderstorm Warning, or Flash Flood Warning is a routine product
+  here; promoting one by event name would fire too often, which is a ping the
+  server mutes.
 - `src/session.js` — "is school actually in session?", the gate storm mode,
   `decisionwatch.js`, and `headsup.js` consult before alerting. Pure and
   one-sided: `noSchoolReason()` returns a reason only when the bot is

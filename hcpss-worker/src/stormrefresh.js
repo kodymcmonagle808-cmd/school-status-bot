@@ -147,22 +147,24 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
   // timestamp, and comparing the raw string would never match, defeating the
   // dedupe and refreshing on every single push.
   const { bucket: lastBucket, armedAt: lastArmedAt } = parseSlot(await env.STATUS_KV.get(SLOT_KEY));
-  if (lastBucket === slot) return { updated: 0 };
+  if (lastBucket === slot && !opts.bypassDedupe) return { updated: 0 };
 
   let guildIds = null;
-  let warranted = false;
+  let warranted = opts.bypassGate === true;
   if (force) {
-    // Cache-only probe (the weather cache only exists while alerts are active,
-    // and hook-armed freshness keeps it current): a quiet-day ping costs a
-    // couple of KV reads and no fetches, edits, or cache churn. A
-    // warning-level threat in the default zone short-circuits before any
-    // guild config is read.
-    const defaultAlerts = await getCachedWeatherAlerts(env);
-    warranted = hasPowerThreatAlert(defaultAlerts);
     if (!warranted) {
-      guildIds = await readGuildIds(env);
-      const alerts = await alertsForServedZones(env, guildIds, getCachedWeatherAlerts, defaultAlerts);
-      warranted = refreshWarranted(alerts, await getCachedOutageTotal(env));
+      // Cache-only probe (the weather cache only exists while alerts are active,
+      // and hook-armed freshness keeps it current): a quiet-day ping costs a
+      // couple of KV reads and no fetches, edits, or cache churn. A
+      // warning-level threat in the default zone short-circuits before any
+      // guild config is read.
+      const defaultAlerts = await getCachedWeatherAlerts(env);
+      warranted = hasPowerThreatAlert(defaultAlerts);
+      if (!warranted) {
+        guildIds = await readGuildIds(env);
+        const alerts = await alertsForServedZones(env, guildIds, getCachedWeatherAlerts, defaultAlerts);
+        warranted = refreshWarranted(alerts, await getCachedOutageTotal(env));
+      }
     }
     // Measured from the last *warranted* refresh, so the tail actually runs
     // out. See parseSlot.

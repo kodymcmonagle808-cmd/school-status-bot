@@ -612,19 +612,23 @@ test('an entry written before tiers existed never re-announces', () => {
   assert.equal(pickNewAlerts([destructive], legacy, now).newAlerts.length, 0);
 });
 
-test('isEmergencyAlert covers the act-now events by name and by Extreme severity', () => {
-  // By name, because NWS severity on tornado products is not dependable.
-  assert.ok(isEmergencyAlert({ event: 'Tornado Warning', severity: 'Severe' }));
+test('isEmergencyAlert covers the act-now events by name, by WEA tag, and by Extreme severity', () => {
+  // By name: named events that are always emergencies regardless of severity.
   assert.ok(isEmergencyAlert({ event: 'Extreme Wind Warning', severity: 'Severe' }));
   assert.ok(isEmergencyAlert({ event: 'Civil Emergency Message', severity: 'Unknown' }));
   // By severity: a Flash Flood Emergency arrives as an Extreme-rated Flash
   // Flood Warning, which is the only thing separating it from the routine one.
   assert.ok(isEmergencyAlert({ event: 'Flash Flood Warning', severity: 'Extreme' }));
+  // A Tornado Warning with Extreme severity (the common case) is still an emergency.
+  assert.ok(isEmergencyAlert({ event: 'Tornado Warning', severity: 'Extreme' }));
 });
 
 test('isEmergencyAlert leaves the routine storm products alone', () => {
   // These are the ones that would train a server to ignore the ping.
   assert.ok(!isEmergencyAlert({ event: 'Tornado Watch', severity: 'Severe' }));
+  // A normal Tornado Warning (Severe, no WEA) is a routine notice — only
+  // Extreme-severity or WEA-tagged tornado warnings are emergencies.
+  assert.ok(!isEmergencyAlert({ event: 'Tornado Warning', severity: 'Severe' }));
   assert.ok(!isEmergencyAlert({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
   assert.ok(!isEmergencyAlert({ event: 'Flash Flood Warning', severity: 'Severe' }));
   assert.ok(!isEmergencyAlert({ event: 'Winter Storm Warning', severity: 'Severe' }));
@@ -637,7 +641,7 @@ test('every emergency alert also passes the school-impact filter', () => {
   // failed this filter would be dropped before anything could announce it.
   // A Hurricane Warning matches neither the winter nor the heat pattern.
   for (const a of [
-    { event: 'Tornado Warning', severity: 'Severe' },
+    { event: 'Tornado Warning', severity: 'Extreme' },
     { event: 'Hurricane Warning', severity: 'Severe' },
     { event: 'Civil Emergency Message', severity: 'Unknown' },
     { event: 'Flash Flood Warning', severity: 'Extreme' }
@@ -647,13 +651,23 @@ test('every emergency alert also passes the school-impact filter', () => {
 });
 
 test('summarizeWeatherAlerts keeps NWS instructions for emergencies only', () => {
+  // An Extreme-severity Tornado Warning is an emergency — its instruction is kept.
   const [emergency] = summarizeWeatherAlerts([{
     properties: {
-      event: 'Tornado Warning', status: 'Actual', severity: 'Severe',
+      event: 'Tornado Warning', status: 'Actual', severity: 'Extreme',
       instruction: 'TAKE COVER NOW!  Move to a basement or an\n  interior room.'
     }
   }]);
   assert.equal(emergency.instruction, 'TAKE COVER NOW! Move to a basement or an interior room.');
+
+  // A normal Tornado Warning (Severe, no WEA) is routine — no instruction.
+  const [routineTornado] = summarizeWeatherAlerts([{
+    properties: {
+      event: 'Tornado Warning', status: 'Actual', severity: 'Severe',
+      instruction: 'TAKE COVER NOW!'
+    }
+  }]);
+  assert.ok(!('instruction' in routineTornado));
 
   // A routine alert must not carry it: this list is cached and read on every
   // embed render, for text only the emergency message displays.
@@ -677,11 +691,12 @@ test('emergencyActionLine gives each event something to do in the next minute', 
 test('splitEmergencyAlerts separates the loud tier from the routine one', () => {
   const { emergency, routine } = splitEmergencyAlerts([
     { event: 'Winter Weather Advisory', severity: 'Minor' },
+    { event: 'Tornado Warning', severity: 'Extreme' },
     { event: 'Tornado Warning', severity: 'Severe' },
     null
   ]);
   assert.deepEqual(emergency.map(a => a.event), ['Tornado Warning']);
-  assert.deepEqual(routine.map(a => a.event), ['Winter Weather Advisory']);
+  assert.deepEqual(routine.map(a => a.event), ['Winter Weather Advisory', 'Tornado Warning']);
 });
 
 test('buildEmergencyMessage pings @everyone and leads with the action', () => {

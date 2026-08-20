@@ -175,7 +175,8 @@ export default {
       const weatherChanged = (result.written || []).some(n => n.startsWith('weather:'));
       // A changed feed can change what a posted storm embed should say; this
       // pass is power-threat-gated and edit-throttled, so it is nearly free on
-      // a quiet day.
+      // a quiet day. When weather changes, it bypasses the gate and dedupe so
+      // the status embed updates immediately to show the new alert.
       ctx.waitUntil((async () => {
         const now = new Date();
         if (weatherChanged) {
@@ -186,7 +187,11 @@ export default {
           }
         }
         try {
-          await maybeRefreshStormEmbeds(env, now, { force: true });
+          await maybeRefreshStormEmbeds(env, now, {
+            force: true,
+            bypassGate: weatherChanged,
+            bypassDedupe: weatherChanged
+          });
         } catch (e) {
           console.error('Push-data storm refresh failed', e);
         }
@@ -282,12 +287,17 @@ export default {
       // The forced pass refetches the zone live (its cache was just dropped);
       // quiet hours and per-guild dedupe still apply inside. A changed alert
       // set also refreshes any posted storm embeds so their weather lines
-      // stay current (no-op unless a power-threat warning is active).
+      // stay current (no-op unless a power-threat warning is active, or bypassed
+      // because weather just changed).
       ctx.waitUntil((async () => {
         await maybeSendWeatherAlertNotices(env, new Date(), { force: true }).catch(e => {
           console.error('NWS hook scan failed', e);
         });
-        await maybeRefreshStormEmbeds(env, new Date(), { force: true }).catch(e => {
+        await maybeRefreshStormEmbeds(env, new Date(), {
+          force: true,
+          bypassGate: true,
+          bypassDedupe: true
+        }).catch(e => {
           console.error('NWS hook storm refresh failed', e);
         });
       })());

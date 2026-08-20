@@ -184,17 +184,21 @@ const CONVECTIVE_EVENT_RE = /tornado|severe thunderstorm/i;
 //
 // Extreme severity counts on its own because NWS reserves it for exactly this
 // tier: it is what separates a Flash Flood *Emergency* from the ordinary
-// warning it is filed under (both arrive as event "Flash Flood Warning"). The
-// named events are listed anyway because severity is not dependable for
-// tornado products — see CONVECTIVE_EVENT_RE above; a Tornado Warning must
-// never come down to a field the bot has no control over.
-const EMERGENCY_EVENT_RE = /tornado warning|extreme wind warning|hurricane warning|civil emergency|evacuation immediate/i;
+// warning it is filed under (both arrive as event "Flash Flood Warning").
+//
+// Tornado Warning is deliberately NOT listed here by name. An ordinary Tornado
+// Warning (severity Severe, no WEA tags) is a routine weather alert that
+// should post as a normal notice, not an @everyone ping. Only the truly
+// exceptional ones — WEA-tagged (DESTRUCTIVE winds, PDS tornado) or
+// Extreme-severity products — reach the emergency tier. The WEA check and
+// Extreme-severity check already catch those.
+const EMERGENCY_EVENT_RE = /extreme wind warning|hurricane warning|civil emergency|evacuation immediate/i;
 
 // `wea` leads: if NWS pushed it to phones, it is an emergency by definition,
-// whatever it is called. The name and severity checks stay as the floor —
-// WEAHandling is absent from continuation products, so an alert first seen
-// mid-life can be a tornado warning that already alerted every phone in the
-// county and carries no tag at all by the time the bot looks.
+// whatever it is called. The Extreme-severity check catches the rest —
+// including tornado warnings that NWS rates Extreme (which is most of them,
+// but not all: a watch commonly arrives as Severe, and that is a routine
+// product here, not an act-now alert).
 export function isEmergencyAlert(alert) {
   if (!alert) return false;
   if (alert.wea) return true;
