@@ -31,6 +31,7 @@ import { getConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { getCalendarEvent } from './calendar.js';
 import { getStatusHistory } from './history.js';
 import { computeSnowDayBudget, formatSnowDayBudgetLines } from './snowbudget.js';
+import { getABDay, formatABDayLine, closureDatesFromHistory } from './abday.js';
 
 export function footerWithCheckedAt(label, checkedAt) {
   return `${label} - Last checked ${formatCheckedAt(checkedAt)}`;
@@ -214,6 +215,23 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
   const thumbnailUrl = getStatusThumbnail(statusKey);
 
   const embeds = splitEmbeds(`HCPSS Status for ${primaryDate}`, desc, HCPSS_URL, color, customFooter, checkedAt, thumbnailUrl).slice(0, MAX_EMBEDS);
+
+  // A/B day rotation — shows which letter day it is. Snow days and closures
+  // freeze the rotation so the letter doesn't advance when school is cancelled.
+  if (embeds[0] && env && env.STATUS_KV) {
+    try {
+      const todayYmd = dateInfo.ymd || formatYmdNY(checkedAt);
+      const history = await getStatusHistory(env);
+      const closureDates = closureDatesFromHistory(history);
+      // On a closure day (including today's announced closure), the A/B day
+      // still shows — it tells families which day it will be when they return.
+      const abDay = getABDay(todayYmd, closureDates);
+      const abLine = formatABDayLine(abDay);
+      if (abLine) {
+        addField(embeds[0], '📅 Day Rotation', abLine);
+      }
+    } catch {}
+  }
 
   // Add active NWS weather alerts for Howard County as context on the first embed.
   const weatherEnabled = !config || config.toggle_weather !== false;
