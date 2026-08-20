@@ -218,7 +218,8 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
 
   // A/B day rotation — shows which letter day it is. Snow days and closures
   // freeze the rotation so the letter doesn't advance when school is cancelled.
-  if (embeds[0] && env && env.STATUS_KV) {
+  const abDayEnabled = !config || config.toggle_ab_day !== false;
+  if (abDayEnabled && embeds[0] && env && env.STATUS_KV) {
     try {
       const todayYmd = dateInfo.ymd || formatYmdNY(checkedAt);
       const history = await getStatusHistory(env);

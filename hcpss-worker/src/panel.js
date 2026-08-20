@@ -591,6 +591,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const emergencyPing = config.toggle_emergency_ping !== false;
     const emailAlerts = config.toggle_email_alerts !== false;
     const sessionGate = config.toggle_session_gate !== false;
+    const abDay = config.toggle_ab_day !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -602,6 +603,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
                    `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n` +
+                   `• ${abDay ? '🟢' : '🔴'} **A/B Day** — show the A/B day schedule for high schools on status embeds\n` +
                    `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n` +
                    `• ${decisionWatch ? '🟢' : '🔴'} **Decision Watch** — live board of every district's morning announcements on storm mornings\n` +
                    `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n` +
@@ -647,6 +649,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Show active NWS weather alerts on status embeds',
         emoji: { name: '⛅' },
         default: weather
+      },
+      {
+        label: 'A/B Day',
+        value: 'toggle_ab_day',
+        description: 'Show the A/B day schedule for high schools',
+        emoji: { name: '📅' },
+        default: abDay
       },
       {
         label: 'Storm Mode',
@@ -1501,6 +1510,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_pings = selected.includes('toggle_pings');
     next.toggle_error_alerts = selected.includes('toggle_error_alerts');
     next.toggle_weather = selected.includes('toggle_weather');
+    next.toggle_ab_day = selected.includes('toggle_ab_day');
     next.toggle_storm_mode = selected.includes('toggle_storm_mode');
     next.toggle_decision_watch = selected.includes('toggle_decision_watch');
     next.toggle_districts = selected.includes('toggle_districts');
