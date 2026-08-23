@@ -9,16 +9,18 @@ const { PNG } = pkg;
 
 export async function handleSetupClasses(body, env) {
   const userId = getInvokerId(body);
-  const p1 = getCommandOption(body, 'p1');
-  const p2 = getCommandOption(body, 'p2');
-  const p3 = getCommandOption(body, 'p3');
-  const p4a = getCommandOption(body, 'p4a');
-  const p4b = getCommandOption(body, 'p4b');
-  const p5 = getCommandOption(body, 'p5');
-  const p6 = getCommandOption(body, 'p6');
-  const lunch = getCommandOption(body, 'lunch');
+  const options = body.data?.options || [];
+  const p1 = getCommandOption(options, 'p1');
+  const p2 = getCommandOption(options, 'p2');
+  const p3 = getCommandOption(options, 'p3');
+  const p4a = getCommandOption(options, 'p4a');
+  const p4b = getCommandOption(options, 'p4b');
+  const p5 = getCommandOption(options, 'p5');
+  const p6 = getCommandOption(options, 'p6');
+  const lunch_a = getCommandOption(options, 'lunch_a');
+  const lunch_b = getCommandOption(options, 'lunch_b');
 
-  const schedule = { p1, p2, p3, p4a, p4b, p5, p6, lunch };
+  const schedule = { p1, p2, p3, p4a, p4b, p5, p6, lunch_a, lunch_b };
   
   await env.STATUS_KV.put(`schedule:${userId}`, JSON.stringify(schedule));
 
@@ -61,7 +63,8 @@ function drawLine(png, x0, y0, x1, y1) {
 
 export async function handleMapMyClass(body, env) {
   const userId = getInvokerId(body);
-  const day = getCommandOption(body, 'day');
+  const options = body.data?.options || [];
+  const day = getCommandOption(options, 'day');
 
   const scheduleRaw = await env.STATUS_KV.get(`schedule:${userId}`);
   if (!scheduleRaw) {
@@ -71,83 +74,89 @@ export async function handleMapMyClass(body, env) {
     });
   }
 
-  const schedule = JSON.parse(scheduleRaw);
-
-  let sequence = [];
-  if (day === 'A') {
-    sequence = [schedule.p1, schedule.p2, "Lunch", schedule.p3, schedule.p4a];
-  } else {
-    sequence = [schedule.p4b, schedule.p5, "Lunch", schedule.p6];
-  }
-
-  // Find coordinates for the rooms
-  const pts = [];
-  for (let r of sequence) {
-    if (r.toLowerCase() === 'lunch') {
-      // Use cafeteria coordinates
-      if (rooms['903']) pts.push(rooms['903']);
-      else if (rooms['Cafeteria']) pts.push(rooms['Cafeteria']);
-      continue;
-    }
-    const rmMatch = r.replace(/[^0-9A-Za-z-]/g, '').toUpperCase();
-    if (rooms[rmMatch]) {
-      pts.push(rooms[rmMatch]);
-    }
-  }
-
-  const routeStr = sequence.join(' ➔ ');
-
-  // Parse PNG and draw lines
-  let pngBuffer;
-  try {
-    const rawMap = Uint8Array.from(atob(chsmapBase64), c => c.charCodeAt(0));
-    // Since PNG.sync.read expects a Buffer, in Cloudflare Workers we might need a polyfill
-    // or just pass Uint8Array if pngjs supports it (pngjs v7 does support Uint8Array).
-    const png = PNG.sync.read(Buffer.from(rawMap));
-
-    if (pts.length > 1) {
-      for (let i = 0; i < pts.length - 1; i++) {
-        drawLine(png, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
-      }
-    }
-
-    pngBuffer = PNG.sync.write(png);
-  } catch (e) {
-    return interactionResponse({
-      content: `❌ Error generating map: ${e.message}`,
-      flags: EPHEMERAL_FLAG
-    });
-  }
-
-  // Construct multipart payload to send the file via Discord webhook
-  const applicationId = env.DISCORD_APPLICATION_ID;
-  const interactionToken = body.token;
-  
-  const payload = {
-    embeds: [{
-      title: `${day} Day Route`,
-      description: `**Your Route:**\n${routeStr}\n\n*Note: Map lines are drawn straight between known room locations.*`,
-      color: 0x3498db,
-      image: { url: 'attachment://route.png' }
-    }],
-    attachments: [{
-      id: 0,
-      description: "Map with drawn route",
-      filename: "route.png"
-    }]
-  };
-
-  const formData = new FormData();
-  formData.append('payload_json', JSON.stringify(payload));
-  formData.append('files[0]', new Blob([pngBuffer], { type: 'image/png' }), 'route.png');
-
   // Do this async to not block the interaction response
-  env.ctx.waitUntil(
-    fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
-      method: 'PATCH',
-      body: formData
-    })
-  );
+  env.ctx.waitUntil((async () => {
+    try {
+      const schedule = JSON.parse(scheduleRaw);
+
+      let sequence = [];
+      let lunchPeriod = 'Unknown';
+      if (day === 'A') {
+        lunchPeriod = schedule.lunch_a || schedule.lunch || 'Unknown';
+        sequence = [schedule.p1, schedule.p2, `Lunch (${lunchPeriod})`, schedule.p3, schedule.p4a];
+      } else {
+        lunchPeriod = schedule.lunch_b || schedule.lunch || 'Unknown';
+        sequence = [schedule.p4b, schedule.p5, `Lunch (${lunchPeriod})`, schedule.p6];
+      }
+
+      // Find coordinates for the rooms
+      const pts = [];
+      for (let r of sequence) {
+        if (!r) continue;
+        if (r.toLowerCase().includes('lunch')) {
+          // Use cafeteria coordinates
+          if (rooms['903']) pts.push(rooms['903']);
+          else if (rooms['Cafeteria']) pts.push(rooms['Cafeteria']);
+          continue;
+        }
+        const rmMatch = r.replace(/[^0-9A-Za-z-]/g, '').toUpperCase();
+        if (rooms[rmMatch]) {
+          pts.push(rooms[rmMatch]);
+        }
+      }
+
+      const routeStr = sequence.filter(Boolean).join(' ➔ ');
+
+      // Parse PNG and draw lines
+      const rawMap = Uint8Array.from(atob(chsmapBase64), c => c.charCodeAt(0));
+      const png = PNG.sync.read(Buffer.from(rawMap));
+
+      if (pts.length > 1) {
+        for (let i = 0; i < pts.length - 1; i++) {
+          drawLine(png, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
+        }
+      }
+
+      const pngBuffer = PNG.sync.write(png);
+
+      // Construct multipart payload to send the file via Discord webhook
+      const applicationId = env.DISCORD_APPLICATION_ID;
+      const interactionToken = body.token;
+      
+      const payload = {
+        embeds: [{
+          title: `${day} Day Route`,
+          description: `**Your Route:**\n${routeStr}\n\n*Note: Map lines are drawn straight between known room locations.*`,
+          color: 0x3498db,
+          image: { url: 'attachment://route.png' }
+        }],
+        attachments: [{
+          id: 0,
+          description: "Map with drawn route",
+          filename: "route.png"
+        }]
+      };
+
+      const formData = new FormData();
+      formData.append('payload_json', JSON.stringify(payload));
+      formData.append('files[0]', new Blob([pngBuffer], { type: 'image/png' }), 'route.png');
+
+      await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
+        method: 'PATCH',
+        body: formData
+      });
+    } catch (e) {
+      const applicationId = env.DISCORD_APPLICATION_ID;
+      const interactionToken = body.token;
+      await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `❌ Error generating map: ${e.message}`
+        })
+      });
+    }
+  })());
 
   return deferredInteractionResponse();
 }

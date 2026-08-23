@@ -322,7 +322,8 @@ payload=$(jq -n '[
       { name: "p4b", description: "Period 4B room number", type: 3, required: true },
       { name: "p5", description: "Period 5 room number", type: 3, required: true },
       { name: "p6", description: "Period 6 room number", type: 3, required: true },
-      { name: "lunch", description: "Lunch shift (e.g. A, B, C)", type: 3, required: true }
+      { name: "lunch_a", description: "Lunch shift on A Day (e.g. A, B, C)", type: 3, required: true },
+      { name: "lunch_b", description: "Lunch shift on B Day (e.g. A, B, C)", type: 3, required: true }
     ]
   },
   {
