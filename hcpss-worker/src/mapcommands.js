@@ -3,9 +3,7 @@ import { EPHEMERAL_FLAG } from './constants.js';
 import { interactionResponse, deferredInteractionResponse, getCommandOption, getInvokerId } from './discord.js';
 import { chsmapBase64 } from './mapAsset.js';
 import { rooms } from './roomsData.js';
-import { Buffer } from 'node:buffer';
-import pkg from 'pngjs';
-const { PNG } = pkg;
+import UPNG from 'upng-js';
 
 export async function handleSetupClasses(body, env) {
   const userId = getInvokerId(body);
@@ -107,17 +105,23 @@ export async function handleMapMyClass(body, env) {
 
       const routeStr = sequence.filter(Boolean).join(' ➔ ');
 
-      // Parse PNG and draw lines
       const rawMap = Uint8Array.from(atob(chsmapBase64), c => c.charCodeAt(0));
-      const png = PNG.sync.read(Buffer.from(rawMap));
+      const img = UPNG.decode(rawMap.buffer);
+      const rgba = UPNG.toRGBA8(img)[0];
+      const imageObj = {
+        width: img.width,
+        height: img.height,
+        data: new Uint8Array(rgba)
+      };
 
       if (pts.length > 1) {
         for (let i = 0; i < pts.length - 1; i++) {
-          drawLine(png, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
+          drawLine(imageObj, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
         }
       }
 
-      const pngBuffer = PNG.sync.write(png);
+      const encoded = UPNG.encode([imageObj.data.buffer], imageObj.width, imageObj.height, 0);
+      const pngBuffer = new Uint8Array(encoded);
 
       // Construct multipart payload to send the file via Discord webhook
       const applicationId = env.DISCORD_APPLICATION_ID;

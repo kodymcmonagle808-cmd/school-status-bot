@@ -11,6 +11,6 @@
     "eslint": "^10.7.0"
   },
   "dependencies": {
-    "pngjs": "^7.0.0"
+    "upng-js": "^2.1.0"
   }
 }
