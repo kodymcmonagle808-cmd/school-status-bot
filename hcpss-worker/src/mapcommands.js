@@ -125,17 +125,27 @@ export async function handleMapMyClass(body, env) {
       };
 
       if (pts.length > 1) {
+        // Transform coordinates from chsmap.github.io graph to the chsmap.png image
+        const transformX = x => x * 0.89005 + 11.225;
+        const transformY = y => y * 0.88835 - 12.277;
+
         for (let i = 0; i < pts.length - 1; i++) {
           const path = findPath(graph, pts[i], pts[i+1]);
           if (path && path.length > 1) {
             for (let j = 0; j < path.length - 1; j++) {
-              drawLine(imageObj, Math.round(path[j].x), Math.round(path[j].y), Math.round(path[j+1].x), Math.round(path[j+1].y));
+              drawLine(imageObj, 
+                Math.round(transformX(path[j].x)), Math.round(transformY(path[j].y)), 
+                Math.round(transformX(path[j+1].x)), Math.round(transformY(path[j+1].y))
+              );
             }
           } else {
             const startId = graph.roomMapping[pts[i]];
             const endId = graph.roomMapping[pts[i+1]];
             if (startId && endId) {
-              drawLine(imageObj, Math.round(graph.nodes[startId].x), Math.round(graph.nodes[startId].y), Math.round(graph.nodes[endId].x), Math.round(graph.nodes[endId].y));
+              drawLine(imageObj, 
+                Math.round(transformX(graph.nodes[startId].x)), Math.round(transformY(graph.nodes[startId].y)), 
+                Math.round(transformX(graph.nodes[endId].x)), Math.round(transformY(graph.nodes[endId].y))
+              );
             }
           }
         }
