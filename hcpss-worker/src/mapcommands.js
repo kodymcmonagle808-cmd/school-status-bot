@@ -24,7 +24,7 @@ export async function handleSetupClasses(body, env) {
   await env.STATUS_KV.put(`schedule:${userId}`, JSON.stringify(schedule));
 
   return interactionResponse({
-    content: `✅ Your schedule has been saved! You can now use \`/mapmyclass [day]\` to see your route.`,
+    content: `✅ Your schedule has been saved! You can now use \`/mapmyclass [day]\` to see your route.\n\n⚠️ **Note:** If any of your classes are in portables, please ensure they are formatted as \`P-#\` (e.g., \`P-1\`, \`P-6\`) instead of \`P1\`. If they aren't, run the setup command again to fix them!`,
     flags: EPHEMERAL_FLAG
   });
 }
