@@ -2,7 +2,8 @@
 import { EPHEMERAL_FLAG } from './constants.js';
 import { interactionResponse, deferredInteractionResponse, getCommandOption, getInvokerId } from './discord.js';
 import { chsmapBase64 } from './mapAsset.js';
-import { rooms } from './roomsData.js';
+import { graph } from './graphData.js';
+import { findPath } from './pathfinding.js';
 import UPNG from 'upng-js';
 
 export async function handleSetupClasses(body, env) {
@@ -93,13 +94,22 @@ export async function handleMapMyClass(body, env) {
         if (!r) continue;
         if (r.toLowerCase().includes('lunch')) {
           // Use cafeteria coordinates
-          if (rooms['903']) pts.push(rooms['903']);
-          else if (rooms['Cafeteria']) pts.push(rooms['Cafeteria']);
+          if (graph.roomMapping['903']) pts.push('903');
+          else if (graph.roomMapping['Cafeteria']) pts.push('Cafeteria');
           continue;
         }
         const rmMatch = r.replace(/[^0-9A-Za-z-]/g, '').toUpperCase();
-        if (rooms[rmMatch]) {
-          pts.push(rooms[rmMatch]);
+        let matchName = null;
+        for (const k of Object.keys(graph.roomMapping)) {
+            if (k.replace(/[^0-9A-Za-z-]/g, '').toUpperCase() === rmMatch) {
+                matchName = k;
+                break;
+            }
+        }
+        if (matchName) {
+            pts.push(matchName);
+        } else if (graph.roomMapping[rmMatch]) {
+            pts.push(rmMatch);
         }
       }
 
@@ -116,7 +126,18 @@ export async function handleMapMyClass(body, env) {
 
       if (pts.length > 1) {
         for (let i = 0; i < pts.length - 1; i++) {
-          drawLine(imageObj, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
+          const path = findPath(graph, pts[i], pts[i+1]);
+          if (path && path.length > 1) {
+            for (let j = 0; j < path.length - 1; j++) {
+              drawLine(imageObj, Math.round(path[j].x), Math.round(path[j].y), Math.round(path[j+1].x), Math.round(path[j+1].y));
+            }
+          } else {
+            const startId = graph.roomMapping[pts[i]];
+            const endId = graph.roomMapping[pts[i+1]];
+            if (startId && endId) {
+              drawLine(imageObj, Math.round(graph.nodes[startId].x), Math.round(graph.nodes[startId].y), Math.round(graph.nodes[endId].x), Math.round(graph.nodes[endId].y));
+            }
+          }
         }
       }
 
