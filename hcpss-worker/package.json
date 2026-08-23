@@ -9,5 +9,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.7.0"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
   }
 }

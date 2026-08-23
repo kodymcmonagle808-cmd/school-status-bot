@@ -55,6 +55,7 @@ import { purgeGuildData, removeFromGuildIndex } from './cleanup.js';
 import { MY_PINGS_VALUE, buildMyPingsPanel, handleMyPingsSubmit } from './rolepanel.js';
 import { handleGreeterInteraction } from './greeter.js';
 import { isGuildBlocked } from './blocklist.js';
+import { handleSetupClasses, handleMapMyClass } from './mapcommands.js';
 
 export async function handleInteraction(body, env, ctx) {
   if (body.type === 1) return jsonResponse({ type: 1 });
@@ -113,6 +114,11 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'help') return interactionResponse(runHelpCommand());
     if (name === 'notify') return interactionResponse(await runNotifyCommand(body, env));
     if (name === 'myschool') return interactionResponse(await runMySchoolCommand(body, env));
+    if (name === 'setupclasses') return await handleSetupClasses(body, env);
+    if (name === 'mapmyclass') {
+      env.ctx = ctx; // Hack to pass ctx to handler without changing signature
+      return await handleMapMyClass(body, env);
+    }
 
     if (name === 'status') {
       ctx.waitUntil(runStatusCommand(body, env));

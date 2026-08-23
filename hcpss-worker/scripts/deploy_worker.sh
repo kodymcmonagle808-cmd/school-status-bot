@@ -309,6 +309,42 @@ payload=$(jq -n '[
     ]
   },
   {
+    name: "setupclasses",
+    description: "Input your class schedule and room numbers.",
+    type: 1,
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+    options: [
+      { name: "p1", description: "Period 1 room number", type: 3, required: true },
+      { name: "p2", description: "Period 2 room number", type: 3, required: true },
+      { name: "p3", description: "Period 3 room number", type: 3, required: true },
+      { name: "p4a", description: "Period 4A room number", type: 3, required: true },
+      { name: "p4b", description: "Period 4B room number", type: 3, required: true },
+      { name: "p5", description: "Period 5 room number", type: 3, required: true },
+      { name: "p6", description: "Period 6 room number", type: 3, required: true },
+      { name: "lunch", description: "Lunch shift (e.g. A, B, C)", type: 3, required: true }
+    ]
+  },
+  {
+    name: "mapmyclass",
+    description: "Generate a map showing your route for a specific day.",
+    type: 1,
+    integration_types: [0, 1],
+    contexts: [0, 1, 2],
+    options: [
+      {
+        name: "day",
+        description: "Which day schedule to map (A or B)",
+        type: 3,
+        required: true,
+        choices: [
+          { name: "A Day", value: "A" },
+          { name: "B Day", value: "B" }
+        ]
+      }
+    ]
+  },
+  {
     name: "health",
     description: "Scraper, posting, and storm-mode health at a glance (staff).",
     type: 1,

@@ -1,6 +1,7 @@
 name = "hcpss-worker"
 main = "src/index.js"
 compatibility_date = "2026-07-09"
+compatibility_flags = ["nodejs_compat"]
 
 # Workers Logs is where every action the Worker takes is recorded (the ACT|
 # lines from src/actionlog.js). It costs nothing — unlike KV — and it is
