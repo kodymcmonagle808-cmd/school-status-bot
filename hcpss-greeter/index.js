@@ -32,6 +32,11 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
+  if (message.content === '!greeter-ping') {
+    await message.channel.send('Pong! The greeter bot is alive and reading messages.');
+    return;
+  }
+
   // We can still log to console, but we'll also send status updates to the channel for the command
   if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
     if (!message.author.bot) {
