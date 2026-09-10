@@ -8,6 +8,8 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Channel]
 });
@@ -22,39 +24,93 @@ const ROLE_MAPPINGS = {
   'unknown_alert': 'HCPSS Other/Unknown Alert'
 };
 
+let currentVoiceConnection = null;
+let currentVoiceChannel = null;
+
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
   
   const voiceChannelId = '1547401974969012335';
   client.channels.fetch(voiceChannelId).then(channel => {
     if (!channel) return console.error("Voice channel not found!");
+    currentVoiceChannel = channel;
     
     function connectToVoice() {
-      const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
+      if (!currentVoiceChannel) return;
+      currentVoiceConnection = joinVoiceChannel({
+        channelId: currentVoiceChannel.id,
+        guildId: currentVoiceChannel.guild.id,
+        adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
         selfDeaf: true,
         selfMute: true,
       });
 
-      connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
+      currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
         try {
           await Promise.race([
-            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+            entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
+            entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
           ]);
           // Reconnecting
         } catch (error) {
           // Real disconnect
-          connection.destroy();
+          if (currentVoiceConnection) {
+            currentVoiceConnection.destroy();
+          }
           console.log('Reconnecting to voice channel...');
-          setTimeout(connectToVoice, 5000);
+          if (currentVoiceChannel) setTimeout(connectToVoice, 5000);
         }
       });
     }
     connectToVoice();
   }).catch(err => console.error('Failed to fetch voice channel:', err));
+});
+
+client.on('messageCreate', async (message) => {
+  if (message.content === 'GREET_BOT_COMMAND: TOGGLE_VOICE' && message.author.bot) {
+    if (currentVoiceConnection) {
+      console.log("Leaving voice channel by worker signal...");
+      currentVoiceConnection.destroy();
+      currentVoiceConnection = null;
+      currentVoiceChannel = null;
+    } else {
+      console.log("Joining voice channel by worker signal...");
+      const voiceChannelId = '1547401974969012335';
+      const channel = await client.channels.fetch(voiceChannelId).catch(() => null);
+      if (channel) {
+        currentVoiceChannel = channel;
+        currentVoiceConnection = joinVoiceChannel({
+          channelId: channel.id,
+          guildId: channel.guild.id,
+          adapterCreator: channel.guild.voiceAdapterCreator,
+          selfDeaf: true,
+          selfMute: true,
+        });
+        currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+          if (!currentVoiceConnection) return;
+          try {
+            await Promise.race([
+              entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
+              entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
+            ]);
+          } catch (error) {
+            if (currentVoiceConnection) currentVoiceConnection.destroy();
+            if (currentVoiceChannel) {
+               currentVoiceConnection = joinVoiceChannel({
+                 channelId: currentVoiceChannel.id,
+                 guildId: currentVoiceChannel.guild.id,
+                 adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
+                 selfDeaf: true,
+                 selfMute: true,
+               });
+            }
+          }
+        });
+      }
+    }
+    // Clean up the trigger message so users don't see it
+    await message.delete().catch(() => {});
+  }
 });
 
 client.on('guildMemberAdd', async (member) => {

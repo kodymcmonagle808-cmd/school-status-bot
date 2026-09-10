@@ -1316,6 +1316,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
       { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📋' } },
       { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
+      { label: 'Toggle Voice Bot', value: 'panel_toggle_voice', description: 'Make the local node bot join/leave the voice channel', emoji: { name: '🔌' } },
       { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Wipe the panel list (the web log is unaffected)', emoji: { name: '🗑️' } }
     ], '⚡ Quick Actions...'),
     {

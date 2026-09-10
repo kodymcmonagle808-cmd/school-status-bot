@@ -155,6 +155,22 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       ctx.waitUntil(handlePanelClearLogs(body, env));
       return deferredInteractionResponse();
     }
+    if (action === 'panel_toggle_voice') {
+      ctx.waitUntil((async () => {
+        const channelId = body.channel_id;
+        if (channelId) {
+           await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+             method: 'POST',
+             headers: {
+               Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+               'Content-Type': 'application/json'
+             },
+             body: JSON.stringify({ content: 'GREET_BOT_COMMAND: TOGGLE_VOICE' })
+           }).catch(() => {});
+        }
+      })());
+      return interactionResponse({ content: '🔌 Signal sent! The local voice bot should join/leave momentarily.', flags: EPHEMERAL_FLAG });
+    }
     // Any other option value is dispatched as if a component with that
     // custom_id was used, so page action dropdowns can reuse the existing
     // navigation/modal handlers below.
