@@ -1,11 +1,13 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Channel]
 });
@@ -22,6 +24,37 @@ const ROLE_MAPPINGS = {
 
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
+  
+  const voiceChannelId = '1547401974969012335';
+  client.channels.fetch(voiceChannelId).then(channel => {
+    if (!channel) return console.error("Voice channel not found!");
+    
+    function connectToVoice() {
+      const connection = joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfDeaf: true,
+        selfMute: true,
+      });
+
+      connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
+        try {
+          await Promise.race([
+            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+          ]);
+          // Reconnecting
+        } catch (error) {
+          // Real disconnect
+          connection.destroy();
+          console.log('Reconnecting to voice channel...');
+          setTimeout(connectToVoice, 5000);
+        }
+      });
+    }
+    connectToVoice();
+  }).catch(err => console.error('Failed to fetch voice channel:', err));
 });
 
 client.on('guildMemberAdd', async (member) => {
