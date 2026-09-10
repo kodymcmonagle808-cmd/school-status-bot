@@ -127,6 +127,18 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     }
   }
 
+  if (modalId === 'modal_set_playlist') {
+    const val = getModalInputValue(body, 'input_playlist').trim();
+    if (!val || val.toLowerCase() === 'clear' || val.toLowerCase() === 'none') {
+      delete config.music_playlist_url;
+      updated = true;
+    } else {
+      config.music_playlist_url = val;
+      updated = true;
+    }
+    // No need to redirect page, staying on config_music
+  }
+
   if (modalId === 'modal_set_footer') {
     const val = getModalInputValue(body, 'input_footer').trim();
     if (val.toLowerCase() === 'default' || val.toLowerCase() === 'none' || val.toLowerCase() === 'clear') {

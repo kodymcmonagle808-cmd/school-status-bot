@@ -528,6 +528,33 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     });
   }
 
+  if (customId === 'panel_btn_set_playlist') {
+    const config = await getConfig(env, guildId);
+    const currentPlaylist = config.music_playlist_url || '';
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Set 24/7 Playlist URL',
+        custom_id: 'modal_set_playlist',
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_playlist',
+            style: 1,
+            label: 'Spotify or YouTube Playlist URL (or clear)',
+            placeholder: 'https://open.spotify.com/playlist/...',
+            value: currentPlaylist,
+            min_length: 0,
+            max_length: 500,
+            required: false
+          }]
+        }]
+      }
+    });
+  }
+
   if (customId === 'panel_btn_set_footer') {
     const config = await getConfig(env, guildId);
     const currentFooter = config.alert_embed_footer || '';

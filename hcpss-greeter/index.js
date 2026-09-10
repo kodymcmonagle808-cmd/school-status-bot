@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
-const { joinVoiceChannel, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
+const play = require('play-dl');
 
 const client = new Client({
   intents: [
@@ -26,6 +27,80 @@ const ROLE_MAPPINGS = {
 
 let currentVoiceConnection = null;
 let currentVoiceChannel = null;
+
+const musicPlayer = createAudioPlayer({
+  behaviors: {
+    noSubscriber: NoSubscriberBehavior.Play,
+  },
+});
+let musicQueue = [];
+let isPlayingMusic = false;
+
+async function playNextSong() {
+  if (musicQueue.length === 0) {
+    await loadPlaylist();
+    if (musicQueue.length === 0) {
+      isPlayingMusic = false;
+      return;
+    }
+  }
+
+  const track = musicQueue.shift();
+  try {
+    if (track.startsWith('http')) {
+      let stream = await play.stream(track);
+      let resource = createAudioResource(stream.stream, { inputType: stream.type });
+      musicPlayer.play(resource);
+      isPlayingMusic = true;
+      console.log(`Now playing stream: ${track}`);
+    } else {
+      let searched = await play.search(track, { limit: 1 });
+      if (searched && searched.length > 0) {
+        let stream = await play.stream(searched[0].url);
+        let resource = createAudioResource(stream.stream, { inputType: stream.type });
+        musicPlayer.play(resource);
+        isPlayingMusic = true;
+        console.log(`Now playing: ${searched[0].title}`);
+      } else {
+        console.log(`Could not find ${track} on YouTube. Skipping...`);
+        playNextSong();
+      }
+    }
+  } catch (err) {
+    console.error("Error playing song:", err);
+    setTimeout(playNextSong, 2000);
+  }
+}
+
+let currentPlaylistUrl = process.env.PLAYLIST_URL || 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=QYOsPmOeQ7qQrIybyUcIuQ&utm_source=copy-link&pi=PIAugKKQTS29_&pt=6b3c22efcf12ac162e4f59e71c26b2c8';
+
+async function loadPlaylist() {
+  const url = currentPlaylistUrl;
+  try {
+    if (play.is_expired()) {
+        await play.refreshToken();
+    }
+    
+    if (url.includes('spotify')) {
+      let sp_data = await play.spotify(url);
+      let tracks = await sp_data.all_tracks();
+      musicQueue = tracks.map(t => `${t.name} ${t.artists.map(a => a.name).join(' ')}`);
+    } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      let yt_data = await play.playlist_info(url, { incomplete: true });
+      let tracks = await yt_data.all_tracks();
+      musicQueue = tracks.map(t => t.url);
+    }
+    console.log(`Loaded ${musicQueue.length} tracks into queue.`);
+  } catch (err) {
+    console.error("Error loading playlist. Falling back to Lofi Girl stream...", err.message);
+    musicQueue = ["https://www.youtube.com/watch?v=jfKfPfyJRdk"];
+  }
+}
+
+musicPlayer.on(AudioPlayerStatus.Idle, () => {
+  isPlayingMusic = false;
+  playNextSong();
+});
 
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
@@ -68,6 +143,64 @@ client.once('ready', () => {
       console.error(`Error during auto-join interval:`, err);
     }
   }, 15 * 60 * 1000);
+});
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  if (!oldState.channelId && newState.channelId) {
+    if (newState.member.user.bot) return;
+
+    const channel = newState.channel;
+    
+    // Fetch config to check for VC restrictions and get playlist URL
+    const config = await getGuildConfig(channel.guild.id);
+    if (config) {
+      if (config.music_vc_id && channel.id !== config.music_vc_id) {
+        return; // User joined a different VC, ignore
+      }
+      if (config.music_playlist_url) {
+        currentPlaylistUrl = config.music_playlist_url;
+      }
+    }
+
+    if (!currentVoiceConnection || currentVoiceChannel?.id !== channel.id) {
+      console.log(`User joined VC. Bot joining ${channel.name} to play music.`);
+      
+      if (currentVoiceConnection) {
+        currentVoiceConnection.destroy();
+      }
+
+      currentVoiceChannel = channel;
+      currentVoiceConnection = joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfDeaf: true,
+        selfMute: false,
+      });
+
+      currentVoiceConnection.subscribe(musicPlayer);
+
+      if (!isPlayingMusic) {
+        if (musicQueue.length === 0) {
+          await loadPlaylist();
+        }
+        playNextSong();
+      }
+    }
+  } else if (oldState.channelId && !newState.channelId) {
+    const channel = oldState.channel;
+    if (currentVoiceChannel && currentVoiceChannel.id === channel.id) {
+      const members = channel.members.filter(m => !m.user.bot);
+      if (members.size === 0) {
+        console.log("VC is empty. Leaving and pausing music.");
+        musicPlayer.pause();
+        isPlayingMusic = false;
+        currentVoiceConnection.destroy();
+        currentVoiceConnection = null;
+        currentVoiceChannel = null;
+      }
+    }
+  }
 });
 
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';

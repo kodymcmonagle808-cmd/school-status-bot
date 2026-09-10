@@ -572,14 +572,18 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   if (page === 'config_music') {
     const channel = config.music_channel_id ? `<#${config.music_channel_id}>` : '(not set)';
     const role = config.music_role_id ? `<@&${config.music_role_id}>` : '(not set)';
+    const vcChannel = config.music_vc_id ? `<#${config.music_vc_id}>` : 'All Voice Channels';
+    const playlist = config.music_playlist_url ? `\`${config.music_playlist_url}\`` : 'Default Playlist';
 
     const embed = {
       title: '🎵 Control Panel — Music Settings',
       color: 0x1DB954,
       description: `### 🎵 Music Settings\n` +
-                   `• **Music Channel**: ${channel}\n` +
-                   `• **Required Role for Song Button**: ${role}\n\n` +
-                   `*Select a channel and role below to configure where the music controls will be sent and who can use the Song button.*`,
+                   `• **Music Panel Channel**: ${channel}\n` +
+                   `• **Required Role for Song Button**: ${role}\n` +
+                   `• **Auto-Join Voice Channel**: ${vcChannel}\n` +
+                   `• **24/7 Playlist**: ${playlist}\n\n` +
+                   `*Configure the music features below. The bot will automatically join the configured VC (or any VC) to play the 24/7 playlist when a user joins.*`,
       timestamp: new Date().toISOString()
     };
 
@@ -590,7 +594,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         components: [{
           type: 8,
           custom_id: 'cfg_music_channel',
-          placeholder: 'Select music channel',
+          placeholder: 'Select text channel for Music Panel',
           min_values: 1,
           max_values: 1,
           channel_types: [0, 5]
@@ -599,14 +603,16 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       {
         type: 1,
         components: [{
-          type: 6,
-          custom_id: 'cfg_music_role',
-          placeholder: 'Select required role',
-          min_values: 1,
-          max_values: 1
+          type: 8,
+          custom_id: 'cfg_music_vc',
+          placeholder: 'Select Voice Channel to auto-join (or clear for All)',
+          min_values: 0,
+          max_values: 1,
+          channel_types: [2] // Voice channels
         }]
       },
       actionSelectRow([
+        { label: 'Set 24/7 Playlist URL', value: 'panel_btn_set_playlist', description: 'Set the Spotify/YouTube URL for the 24/7 stream', emoji: { name: '🎧' } },
         { label: 'Send Music Panel', value: 'panel_btn_send_music', description: 'Send the music control panel to the selected channel', emoji: { name: '📤' } }
       ])
     ];
@@ -1531,6 +1537,8 @@ export async function applyConfigUpdate(body, env) {
     next.music_channel_id = values[0];
   } else if (customId === 'cfg_music_role' && Array.isArray(values) && values[0]) {
     next.music_role_id = values[0];
+  } else if (customId === 'cfg_music_vc') {
+    next.music_vc_id = (Array.isArray(values) && values[0]) ? values[0] : null;
   } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
     next.editing_status_key = values[0];
   } else if (customId === 'cfg_status_role') {
