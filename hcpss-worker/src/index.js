@@ -124,6 +124,34 @@ export default {
           lastCronTickAt
         });
       }
+      
+      if (url.pathname === '/api/config') {
+        const guildId = url.searchParams.get('guild_id');
+        if (!guildId || !env.STATUS_KV) return new Response('Bad Request', { status: 400 });
+        try {
+          const rawCfg = await env.STATUS_KV.get(`config:${guildId}`);
+          const cfg = rawCfg ? JSON.parse(rawCfg) : {};
+          return jsonResponse({
+            music_channel_id: cfg.music_channel_id || null,
+            music_role_id: cfg.music_role_id || null
+          });
+        } catch (err) {
+          return new Response('Error fetching config', { status: 500 });
+        }
+      }
+
+      if (url.pathname === '/api/temp_dj') {
+        const guildId = url.searchParams.get('guild_id');
+        const userId = url.searchParams.get('user_id');
+        if (!guildId || !userId || !env.STATUS_KV) return new Response('Bad Request', { status: 400 });
+        try {
+          const isTemp = await env.STATUS_KV.get(`temp_dj_${guildId}_${userId}`);
+          return jsonResponse({ is_temp_dj: !!isTemp });
+        } catch (err) {
+          return new Response('Error fetching temp_dj', { status: 500 });
+        }
+      }
+
       return new Response('HCPSS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
     }
 

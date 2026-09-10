@@ -31,10 +31,74 @@ client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
 });
 
+const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
+const configCache = new Map();
+const configCacheTime = new Map();
+
+async function getGuildConfig(guildId) {
+  const now = Date.now();
+  if (configCache.has(guildId) && (now - configCacheTime.get(guildId) < 60000)) {
+    return configCache.get(guildId);
+  }
+  try {
+    const res = await fetch(`${WORKER_URL}/api/config?guild_id=${guildId}`);
+    if (res.ok) {
+      const config = await res.json();
+      configCache.set(guildId, config);
+      configCacheTime.set(guildId, now);
+      return config;
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  return null;
+}
+
 client.on('messageCreate', async (message) => {
   if (message.content === '!greeter-ping') {
     await message.channel.send('Pong! The greeter bot is alive and reading messages.');
     return;
+  }
+
+  // Handle music channel message deletions and verification
+  if (message.guild) {
+    const config = await getGuildConfig(message.guild.id);
+    if (config && config.music_channel_id && message.channel.id === config.music_channel_id) {
+      // 1. Delete message after 5 seconds (except our own messages)
+      if (message.author.id !== client.user.id) {
+        setTimeout(() => {
+          message.delete().catch(() => {});
+        }, 5000);
+      }
+
+      // 2. Timeout logic if they use m!play incorrectly (only for non-bots)
+      if (!message.author.bot && message.content.startsWith('m!play')) {
+        const expectedLink = 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=QYOsPmOeQ7qQrIybyUcIuQ&utm_source=copy-link&pi=PIAugKKQTS29_&pt=6b3c22efcf12ac162e4f59e71c26b2c8';
+        const isExpected = message.content.includes(expectedLink);
+        
+        if (!isExpected) {
+          try {
+            // Check if they are a temporary DJ
+            const tempRes = await fetch(`${WORKER_URL}/api/temp_dj?guild_id=${message.guild.id}&user_id=${message.author.id}`);
+            if (tempRes.ok) {
+              const data = await tempRes.json();
+              if (data.is_temp_dj) {
+                // They are a temporary DJ but used the wrong link! Time them out for 30 minutes.
+                await message.member.timeout(30 * 60 * 1000, 'Changed the normal play command link');
+                
+                // DM the server owner
+                const owner = await message.guild.fetchOwner();
+                if (owner) {
+                  await owner.send(`⚠️ **Alert:** User ${message.author.tag} (${message.author.id}) was timed out for 30 minutes for trying to change the Normal Play command in the music channel.\nThey attempted to send: \`${message.content}\``).catch(() => {});
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Error checking temp_dj or timing out:', err);
+          }
+        }
+      }
+    }
   }
 
   // We can still log to console, but we'll also send status updates to the channel for the command

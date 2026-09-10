@@ -667,14 +667,64 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_join') {
-    return interactionResponse({
-      content: "🎵 **The music bot only listens to real people!**\nCopy and send this command into the chat:\n```\nm!join\n```",
-      flags: EPHEMERAL_FLAG
-    });
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ content: 'm!join' })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })());
+    return interactionResponse({ content: 'Join command sent!', flags: EPHEMERAL_FLAG });
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_normal') {
     const link = 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=QYOsPmOeQ7qQrIybyUcIuQ&utm_source=copy-link&pi=PIAugKKQTS29_&pt=6b3c22efcf12ac162e4f59e71c26b2c8';
+    
+    ctx.waitUntil((async () => {
+      try {
+        const config = await getConfig(env, guildId);
+        const roleId = config.music_role_id;
+        if (roleId && body.member && body.member.user) {
+          const hasRole = Array.isArray(body.member.roles) && body.member.roles.includes(roleId);
+          if (!hasRole) {
+            const userId = body.member.user.id;
+            await env.STATUS_KV.put(`temp_dj_${guildId}_${userId}`, 'true', { expirationTtl: 60 });
+            // Add the role
+            await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+              method: 'PUT',
+              headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            });
+            // Auto-remove after 5 seconds
+            setTimeout(async () => {
+              await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+              });
+              await env.STATUS_KV.delete(`temp_dj_${guildId}_${userId}`);
+            }, 5000);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    })());
+
     return interactionResponse({
       content: `🎵 **The music bot only listens to real people!**\nCopy and send this command into the chat:\n\`\`\`\nm!play ${link}\n\`\`\``,
       flags: EPHEMERAL_FLAG
