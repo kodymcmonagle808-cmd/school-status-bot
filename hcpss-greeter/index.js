@@ -32,7 +32,14 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE') && message.author.bot) {
+  if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
+    console.log(`Received command from ${message.author.tag} (${message.author.id}), isBot: ${message.author.bot}`);
+    
+    if (!message.author.bot) {
+      console.log("Ignoring command because it wasn't sent by a bot.");
+      return;
+    }
+
     const parts = message.content.split(' ');
     const targetChannelId = parts.length > 2 ? parts[2] : null;
 
@@ -45,40 +52,52 @@ client.on('messageCreate', async (message) => {
     
     if (targetChannelId && targetChannelId !== 'LEAVE') {
       console.log("Joining voice channel by worker signal: " + targetChannelId);
-      const channel = await client.channels.fetch(targetChannelId).catch(() => null);
+      const channel = await client.channels.fetch(targetChannelId).catch(err => {
+        console.error("Failed to fetch channel:", err);
+        return null;
+      });
       if (channel) {
+        console.log(`Successfully fetched channel: ${channel.name} in guild: ${channel.guild.name}`);
         currentVoiceChannel = channel;
-        currentVoiceConnection = joinVoiceChannel({
-          channelId: channel.id,
-          guildId: channel.guild.id,
-          adapterCreator: channel.guild.voiceAdapterCreator,
-          selfDeaf: true,
-          selfMute: true,
-        });
-        currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
-          if (!currentVoiceConnection) return;
-          try {
-            await Promise.race([
-              entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
-              entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
-            ]);
-          } catch (error) {
-            if (currentVoiceConnection) currentVoiceConnection.destroy();
-            if (currentVoiceChannel) {
-               currentVoiceConnection = joinVoiceChannel({
-                 channelId: currentVoiceChannel.id,
-                 guildId: currentVoiceChannel.guild.id,
-                 adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
-                 selfDeaf: true,
-                 selfMute: true,
-               });
+        try {
+          currentVoiceConnection = joinVoiceChannel({
+            channelId: channel.id,
+            guildId: channel.guild.id,
+            adapterCreator: channel.guild.voiceAdapterCreator,
+            selfDeaf: true,
+            selfMute: true,
+          });
+          console.log("joinVoiceChannel called successfully.");
+          
+          currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+            if (!currentVoiceConnection) return;
+            try {
+              await Promise.race([
+                entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
+                entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
+              ]);
+            } catch (error) {
+              if (currentVoiceConnection) currentVoiceConnection.destroy();
+              if (currentVoiceChannel) {
+                 currentVoiceConnection = joinVoiceChannel({
+                   channelId: currentVoiceChannel.id,
+                   guildId: currentVoiceChannel.guild.id,
+                   adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
+                   selfDeaf: true,
+                   selfMute: true,
+                 });
+              }
             }
-          }
-        });
+          });
+        } catch (err) {
+          console.error("Error calling joinVoiceChannel:", err);
+        }
+      } else {
+        console.log("Channel could not be fetched or does not exist.");
       }
     }
     // Clean up the trigger message so users don't see it
-    await message.delete().catch(() => {});
+    await message.delete().catch(err => console.error("Failed to delete message:", err));
   }
 });
 
