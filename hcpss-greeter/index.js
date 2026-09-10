@@ -29,6 +29,45 @@ let currentVoiceChannel = null;
 
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
+
+  // Auto-join voice channel every 15 minutes for 30 seconds
+  const TARGET_VOICE_CHANNEL_ID = '1547401974969012335';
+  
+  setInterval(async () => {
+    try {
+      const channel = await client.channels.fetch(TARGET_VOICE_CHANNEL_ID).catch(() => null);
+      if (channel) {
+        console.log(`Auto-joining voice channel ${channel.name} for 30 seconds...`);
+        
+        if (currentVoiceConnection) {
+          currentVoiceConnection.destroy();
+        }
+
+        currentVoiceChannel = channel;
+        currentVoiceConnection = joinVoiceChannel({
+          channelId: channel.id,
+          guildId: channel.guild.id,
+          adapterCreator: channel.guild.voiceAdapterCreator,
+          selfDeaf: true,
+          selfMute: true,
+        });
+
+        // Disconnect after 30 seconds
+        setTimeout(() => {
+          if (currentVoiceConnection && currentVoiceChannel?.id === TARGET_VOICE_CHANNEL_ID) {
+            console.log(`Disconnecting from auto-joined voice channel ${channel.name}.`);
+            currentVoiceConnection.destroy();
+            currentVoiceConnection = null;
+            currentVoiceChannel = null;
+          }
+        }, 30 * 1000);
+      } else {
+        console.log(`Auto-join failed: Could not find channel with ID ${TARGET_VOICE_CHANNEL_ID}`);
+      }
+    } catch (err) {
+      console.error(`Error during auto-join interval:`, err);
+    }
+  }, 15 * 60 * 1000);
 });
 
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
