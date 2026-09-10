@@ -32,13 +32,10 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
-  console.log(`[DEBUG] Saw message in channel ${message.channelId} from ${message.author.tag}: ${message.content.substring(0, 50)}`);
-
+  // We can still log to console, but we'll also send status updates to the channel for the command
   if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
-    console.log(`Received command from ${message.author.tag} (${message.author.id}), isBot: ${message.author.bot}`);
-    
     if (!message.author.bot) {
-      console.log("Ignoring command because it wasn't sent by a bot.");
+      await message.channel.send("❌ Ignoring command because it wasn't sent by a bot.");
       return;
     }
 
@@ -46,20 +43,20 @@ client.on('messageCreate', async (message) => {
     const targetChannelId = parts.length > 2 ? parts[2] : null;
 
     if (currentVoiceConnection) {
-      console.log("Leaving voice channel by worker signal...");
+      await message.channel.send("🔌 Disconnecting from current voice channel...");
       currentVoiceConnection.destroy();
       currentVoiceConnection = null;
       currentVoiceChannel = null;
     }
     
     if (targetChannelId && targetChannelId !== 'LEAVE') {
-      console.log("Joining voice channel by worker signal: " + targetChannelId);
+      await message.channel.send(`🔍 Attempting to join voice channel ID: \`${targetChannelId}\`...`);
       const channel = await client.channels.fetch(targetChannelId).catch(err => {
-        console.error("Failed to fetch channel:", err);
         return null;
       });
+      
       if (channel) {
-        console.log(`Successfully fetched channel: ${channel.name} in guild: ${channel.guild.name}`);
+        await message.channel.send(`✅ Found channel: **${channel.name}**. Joining now...`);
         currentVoiceChannel = channel;
         try {
           currentVoiceConnection = joinVoiceChannel({
@@ -69,7 +66,8 @@ client.on('messageCreate', async (message) => {
             selfDeaf: true,
             selfMute: true,
           });
-          console.log("joinVoiceChannel called successfully.");
+          
+          await message.channel.send("🎙️ Successfully called join mechanism!");
           
           currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
             if (!currentVoiceConnection) return;
@@ -92,14 +90,17 @@ client.on('messageCreate', async (message) => {
             }
           });
         } catch (err) {
-          console.error("Error calling joinVoiceChannel:", err);
+          await message.channel.send(`❌ Error while trying to join: ${err.message}`);
         }
       } else {
-        console.log("Channel could not be fetched or does not exist.");
+        await message.channel.send(`❌ Could not find or access a voice channel with ID \`${targetChannelId}\`. Make sure the bot has permissions to view it.`);
       }
     }
-    // Clean up the trigger message so users don't see it
-    await message.delete().catch(err => console.error("Failed to delete message:", err));
+    
+    // We will wait 5 seconds before deleting the trigger message so people can see the logs
+    setTimeout(() => {
+      message.delete().catch(() => {});
+    }, 5000);
   }
 });
 
