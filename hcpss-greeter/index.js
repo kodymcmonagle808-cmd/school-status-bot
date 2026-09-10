@@ -29,54 +29,23 @@ let currentVoiceChannel = null;
 
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
-  
-  const voiceChannelId = '1547401974969012335';
-  client.channels.fetch(voiceChannelId).then(channel => {
-    if (!channel) return console.error("Voice channel not found!");
-    currentVoiceChannel = channel;
-    
-    function connectToVoice() {
-      if (!currentVoiceChannel) return;
-      currentVoiceConnection = joinVoiceChannel({
-        channelId: currentVoiceChannel.id,
-        guildId: currentVoiceChannel.guild.id,
-        adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
-        selfDeaf: true,
-        selfMute: true,
-      });
-
-      currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
-        try {
-          await Promise.race([
-            entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
-            entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
-          ]);
-          // Reconnecting
-        } catch (error) {
-          // Real disconnect
-          if (currentVoiceConnection) {
-            currentVoiceConnection.destroy();
-          }
-          console.log('Reconnecting to voice channel...');
-          if (currentVoiceChannel) setTimeout(connectToVoice, 5000);
-        }
-      });
-    }
-    connectToVoice();
-  }).catch(err => console.error('Failed to fetch voice channel:', err));
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.content === 'GREET_BOT_COMMAND: TOGGLE_VOICE' && message.author.bot) {
+  if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE') && message.author.bot) {
+    const parts = message.content.split(' ');
+    const targetChannelId = parts.length > 2 ? parts[2] : null;
+
     if (currentVoiceConnection) {
       console.log("Leaving voice channel by worker signal...");
       currentVoiceConnection.destroy();
       currentVoiceConnection = null;
       currentVoiceChannel = null;
-    } else {
-      console.log("Joining voice channel by worker signal...");
-      const voiceChannelId = '1547401974969012335';
-      const channel = await client.channels.fetch(voiceChannelId).catch(() => null);
+    }
+    
+    if (targetChannelId && targetChannelId !== 'LEAVE') {
+      console.log("Joining voice channel by worker signal: " + targetChannelId);
+      const channel = await client.channels.fetch(targetChannelId).catch(() => null);
       if (channel) {
         currentVoiceChannel = channel;
         currentVoiceConnection = joinVoiceChannel({
@@ -112,6 +81,7 @@ client.on('messageCreate', async (message) => {
     await message.delete().catch(() => {});
   }
 });
+
 
 client.on('guildMemberAdd', async (member) => {
   try {

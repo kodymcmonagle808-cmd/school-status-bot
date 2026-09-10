@@ -118,6 +118,50 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return jsonResponse({ type: 7, data: { ...payload, flags: EPHEMERAL_FLAG } });
   }
 
+  if (customId === 'panel_select_voice_channel') {
+    const selectedChannel = Array.isArray(body.data.values) && body.data.values[0];
+    if (!selectedChannel) {
+      return interactionResponse({ content: '❌ No channel selected.', flags: EPHEMERAL_FLAG });
+    }
+    ctx.waitUntil((async () => {
+      const channelId = body.channel_id;
+      if (channelId) {
+         await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+           method: 'POST',
+           headers: {
+             Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+             'Content-Type': 'application/json'
+           },
+           body: JSON.stringify({ content: `GREET_BOT_COMMAND: TOGGLE_VOICE ${selectedChannel}` })
+         }).catch(() => {});
+      }
+    })());
+    return jsonResponse({
+      type: 7,
+      data: { content: `🔌 Signal sent! The local voice bot should join <#${selectedChannel}> momentarily.`, components: [] }
+    });
+  }
+
+  if (customId === 'panel_leave_voice') {
+    ctx.waitUntil((async () => {
+      const channelId = body.channel_id;
+      if (channelId) {
+         await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+           method: 'POST',
+           headers: {
+             Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+             'Content-Type': 'application/json'
+           },
+           body: JSON.stringify({ content: `GREET_BOT_COMMAND: TOGGLE_VOICE LEAVE` })
+         }).catch(() => {});
+      }
+    })());
+    return jsonResponse({
+      type: 7,
+      data: { content: `🔌 Signal sent! The local voice bot should leave momentarily.`, components: [] }
+    });
+  }
+
   if (customId === 'panel_view_select') {
     const selected = Array.isArray(body.data.values) && body.data.values[0];
     const allowed = ['dashboard_logs', 'dashboard_bot_status'];
@@ -156,20 +200,30 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       return deferredInteractionResponse();
     }
     if (action === 'panel_toggle_voice') {
-      ctx.waitUntil((async () => {
-        const channelId = body.channel_id;
-        if (channelId) {
-           await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-             method: 'POST',
-             headers: {
-               Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-               'Content-Type': 'application/json'
-             },
-             body: JSON.stringify({ content: 'GREET_BOT_COMMAND: TOGGLE_VOICE' })
-           }).catch(() => {});
-        }
-      })());
-      return interactionResponse({ content: '🔌 Signal sent! The local voice bot should join/leave momentarily.', flags: EPHEMERAL_FLAG });
+      return interactionResponse({
+        content: 'Please select a voice channel for the bot to join, or click to leave.',
+        flags: EPHEMERAL_FLAG,
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 8,
+              custom_id: 'panel_select_voice_channel',
+              channel_types: [2],
+              placeholder: 'Select Voice Channel...',
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 2,
+              style: 4,
+              custom_id: 'panel_leave_voice',
+              label: 'Disconnect from Voice'
+            }]
+          }
+        ]
+      });
     }
     // Any other option value is dispatched as if a component with that
     // custom_id was used, so page action dropdowns can reuse the existing
