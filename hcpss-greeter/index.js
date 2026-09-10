@@ -145,16 +145,33 @@ client.once('ready', () => {
   }, 15 * 60 * 1000);
 });
 
+async function logToPanel(guildId, message) {
+  try {
+    await fetch(`${WORKER_URL}/api/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guild_id: guildId, message })
+    });
+  } catch (err) {
+    console.error("Failed to log to panel", err);
+  }
+}
+
 client.on('voiceStateUpdate', async (oldState, newState) => {
-  if (!oldState.channelId && newState.channelId) {
+  // Trigger when joining a VC or switching VCs
+  if (newState.channelId && oldState.channelId !== newState.channelId) {
     if (newState.member.user.bot) return;
 
     const channel = newState.channel;
+    const guildId = channel.guild.id;
     
+    await logToPanel(guildId, `User ${newState.member.user.tag} joined ${channel.name}. Checking config...`);
+
     // Fetch config to check for VC restrictions and get playlist URL
-    const config = await getGuildConfig(channel.guild.id);
+    const config = await getGuildConfig(guildId);
     if (config) {
       if (config.music_vc_id && channel.id !== config.music_vc_id) {
+        await logToPanel(guildId, `Ignored: user joined ${channel.name}, but bot is restricted to <#${config.music_vc_id}>.`);
         return; // User joined a different VC, ignore
       }
       if (config.music_playlist_url) {
@@ -164,6 +181,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
     if (!currentVoiceConnection || currentVoiceChannel?.id !== channel.id) {
       console.log(`User joined VC. Bot joining ${channel.name} to play music.`);
+      await logToPanel(guildId, `Joining ${channel.name} and starting music...`);
       
       if (currentVoiceConnection) {
         currentVoiceConnection.destroy();
@@ -182,10 +200,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
       if (!isPlayingMusic) {
         if (musicQueue.length === 0) {
+          await logToPanel(guildId, `Loading playlist into queue...`);
           await loadPlaylist();
         }
         playNextSong();
       }
+    } else {
+      await logToPanel(guildId, `Bot is already in ${channel.name} playing music.`);
     }
   } else if (oldState.channelId && !newState.channelId) {
     const channel = oldState.channel;
@@ -193,6 +214,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
       const members = channel.members.filter(m => !m.user.bot);
       if (members.size === 0) {
         console.log("VC is empty. Leaving and pausing music.");
+        await logToPanel(channel.guild.id, `VC is empty. Pausing music and disconnecting...`);
         musicPlayer.pause();
         isPlayingMusic = false;
         currentVoiceConnection.destroy();

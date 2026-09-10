@@ -22,7 +22,7 @@ import { clearSnowfallCache } from './snowfall.js';
 import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handlePushData } from './pushdata.js';
-import { logDetail, logActionError } from './actionlog.js';
+import { logAction, logDetail, logActionError } from './actionlog.js';
 import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
@@ -133,10 +133,24 @@ export default {
           const cfg = rawCfg ? JSON.parse(rawCfg) : {};
           return jsonResponse({
             music_channel_id: cfg.music_channel_id || null,
-            music_role_id: cfg.music_role_id || null
+            music_role_id: cfg.music_role_id || null,
+            music_vc_id: cfg.music_vc_id || null,
+            music_playlist_url: cfg.music_playlist_url || null
           });
         } catch (err) {
           return new Response('Error fetching config', { status: 500 });
+        }
+      }
+
+      if (url.pathname === '/api/log' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          if (body.guild_id && body.message) {
+            await logAction(env, body.guild_id, `🎵 [Music Bot] ${body.message}`);
+          }
+          return jsonResponse({ success: true });
+        } catch (err) {
+          return new Response('Error logging', { status: 500 });
         }
       }
 
