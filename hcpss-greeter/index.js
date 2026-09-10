@@ -32,6 +32,8 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
+  console.log(`[DEBUG] Saw message in channel ${message.channelId} from ${message.author.tag}: ${message.content.substring(0, 50)}`);
+
   if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
     console.log(`Received command from ${message.author.tag} (${message.author.id}), isBot: ${message.author.bot}`);
     
