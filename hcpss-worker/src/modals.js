@@ -84,6 +84,42 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     });
   }
 
+  if (body.data && body.data.custom_id === 'modal_music_song') {
+    const link = getModalInputValue(body, 'input_music_link').trim();
+    const channelId = body.channel_id || body.channel && body.channel.id;
+    if (!channelId) {
+      return interactionResponse({ content: '❌ Could not determine the channel.', flags: EPHEMERAL_FLAG });
+    }
+
+    ctx.waitUntil((async () => {
+      try {
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ content: `m!play ${link}` })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          });
+        }
+      } catch (err) {
+        console.error('Song command failed:', err);
+      }
+    })());
+    
+    return interactionResponse({
+      content: `✅ Song command sent!`,
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (!(await canConfigure(body.member, env, guildId))) {
     return interactionResponse({
       content: 'You do not have permission to configure this bot.',

@@ -269,6 +269,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   // Simple page-navigation buttons share one pattern: panel_to_<page>.
   const NAV_BUTTON_PAGES = {
     panel_to_config_general: 'config_general',
+    panel_to_config_music: 'config_music',
     panel_to_config_status: 'config_status',
     panel_to_config_schedule: 'config_schedule',
     panel_to_config_toggles: 'config_toggles',
@@ -552,6 +553,55 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         }]
       }
     });
+  }
+
+  if (customId === 'panel_btn_send_music') {
+    const config = await getConfig(env, guildId);
+    if (!config.music_channel_id) {
+      return interactionResponse({ content: '❌ Please select a Music Channel first.', flags: EPHEMERAL_FLAG });
+    }
+
+    const musicEmbed = {
+      title: '🎵 Music Controls',
+      color: 0x1DB954,
+      description: 'Use the buttons below to control the music bot.'
+    };
+
+    const musicComponents = [{
+      type: 1,
+      components: [
+        { type: 2, style: 1, custom_id: 'music_btn_join', label: 'Join' },
+        { type: 2, style: 2, custom_id: 'music_btn_song', label: 'Song' },
+        { type: 2, style: 3, custom_id: 'music_btn_normal', label: 'Normal Play' }
+      ]
+    }];
+
+    ctx.waitUntil((async () => {
+      try {
+        await fetch(`https://discord.com/api/v10/channels/${config.music_channel_id}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            embeds: [musicEmbed],
+            components: musicComponents
+          })
+        });
+        await updateInteractionOriginal(env, body.token, {
+          content: `✅ Music panel sent to <#${config.music_channel_id}>!`,
+          components: []
+        });
+      } catch (err) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Failed to send music panel: ${err.message}`,
+          components: []
+        });
+      }
+    })());
+    
+    return deferredInteractionResponse();
   }
 
   return null;

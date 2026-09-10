@@ -85,6 +85,7 @@ export const PANEL_NAV_TABS = [
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
+  { label: 'Music Settings', value: 'config_music', emoji: '🎵', description: 'Configure music channel and controls' },
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
   { label: 'Worker Updates', value: 'worker_updates', emoji: '🚀', description: 'Deploy history (bot owner only)' }
 ];
@@ -562,6 +563,51 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       },
       actionSelectRow([
         { label: 'Set Embed Footer Text', value: 'panel_btn_set_footer', description: 'Customize the footer shown on status embeds', emoji: { name: '✍️' } }
+      ])
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_music') {
+    const channel = config.music_channel_id ? `<#${config.music_channel_id}>` : '(not set)';
+    const role = config.music_role_id ? `<@&${config.music_role_id}>` : '(not set)';
+
+    const embed = {
+      title: '🎵 Control Panel — Music Settings',
+      color: 0x1DB954,
+      description: `### 🎵 Music Settings\n` +
+                   `• **Music Channel**: ${channel}\n` +
+                   `• **Required Role for Song Button**: ${role}\n\n` +
+                   `*Select a channel and role below to configure where the music controls will be sent and who can use the Song button.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_music'),
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_music_channel',
+          placeholder: 'Select music channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_music_role',
+          placeholder: 'Select required role',
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      actionSelectRow([
+        { label: 'Send Music Panel', value: 'panel_btn_send_music', description: 'Send the music control panel to the selected channel', emoji: { name: '📤' } }
       ])
     ];
 
@@ -1481,6 +1527,10 @@ export async function applyConfigUpdate(body, env) {
     next.log_channel_id = values[0];
   } else if (customId === 'cfg_staff_role' && Array.isArray(values) && values[0]) {
     next.staff_role_id = values[0];
+  } else if (customId === 'cfg_music_channel' && Array.isArray(values) && values[0]) {
+    next.music_channel_id = values[0];
+  } else if (customId === 'cfg_music_role' && Array.isArray(values) && values[0]) {
+    next.music_role_id = values[0];
   } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
     next.editing_status_key = values[0];
   } else if (customId === 'cfg_status_role') {

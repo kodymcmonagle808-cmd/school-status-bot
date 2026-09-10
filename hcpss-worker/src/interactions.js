@@ -666,6 +666,95 @@ export async function handleInteraction(body, env, ctx) {
     return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
   }
 
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_join') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ content: 'm!join' })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          // Worker-safe delay before deleting
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })());
+    return interactionResponse({ content: 'Join command sent!', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_normal') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        const link = 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=QYOsPmOeQ7qQrIybyUcIuQ&utm_source=copy-link&pi=PIAugKKQTS29_&pt=6b3c22efcf12ac162e4f59e71c26b2c8';
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ content: `m!play ${link}` })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          });
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    })());
+    return interactionResponse({ content: 'Normal play command sent!', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_song') {
+    const config = await getConfig(env, guildId);
+    const requiredRole = config.music_role_id;
+    if (requiredRole && body.member && Array.isArray(body.member.roles) && !body.member.roles.includes(requiredRole)) {
+      if (!memberIsAdmin(body.member)) {
+        return interactionResponse({
+          content: `❌ You need the <@&${requiredRole}> role to use this button.`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    }
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Play a Song',
+        custom_id: 'modal_music_song',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_music_link',
+              style: 1,
+              label: 'Spotify Link',
+              placeholder: 'Paste a link to a song or playlist...',
+              required: true
+            }]
+          }
+        ]
+      }
+    });
+  }
+
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('cfg_')) {
     if (!(await canConfigure(body.member, env, guildId))) {
       return interactionResponse({
