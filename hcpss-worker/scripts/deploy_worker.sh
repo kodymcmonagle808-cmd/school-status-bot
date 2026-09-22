@@ -402,6 +402,25 @@ payload=$(jq -n '[
       { name: "channel", description: "The channel to send applications to.", type: 7, channel_types: [0], required: true },
       { name: "role", description: "The role to give when an application is approved.", type: 8, required: true }
     ]
+  },
+  {
+    name: "staffapplication",
+    description: "Apply to join the server staff team.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "staffappsetup",
+    description: "Configure the staff application system.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    default_member_permissions: "8",
+    options: [
+      { name: "channel", description: "The channel to send applications to.", type: 7, channel_types: [0], required: true },
+      { name: "role", description: "The role to give when an application is approved.", type: 8, required: true }
+    ]
   }
 ]')
 

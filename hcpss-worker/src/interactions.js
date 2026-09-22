@@ -44,6 +44,7 @@ import {
   runAddRoleDmCommand,
   runDankStaffSetupCommand,
   runDankMemerCommand,
+  runStaffAppSetupCommand,
   handlePanelRefresh
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
@@ -165,6 +166,52 @@ export async function handleInteraction(body, env, ctx) {
       ctx.waitUntil(runDankMemerCommand(body, env));
       return deferredInteractionResponse();
     }
+
+    if (name === 'staffapplication') {
+      const invokerId = getInvokerId(body);
+      if (invokerId) {
+        const hasApplied = await env.STATUS_KV.get(`staffapp_applied:${guildId}:${invokerId}`);
+        if (hasApplied === 'true') {
+          return interactionResponse({
+            content: '❌ You have already submitted a staff application and cannot apply again.',
+            flags: EPHEMERAL_FLAG
+          });
+        }
+      }
+      return jsonResponse({
+        type: 9,
+        data: {
+          title: 'Staff Application',
+          custom_id: 'modal_staff_apply',
+          components: [
+            {
+              type: 1,
+              components: [{
+                type: 4, custom_id: 'staff_reason', style: 2, label: 'Why do you want to join the staff team?', required: true
+              }]
+            },
+            {
+              type: 1,
+              components: [{
+                type: 4, custom_id: 'staff_experience', style: 2, label: 'Do you have any prior experience?', required: true
+              }]
+            },
+            {
+              type: 1,
+              components: [{
+                type: 4, custom_id: 'staff_conflict', style: 2, label: 'How do you handle conflict?', required: true
+              }]
+            },
+            {
+              type: 1,
+              components: [{
+                type: 4, custom_id: 'staff_age', style: 1, label: 'What is your age?', required: true
+              }]
+            }
+          ]
+        }
+      });
+    }
   }
 
   if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
@@ -200,6 +247,11 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name === 'dankstaffsetup') {
     ctx.waitUntil(runDankStaffSetupCommand(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'staffappsetup') {
+    ctx.waitUntil(runStaffAppSetupCommand(body, env));
     return deferredInteractionResponse();
   }
 
@@ -825,12 +877,13 @@ export async function handleInteraction(body, env, ctx) {
     });
   }
 
-  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('dank_approve:') || body.data.custom_id.startsWith('dank_disapprove:'))) {
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('dank_approve:') || body.data.custom_id.startsWith('dank_disapprove:') || body.data.custom_id.startsWith('staff_approve:') || body.data.custom_id.startsWith('staff_disapprove:'))) {
     if (!(await canUseCommands(body.member, env, guildId))) {
       return interactionResponse({ content: '❌ You do not have permission to review applications.', flags: EPHEMERAL_FLAG });
     }
 
-    const isApprove = body.data.custom_id.startsWith('dank_approve:');
+    const isStaffApp = body.data.custom_id.startsWith('staff_');
+    const isApprove = body.data.custom_id.includes('_approve:');
     const targetUserId = body.data.custom_id.split(':')[1];
     
     // Disable components
@@ -868,15 +921,25 @@ export async function handleInteraction(body, env, ctx) {
       const dmChannel = await dmChannelResp.json();
       let dmContent = '';
       if (isApprove) {
-        dmContent = '🎉 **Congratulations!** Your Dank Memer application has been **approved**!\n\n' +
-                    'You now have access to the Dank Memer features in the CHS Network server. ' +
-                    'Please make sure you continue to follow all the terms and rules you agreed to.\n\n' +
-                    'Head over to <#1523866788096376982> to start playing and having fun!';
+        if (isStaffApp) {
+          dmContent = '🎉 **Congratulations!** Your Staff application has been **approved**!\n\nWelcome to the CHS Network staff team!';
+        } else {
+          dmContent = '🎉 **Congratulations!** Your Dank Memer application has been **approved**!\n\n' +
+                      'You now have access to the Dank Memer features in the CHS Network server. ' +
+                      'Please make sure you continue to follow all the terms and rules you agreed to.\n\n' +
+                      'Head over to <#1523866788096376982> to start playing and having fun!';
+        }
       } else {
-        dmContent = '❌ **Application Update:** We regret to inform you that your Dank Memer application has been **disapproved**.\n\n' +
-                    'Unfortunately, you cannot use the application command again. ' +
-                    'However, if you believe this was a mistake or you wish to appeal this decision, ' +
-                    'please open a ticket in <#1524207124354433155> to speak with a staff member.';
+        if (isStaffApp) {
+          dmContent = '❌ **Application Update:** We regret to inform you that your Staff application has been **disapproved**.\n\n' +
+                      'You cannot reapply at this time, but we appreciate your interest in helping the server. ' +
+                      'If you have any questions, please open a ticket in <#1524207124354433155>.';
+        } else {
+          dmContent = '❌ **Application Update:** We regret to inform you that your Dank Memer application has been **disapproved**.\n\n' +
+                      'Unfortunately, you cannot use the application command again. ' +
+                      'However, if you believe this was a mistake or you wish to appeal this decision, ' +
+                      'please open a ticket in <#1524207124354433155> to speak with a staff member.';
+        }
       }
 
       const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
@@ -892,13 +955,14 @@ export async function handleInteraction(body, env, ctx) {
 
     // Add role if approved
     if (isApprove) {
-      const roleId = await env.STATUS_KV.get(`dank_role:${guildId}`);
+      const roleKey = isStaffApp ? `staffapp_role:${guildId}` : `dank_role:${guildId}`;
+      const roleId = await env.STATUS_KV.get(roleKey);
       if (roleId) {
         await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${roleId}`, {
           method: 'PUT',
           headers: {
             Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-            'X-Audit-Log-Reason': 'Dank Memer application approved'
+            'X-Audit-Log-Reason': 'Application approved'
           }
         });
       }

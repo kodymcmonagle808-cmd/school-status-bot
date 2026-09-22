@@ -150,6 +150,67 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     });
   }
 
+  if (body.data && body.data.custom_id === 'modal_staff_apply') {
+    const reason = getModalInputValue(body, 'staff_reason').trim();
+    const experience = getModalInputValue(body, 'staff_experience').trim();
+    const conflict = getModalInputValue(body, 'staff_conflict').trim();
+    const age = getModalInputValue(body, 'staff_age').trim();
+    const invokerId = getInvokerId(body);
+    const staffAppChannelId = await env.STATUS_KV.get(`staffapp_channel:${guildId}`);
+
+    if (!staffAppChannelId) {
+      return interactionResponse({
+        content: '❌ Staff applications are not configured on this server. Staff must run `/staffappsetup` first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const embed = {
+      title: 'New Staff Application',
+      color: 0x3498DB, // blue
+      fields: [
+        { name: 'User', value: `<@${invokerId}> (${invokerId})` },
+        { name: 'Why do you want to join the staff team?', value: reason.substring(0, 1024) },
+        { name: 'Do you have any prior experience?', value: experience.substring(0, 1024) },
+        { name: 'How do you handle conflict?', value: conflict.substring(0, 1024) },
+        { name: 'What is your age?', value: age.substring(0, 1024) }
+      ],
+      timestamp: new Date().toISOString()
+    };
+
+    const postRes = await fetch(`https://discord.com/api/v10/channels/${staffAppChannelId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        embeds: [embed],
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve', custom_id: `staff_approve:${invokerId}` },
+            { type: 2, style: 4, label: 'Disapprove', custom_id: `staff_disapprove:${invokerId}` }
+          ]
+        }]
+      })
+    });
+
+    if (!postRes.ok) {
+      return interactionResponse({
+        content: `❌ Failed to send application to the staff channel. Discord API returned ${postRes.status}.`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    await env.STATUS_KV.put(`staffapp_applied:${guildId}:${invokerId}`, 'true');
+
+    return interactionResponse({
+      content: '✅ Your staff application has been submitted to the team. You will receive a DM when it is reviewed.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (!(await canConfigure(body.member, env, guildId))) {
     return interactionResponse({
       content: 'You do not have permission to configure this bot.',
