@@ -868,9 +868,15 @@ export async function handleInteraction(body, env, ctx) {
       const dmChannel = await dmChannelResp.json();
       let dmContent = '';
       if (isApprove) {
-        dmContent = 'Your Dank Memer application has been **approved**! Head over to the bot category in the server to start playing.';
+        dmContent = '🎉 **Congratulations!** Your Dank Memer application has been **approved**!\n\n' +
+                    'You now have access to the Dank Memer features in the CHS Network server. ' +
+                    'Please make sure you continue to follow all the terms and rules you agreed to.\n\n' +
+                    'Head over to <#1523866788096376982> to start playing and having fun!';
       } else {
-        dmContent = 'Your Dank Memer application has been **disapproved**. You may appeal this decision, but you cannot use the command again.';
+        dmContent = '❌ **Application Update:** We regret to inform you that your Dank Memer application has been **disapproved**.\n\n' +
+                    'Unfortunately, you cannot use the application command again. ' +
+                    'However, if you believe this was a mistake or you wish to appeal this decision, ' +
+                    'please open a ticket in <#1524207124354433155> to speak with a staff member.';
       }
 
       const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
