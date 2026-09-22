@@ -371,6 +371,18 @@ payload=$(jq -n '[
         type: 1
       }
     ]
+  },
+  {
+    name: "addroledm",
+    description: "Add a role to a user and DM them a message.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      { name: "user", description: "The user to give the role to.", type: 6, required: true },
+      { name: "role", description: "The role to add.", type: 8, required: true },
+      { name: "message", description: "The message to DM to the user.", type: 3, required: true }
+    ]
   }
 ]')
 

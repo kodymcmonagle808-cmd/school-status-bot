@@ -41,6 +41,7 @@ import {
   runHealthCommand,
   runPostStatusCommand,
   runOverrideCommand,
+  runAddRoleDmCommand,
   handlePanelRefresh
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
@@ -182,6 +183,11 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name === 'events') {
     ctx.waitUntil(runEventsCommand(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'addroledm') {
+    ctx.waitUntil(runAddRoleDmCommand(body, env));
     return deferredInteractionResponse();
   }
 

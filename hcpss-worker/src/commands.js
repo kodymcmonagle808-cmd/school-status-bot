@@ -1044,3 +1044,71 @@ export async function handlePanelClearLogs(body, env) {
     embeds: []
   });
 }
+
+export async function runAddRoleDmCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const targetUserId = getCommandOption(options, 'user');
+  const roleId = getCommandOption(options, 'role');
+  const messageStr = getCommandOption(options, 'message');
+
+  if (!targetUserId || !roleId || !messageStr) {
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ Missing required options.',
+      embeds: []
+    });
+    return;
+  }
+
+  // 1. Add role
+  const roleResp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${roleId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+      'X-Audit-Log-Reason': 'Role added via /addroledm command'
+    }
+  });
+
+  if (!roleResp.ok) {
+    await updateInteractionOriginal(env, body.token, {
+      content: `❌ Failed to add role: Discord API returned ${roleResp.status}. Make sure the bot has Manage Roles permission and its role is above the target role.`,
+      embeds: []
+    });
+    return;
+  }
+
+  // 2. DM the user
+  const dmChannelResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ recipient_id: targetUserId })
+  });
+
+  let dmSuccess = false;
+  if (dmChannelResp.ok) {
+    const dmChannel = await dmChannelResp.json();
+    
+    // We can also include the role name if we can get it, but we only have the ID.
+    // The user asked "telling them what role they got and the message".
+    // We can use the role ping syntax <@&roleId> which Discord translates to the role name in DMs for the user.
+    const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ content: `You have been given the <@&${roleId}> role in a server!\n\nMessage from staff:\n> ${messageStr}` })
+    });
+    if (msgResp.ok) {
+      dmSuccess = true;
+    }
+  }
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `✅ Successfully added role <@&${roleId}> to <@${targetUserId}>.${dmSuccess ? ' DM sent.' : ' **Failed to send DM** (they might have DMs disabled).'}`,
+    embeds: []
+  });
+}
