@@ -1201,3 +1201,25 @@ export async function runStaffAppSetupCommand(body, env) {
   });
 }
 
+export async function runJoinSetupCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const channelId = getCommandOption(options, 'channel');
+  const roleId = getCommandOption(options, 'role');
+
+  if (!channelId || !roleId) {
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ Missing required options.',
+      embeds: []
+    });
+    return;
+  }
+
+  await env.STATUS_KV.put(`joinapp_channel:${guildId}`, channelId);
+  await env.STATUS_KV.put(`joinapp_role:${guildId}`, roleId);
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `✅ Join application system configured.\n\nLogs and alerts will be sent to <#${channelId}> and approved users will receive <@&${roleId}>.`,
+    embeds: []
+  });
+}

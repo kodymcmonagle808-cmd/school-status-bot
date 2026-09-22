@@ -45,6 +45,7 @@ import {
   runDankStaffSetupCommand,
   runDankMemerCommand,
   runStaffAppSetupCommand,
+  runJoinSetupCommand,
   handlePanelRefresh
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
@@ -253,6 +254,51 @@ export async function handleInteraction(body, env, ctx) {
   if (body.type === 2 && body.data && body.data.name === 'staffappsetup') {
     ctx.waitUntil(runStaffAppSetupCommand(body, env));
     return deferredInteractionResponse();
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'joinsetup') {
+    ctx.waitUntil(runJoinSetupCommand(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'join') {
+    const invokerId = getInvokerId(body);
+    if (invokerId) {
+      const hasApplied = await env.STATUS_KV.get(`joinapp_applied:${guildId}:${invokerId}`);
+      if (hasApplied === 'true') {
+        return interactionResponse({
+          content: '❌ You have already submitted an application to join this server.',
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    }
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Join Server',
+        custom_id: 'modal_join_apply',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4, custom_id: 'join_school', style: 1, label: 'What school are you in currently?', required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4, custom_id: 'join_email', style: 1, label: 'What is your school provided email', placeholder: '...@inst.hcpss.org', required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4, custom_id: 'join_name', style: 1, label: "What's your name?", required: true
+            }]
+          }
+        ]
+      }
+    });
   }
 
   if (body.type === 2 && body.data && body.data.name === 'refresh-panel') {

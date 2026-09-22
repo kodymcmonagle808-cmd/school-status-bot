@@ -211,6 +211,81 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     });
   }
 
+  if (body.data && body.data.custom_id === 'modal_join_apply') {
+    const school = getModalInputValue(body, 'join_school').trim();
+    const email = getModalInputValue(body, 'join_email').trim();
+    const name = getModalInputValue(body, 'join_name').trim();
+    const invokerId = getInvokerId(body);
+    const joinAppChannelId = await env.STATUS_KV.get(`joinapp_channel:${guildId}`);
+    const joinAppRoleId = await env.STATUS_KV.get(`joinapp_role:${guildId}`);
+
+    if (!joinAppChannelId || !joinAppRoleId) {
+      return interactionResponse({
+        content: '❌ Server join applications are not fully configured. Staff must run `/joinsetup` first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const embed = {
+      title: 'New Join Application',
+      color: email.endsWith('@inst.hcpss.org') ? 0x2ECC71 : 0xE67E22,
+      fields: [
+        { name: 'User', value: `<@${invokerId}> (${invokerId})` },
+        { name: 'Name', value: name.substring(0, 1024) },
+        { name: 'School', value: school.substring(0, 1024) },
+        { name: 'Email', value: email.substring(0, 1024) }
+      ],
+      timestamp: new Date().toISOString()
+    };
+
+    let logMessage = '';
+
+    if (email.endsWith('@inst.hcpss.org')) {
+      const resp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${invokerId}/roles/${joinAppRoleId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          'X-Audit-Log-Reason': 'Auto-approved join application via verified email'
+        }
+      });
+      if (!resp.ok) {
+        logMessage = `⚠️ <@${invokerId}> provided a valid HCPSS email, but I failed to assign the role (Discord API ${resp.status}). Please assign it manually.`;
+      } else {
+        logMessage = `✅ <@${invokerId}> was **auto-approved** based on their provided HCPSS email.`;
+      }
+    } else {
+      logMessage = `⚠️ <@${invokerId}> provided a non-HCPSS email (\`${email}\`). Please review manually.`;
+    }
+
+    const postRes = await fetch(`https://discord.com/api/v10/channels/${joinAppChannelId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        content: logMessage,
+        embeds: [embed]
+      })
+    });
+
+    if (!postRes.ok) {
+      return interactionResponse({
+        content: `❌ Failed to send application to the staff log channel. Discord API returned ${postRes.status}.`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    await env.STATUS_KV.put(`joinapp_applied:${guildId}:${invokerId}`, 'true');
+
+    return interactionResponse({
+      content: email.endsWith('@inst.hcpss.org') 
+        ? '✅ Your application has been automatically approved and you should receive access shortly.'
+        : '✅ Your application has been submitted and is pending manual review by staff.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (!(await canConfigure(body.member, env, guildId))) {
     return interactionResponse({
       content: 'You do not have permission to configure this bot.',
