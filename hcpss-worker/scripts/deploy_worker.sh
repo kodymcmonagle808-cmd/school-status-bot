@@ -421,25 +421,6 @@ payload=$(jq -n '[
       { name: "channel", description: "The channel to send applications to.", type: 7, channel_types: [0], required: true },
       { name: "role", description: "The role to give when an application is approved.", type: 8, required: true }
     ]
-  },
-  {
-    name: "join",
-    description: "Apply to join the server community.",
-    type: 1,
-    integration_types: [0],
-    contexts: [0]
-  },
-  {
-    name: "joinsetup",
-    description: "Configure the join application system.",
-    type: 1,
-    integration_types: [0],
-    contexts: [0],
-    default_member_permissions: "8",
-    options: [
-      { name: "channel", description: "The channel to send application logs and alerts to.", type: 7, channel_types: [0], required: true },
-      { name: "role", description: "The role to give when a user is approved.", type: 8, required: true }
-    ]
   }
 ]')
 
