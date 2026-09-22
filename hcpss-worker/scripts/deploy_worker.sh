@@ -383,6 +383,25 @@ payload=$(jq -n '[
       { name: "role", description: "The role to add.", type: 8, required: true },
       { name: "message", description: "The message to DM to the user.", type: 3, required: true }
     ]
+  },
+  {
+    name: "dankmemer",
+    description: "Apply for access to Dank Memer features.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
+    name: "dankstaffsetup",
+    description: "Configure the Dank Memer application system.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    default_member_permissions: "8",
+    options: [
+      { name: "channel", description: "The channel to send applications to.", type: 7, channel_types: [0], required: true },
+      { name: "role", description: "The role to give when an application is approved.", type: 8, required: true }
+    ]
   }
 ]')
 

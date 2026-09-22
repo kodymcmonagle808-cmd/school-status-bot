@@ -92,6 +92,64 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     });
   }
 
+  if (body.data && body.data.custom_id === 'modal_dank_apply') {
+    const firstName = getModalInputValue(body, 'dank_firstname').trim();
+    const lastName = getModalInputValue(body, 'dank_lastname').trim();
+    const eSignature = getModalInputValue(body, 'dank_esignature').trim();
+    const invokerId = getInvokerId(body);
+    const dankChannelId = await env.STATUS_KV.get(`dank_channel:${guildId}`);
+
+    if (!dankChannelId) {
+      return interactionResponse({
+        content: '❌ Dank Memer applications are not configured on this server. Staff must run `/dankstaffsetup` first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const embed = {
+      title: 'New Dank Memer Application',
+      color: 0xF1C40F, // yellow
+      fields: [
+        { name: 'User', value: `<@${invokerId}> (${invokerId})` },
+        { name: 'Name', value: `${firstName} ${lastName}` },
+        { name: 'E-signature', value: eSignature }
+      ],
+      timestamp: new Date().toISOString()
+    };
+
+    const postRes = await fetch(`https://discord.com/api/v10/channels/${dankChannelId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        embeds: [embed],
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Approve', custom_id: `dank_approve:${invokerId}` },
+            { type: 2, style: 4, label: 'Disapprove', custom_id: `dank_disapprove:${invokerId}` }
+          ]
+        }]
+      })
+    });
+
+    if (!postRes.ok) {
+      return interactionResponse({
+        content: `❌ Failed to send application to the staff channel. Discord API returned ${postRes.status}.`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    await env.STATUS_KV.put(`dank_applied:${guildId}:${invokerId}`, 'true');
+
+    return interactionResponse({
+      content: '✅ Your application has been submitted to the staff. You will receive a DM when it is reviewed.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (!(await canConfigure(body.member, env, guildId))) {
     return interactionResponse({
       content: 'You do not have permission to configure this bot.',

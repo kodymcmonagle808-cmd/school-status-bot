@@ -1112,3 +1112,69 @@ export async function runAddRoleDmCommand(body, env) {
     embeds: []
   });
 }
+
+import { DANK_MEMER_TERMS } from './constants.js';
+
+export async function runDankStaffSetupCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const channelId = getCommandOption(options, 'channel');
+  const roleId = getCommandOption(options, 'role');
+
+  if (!channelId || !roleId) {
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ Missing required options.',
+      embeds: []
+    });
+    return;
+  }
+
+  await env.STATUS_KV.put(`dank_channel:${guildId}`, channelId);
+  await env.STATUS_KV.put(`dank_role:${guildId}`, roleId);
+
+  await updateInteractionOriginal(env, body.token, {
+    content: `✅ Dank Memer application system configured.\n\nApplications will be sent to <#${channelId}> and approved users will receive <@&${roleId}>.`,
+    embeds: []
+  });
+}
+
+export async function runDankMemerCommand(body, env) {
+  const guildId = body.guild_id || '';
+  const invokerId = getInvokerId(body);
+  
+  if (!invokerId) {
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ Could not determine your user ID.',
+      embeds: []
+    });
+    return;
+  }
+
+  const hasApplied = await env.STATUS_KV.get(`dank_applied:${guildId}:${invokerId}`);
+  if (hasApplied === 'true') {
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ You have already applied for Dank Memer access and cannot apply again.',
+      embeds: []
+    });
+    return;
+  }
+
+  const embed = {
+    title: 'Dank Memer Terms & Conditions',
+    description: DANK_MEMER_TERMS,
+    color: 0x5865F2,
+    footer: { text: 'Read the terms carefully before applying.' }
+  };
+
+  await updateInteractionOriginal(env, body.token, {
+    content: '',
+    embeds: [embed],
+    components: [{
+      type: 1,
+      components: [
+        { type: 2, style: 1, label: 'I Agree — Open Application', custom_id: 'btn_dank_apply' }
+      ]
+    }]
+  });
+}
+

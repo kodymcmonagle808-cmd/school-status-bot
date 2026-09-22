@@ -42,6 +42,8 @@ import {
   runPostStatusCommand,
   runOverrideCommand,
   runAddRoleDmCommand,
+  runDankStaffSetupCommand,
+  runDankMemerCommand,
   handlePanelRefresh
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
@@ -158,6 +160,11 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'stats') {
       return interactionResponse(await runStatsCommand(env, guildId));
     }
+
+    if (name === 'dankmemer') {
+      ctx.waitUntil(runDankMemerCommand(body, env));
+      return deferredInteractionResponse();
+    }
   }
 
   if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
@@ -188,6 +195,11 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name === 'addroledm') {
     ctx.waitUntil(runAddRoleDmCommand(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'dankstaffsetup') {
+    ctx.waitUntil(runDankStaffSetupCommand(body, env));
     return deferredInteractionResponse();
   }
 
@@ -249,6 +261,49 @@ export async function handleInteraction(body, env, ctx) {
     return jsonResponse({
       type: 7,
       data: { content: '❎ Deletion cancelled. No data was removed.', components: [] }
+    });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'btn_dank_apply') {
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Dank Memer Application',
+        custom_id: 'modal_dank_apply',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'dank_firstname',
+              style: 1,
+              label: 'First Name',
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'dank_lastname',
+              style: 1,
+              label: 'Last Name',
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'dank_esignature',
+              style: 1,
+              label: 'E-signature',
+              placeholder: 'Type your full name to sign',
+              required: true
+            }]
+          }
+        ]
+      }
     });
   }
 
@@ -766,6 +821,88 @@ export async function handleInteraction(body, env, ctx) {
             }]
           }
         ]
+      }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('dank_approve:') || body.data.custom_id.startsWith('dank_disapprove:'))) {
+    if (!(await canUseCommands(body.member, env, guildId))) {
+      return interactionResponse({ content: '❌ You do not have permission to review applications.', flags: EPHEMERAL_FLAG });
+    }
+
+    const isApprove = body.data.custom_id.startsWith('dank_approve:');
+    const targetUserId = body.data.custom_id.split(':')[1];
+    
+    // Disable components
+    const currentMessage = body.message;
+    const newComponents = currentMessage.components ? JSON.parse(JSON.stringify(currentMessage.components)) : [];
+    if (newComponents.length > 0 && newComponents[0].components) {
+      newComponents[0].components.forEach(c => c.disabled = true);
+    }
+    
+    // Update the message so buttons are disabled
+    ctx.waitUntil(fetch(`https://discord.com/api/v10/channels/${body.channel_id}/messages/${body.message.id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        content: `Application **${isApprove ? 'APPROVED' : 'DISAPPROVED'}** by <@${getInvokerId(body)}>`,
+        components: newComponents
+      })
+    }));
+
+    // Send DM
+    const dmChannelResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ recipient_id: targetUserId })
+    });
+
+    let dmSuccess = false;
+    if (dmChannelResp.ok) {
+      const dmChannel = await dmChannelResp.json();
+      let dmContent = '';
+      if (isApprove) {
+        dmContent = 'Your Dank Memer application has been **approved**! Head over to the bot category in the server to start playing.';
+      } else {
+        dmContent = 'Your Dank Memer application has been **disapproved**. You may appeal this decision, but you cannot use the command again.';
+      }
+
+      const msgResp = await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ content: dmContent })
+      });
+      if (msgResp.ok) dmSuccess = true;
+    }
+
+    // Add role if approved
+    if (isApprove) {
+      const roleId = await env.STATUS_KV.get(`dank_role:${guildId}`);
+      if (roleId) {
+        await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${roleId}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'X-Audit-Log-Reason': 'Dank Memer application approved'
+          }
+        });
+      }
+    }
+
+    return jsonResponse({
+      type: 7,
+      data: {
+        content: `Application **${isApprove ? 'APPROVED' : 'DISAPPROVED'}** by <@${getInvokerId(body)}>.${dmSuccess ? ' DM sent to user.' : ' Failed to send DM.'}`,
+        components: newComponents
       }
     });
   }

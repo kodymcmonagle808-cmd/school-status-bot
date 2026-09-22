@@ -11,6 +11,37 @@ export const POST_STATUS_COMMAND = 'post-status';
 export const OVERRIDE_COMMAND = 'override';
 export const ANNOUNCE_COMMAND = 'announce';
 
+export const DANK_MEMER_TERMS = `CHS Network. Dank Memer Terms & Conditions
+
+By using Dank Memer in this server you agree to the following:
+
+1. Entertainment Only
+Dank Memer currency, items and pets are for fun. They don't have real-world value. Can't be bought, sold or traded for real money or things. If you try to do you will get banned.
+
+2. No Exploits or Bugs
+Don't try to cheat by using bugs, glitches or bot errors to get currency or items. If you find a bug tell a moderator of using it. If you get caught cheating your earnings will be. You might get muted or banned.
+
+3. No Begging or Spamming
+Don't beg for currency or spam commands. Use the designated bot channels only. If you do this a lot you might get in trouble.
+
+4. Alt Accounts
+Using accounts to get more currency avoid cooldowns or cheat in giveaways or trading is not allowed. If you get caught both your accounts will get banned.
+
+5. Trading & Gambling Features
+Dank Memer has fun games like blackjack and slots. These are not gambling and are, for entertainment only. Please use them responsibly. If moderators think you're using them much they might talk to you.
+
+6. Fair Play
+Don't scam others during trades, giveaways or heists. Once you make a trade it can't be undone. Be careful when you trade.
+
+7. Server Rules Still Apply
+The normal CHS Network server rules still apply when using Dank Memer. Using the bot doesn't mean you can break the rules.
+
+8. Age Requirement
+You must be least 13 years old to use Discord and Dank Memer. If you lie about your age to use the bot you might get banned.
+
+9. Moderator Discretion
+Moderators can reset, adjust or remove currency or items if they see you're cheating or abusing the system. They can also update these terms at any time.`;
+
 export const DEFAULT_STAFF_ROLE_ID = '1521682363942436896';
 export const DEFAULT_LOG_CHANNEL_ID = '1524911607942221965';
 export const DEFAULT_CHECK_SCHEDULE = ['5:20', '7:20', '10:00', '20:00'];
