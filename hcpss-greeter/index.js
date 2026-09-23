@@ -1,6 +1,4 @@
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
 const play = require('play-dl');
@@ -104,107 +102,8 @@ musicPlayer.on(AudioPlayerStatus.Idle, () => {
   playNextSong();
 });
 
-const PROCESSED_FILE = path.join(__dirname, 'joinlogs_processed.json');
-
-function loadProcessed() {
-  try {
-    if (fs.existsSync(PROCESSED_FILE)) {
-      return JSON.parse(fs.readFileSync(PROCESSED_FILE, 'utf8'));
-    }
-  } catch (e) {
-    console.error('Error loading processed file', e);
-  }
-  return [];
-}
-
-function saveProcessed(arr) {
-  try {
-    fs.writeFileSync(PROCESSED_FILE, JSON.stringify(arr, null, 2));
-  } catch (e) {
-    console.error('Error saving processed file', e);
-  }
-}
-
-async function processLegacyJoinLogs(client) {
-  const processed = new Set(loadProcessed());
-  let changed = false;
-
-  console.log(`[JoinLogs] Starting legacy check. Guilds in cache: ${client.guilds.cache.size}`);
-
-  for (const guild of client.guilds.cache.values()) {
-    try {
-      console.log(`[JoinLogs] Checking guild: ${guild.name} (${guild.id})`);
-      const config = await getGuildConfig(guild.id);
-      if (config && config.joinlogs) {
-        console.log(`[JoinLogs] Found joinlogs config for ${guild.name}`);
-        const { channel: channelId, pingRole, giveRole } = config.joinlogs;
-        const channel = await guild.channels.fetch(channelId).catch(() => null);
-        if (!channel) {
-          console.log(`[JoinLogs] Could not fetch joinlogs channel ${channelId}`);
-          continue;
-        }
-
-        const members = await guild.members.fetch();
-        console.log(`[JoinLogs] Fetched ${members.size} members to check.`);
-        let sentCount = 0;
-        
-        for (const member of members.values()) {
-          if (member.user.bot) continue;
-          
-          if (member.roles.cache.has(giveRole)) {
-            // Already has the role, no need to log
-            if (!processed.has(member.id)) {
-              processed.add(member.id);
-              changed = true;
-            }
-            continue;
-          }
-
-          if (processed.has(member.id)) continue;
-
-          console.log(`[JoinLogs] Sending legacy log for ${member.user.tag} (${member.id})`);
-          // Needs a log!
-          const embed = new EmbedBuilder()
-            .setTitle('Legacy User Pending Info')
-            .setDescription(`User: <@${member.user.id}>\n\n**Set name:** (Empty)\n**Email:** (Empty)\n**School:** (Empty)`)
-            .setColor('Orange');
-
-          const joinRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
-              .setLabel('fill in information')
-              .setStyle(ButtonStyle.Primary)
-          );
-
-          await channel.send({
-            content: `<@&${pingRole}> (Legacy user missing role)`,
-            embeds: [embed],
-            components: [joinRow]
-          });
-
-          processed.add(member.id);
-          changed = true;
-          sentCount++;
-        }
-        console.log(`[JoinLogs] Sent ${sentCount} legacy logs for ${guild.name}.`);
-      } else {
-        console.log(`[JoinLogs] No joinlogs config for ${guild.name}`);
-      }
-    } catch (err) {
-      console.error(`[JoinLogs] Error processing legacy join logs for guild ${guild.id}`, err);
-    }
-  }
-
-  if (changed) {
-    saveProcessed([...processed]);
-    console.log('[JoinLogs] Saved processed file.');
-  }
-}
-
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
-
-  processLegacyJoinLogs(client);
 
   // Auto-join voice channel every 15 minutes for 30 seconds
   const TARGET_VOICE_CHANNEL_ID = '1547401974969012335';
@@ -532,10 +431,6 @@ client.on('guildMemberAdd', async (member) => {
           embeds: [embed],
           components: [joinRow]
         });
-
-        const processed = new Set(loadProcessed());
-        processed.add(member.id);
-        saveProcessed([...processed]);
       }
     }
   } catch (error) {

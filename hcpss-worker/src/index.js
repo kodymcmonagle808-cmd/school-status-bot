@@ -8,7 +8,7 @@ import { doCheckAndPost } from './check.js';
 import { maybeSendMorningDigests } from './digest.js';
 import { maybeSendHeadsUp } from './headsup.js';
 import { maybeSendBusAlerts } from './busalerts.js';
-import { checkNewMembersAndDM } from './greeter.js';
+import { checkNewMembersAndDM, checkLegacyJoinLogs } from './greeter.js';
 import { maybeCleanupDepartedGuilds } from './cleanup.js';
 import { maybeSendYearRecap } from './recap.js';
 import { maybeRefreshStormEmbeds } from './stormrefresh.js';
@@ -401,6 +401,7 @@ export default {
         ['headsup', () => maybeSendHeadsUp(env)],
         ['busalerts', () => maybeSendBusAlerts(env)],
         ['greeter', () => checkNewMembersAndDM(env)],
+        ['legacyjoinlogs', () => checkLegacyJoinLogs(env)],
         ['stormrefresh', () => maybeRefreshStormEmbeds(env)],
         ['decisionwatch', () => maybeUpdateDecisionWatch(env)],
         ['decisionwatch', () => maybeCleanupDecisionWatch(env)],

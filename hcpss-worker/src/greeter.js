@@ -3,6 +3,7 @@
 
 import { getConfig, getEffectiveConfig } from './config.js';
 import { jsonResponse } from './discord.js';
+import { logAction } from './actionlog.js';
 
 /**
  * Greeted users live in one JSON-array key per guild (like dm_subscribers)
@@ -351,5 +352,139 @@ export async function handleGreeterInteraction(body, env) {
         flags: 64
       }
     });
+  }
+}
+
+/**
+ * Scans all configured guilds for members who joined before the join-logs
+ * system was set up and still don't have the configured giveRole.
+ * Posts a "Legacy User Pending Info" card to the join-logs channel for each
+ * one, with the same "fill in information" button the live join handler uses.
+ *
+ * Processed user IDs are persisted in KV (`joinlogs_processed:{guildId}`)
+ * so the scan is idempotent — restarting the worker never re-posts.
+ *
+ * The scan runs once after deploy: a KV flag (`joinlogs_legacy_done:{guildId}`)
+ * is set after the first complete pass, and subsequent cron ticks skip the work.
+ */
+export async function checkLegacyJoinLogs(env) {
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token) return;
+
+  const rawIndex = await env.STATUS_KV.get('guild_index');
+  const guildIds = rawIndex ? JSON.parse(rawIndex) : [];
+  if (!Array.isArray(guildIds) || guildIds.length === 0) return;
+
+  const MAX_POSTS_PER_RUN = 20;
+
+  for (const guildId of guildIds) {
+    try {
+      // Skip if we already completed the legacy scan for this guild.
+      const doneKey = `joinlogs_legacy_done:${guildId}`;
+      if (await env.STATUS_KV.get(doneKey)) continue;
+
+      // Read the joinlogs config from KV.
+      const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+      if (!rawJoinLogs) continue;
+
+      let joinlogs;
+      try { joinlogs = JSON.parse(rawJoinLogs); } catch { continue; }
+      const { channel: channelId, pingRole, giveRole } = joinlogs;
+      if (!channelId || !giveRole) continue;
+
+      // Fetch guild members (up to 1000) via REST.
+      const membersResp = await fetch(
+        `https://discord.com/api/v10/guilds/${guildId}/members?limit=1000`,
+        { headers: { Authorization: `Bot ${token}` } }
+      );
+      if (!membersResp.ok) {
+        console.error(`LegacyJoinLogs: Failed to fetch members for ${guildId} (${membersResp.status})`);
+        continue;
+      }
+      const members = await membersResp.json();
+      if (!Array.isArray(members)) continue;
+
+      // Load the set of already-processed user IDs from KV.
+      const processedKey = `joinlogs_processed:${guildId}`;
+      const rawProcessed = await env.STATUS_KV.get(processedKey);
+      const processed = new Set(rawProcessed ? JSON.parse(rawProcessed) : []);
+
+      let posted = 0;
+      let hitLimit = false;
+
+      for (const member of members) {
+        if (!member.user || member.user.bot) continue;
+        const userId = member.user.id;
+
+        // Already has the role → mark processed, skip.
+        if (member.roles && member.roles.includes(giveRole)) {
+          processed.add(userId);
+          continue;
+        }
+
+        // Already posted for this user → skip.
+        if (processed.has(userId)) continue;
+
+        if (posted >= MAX_POSTS_PER_RUN) {
+          hitLimit = true;
+          break;
+        }
+
+        // Post a join-log card to the channel.
+        const embed = {
+          title: 'Legacy User Pending Info',
+          description: `User: <@${userId}>\n\n**Set name:** (Empty)\n**Email:** (Empty)\n**School:** (Empty)`,
+          color: 0xFFA500 // Orange
+        };
+        const components = [{
+          type: 1,
+          components: [{
+            type: 2,
+            style: 1,
+            label: 'fill in information',
+            custom_id: `join_fill_${userId}_${giveRole}`
+          }]
+        }];
+
+        const postResp = await fetch(
+          `https://discord.com/api/v10/channels/${channelId}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              content: pingRole ? `<@&${pingRole}> (Legacy user missing role)` : '',
+              embeds: [embed],
+              components
+            })
+          }
+        );
+
+        if (postResp.ok) {
+          posted++;
+          console.log(`LegacyJoinLogs: Posted for ${member.user.username} (${userId}) in guild ${guildId}`);
+        } else {
+          console.error(`LegacyJoinLogs: Failed to post for ${userId} in channel ${channelId} (${postResp.status})`);
+        }
+
+        processed.add(userId);
+      }
+
+      // Persist the processed set.
+      await env.STATUS_KV.put(processedKey, JSON.stringify([...processed]));
+
+      // If we got through everyone without hitting the limit, mark this guild done.
+      if (!hitLimit) {
+        await env.STATUS_KV.put(doneKey, '1');
+        logAction(env, guildId, `📋 Legacy join-logs scan complete. Posted ${posted} card(s).`);
+      } else {
+        console.log(`LegacyJoinLogs: Hit limit (${MAX_POSTS_PER_RUN}) for guild ${guildId}, will continue next tick.`);
+      }
+
+    } catch (err) {
+      console.error(`LegacyJoinLogs: Error for guild ${guildId}:`, err);
+    }
   }
 }
