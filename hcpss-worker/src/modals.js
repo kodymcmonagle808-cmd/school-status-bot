@@ -120,10 +120,11 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     ctx.waitUntil((async () => {
       try {
-        const config = await getConfig(env, targetGuildId);
-        if (config && config.joinlogs && config.joinlogs.channel) {
-          const channelId = config.joinlogs.channel;
-          const pingRole = config.joinlogs.pingRole;
+        const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${targetGuildId}`);
+        if (rawJoinLogs) {
+          const joinlogs = JSON.parse(rawJoinLogs);
+          const channelId = joinlogs.channel;
+          const pingRole = joinlogs.pingRole;
           
           await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
             method: 'POST',
@@ -167,10 +168,11 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     ctx.waitUntil((async () => {
       try {
-        const config = await getConfig(env, targetGuildId);
-        if (config && config.joinlogs && config.joinlogs.channel) {
-          const channelId = config.joinlogs.channel;
-          const pingRole = config.joinlogs.pingRole;
+        const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${targetGuildId}`);
+        if (rawJoinLogs) {
+          const joinlogs = JSON.parse(rawJoinLogs);
+          const channelId = joinlogs.channel;
+          const pingRole = joinlogs.pingRole;
           
           await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
             method: 'POST',
