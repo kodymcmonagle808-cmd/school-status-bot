@@ -129,15 +129,25 @@ async function processLegacyJoinLogs(client) {
   const processed = new Set(loadProcessed());
   let changed = false;
 
+  console.log(`[JoinLogs] Starting legacy check. Guilds in cache: ${client.guilds.cache.size}`);
+
   for (const guild of client.guilds.cache.values()) {
     try {
+      console.log(`[JoinLogs] Checking guild: ${guild.name} (${guild.id})`);
       const config = await getGuildConfig(guild.id);
       if (config && config.joinlogs) {
+        console.log(`[JoinLogs] Found joinlogs config for ${guild.name}`);
         const { channel: channelId, pingRole, giveRole } = config.joinlogs;
         const channel = await guild.channels.fetch(channelId).catch(() => null);
-        if (!channel) continue;
+        if (!channel) {
+          console.log(`[JoinLogs] Could not fetch joinlogs channel ${channelId}`);
+          continue;
+        }
 
         const members = await guild.members.fetch();
+        console.log(`[JoinLogs] Fetched ${members.size} members to check.`);
+        let sentCount = 0;
+        
         for (const member of members.values()) {
           if (member.user.bot) continue;
           
@@ -152,6 +162,7 @@ async function processLegacyJoinLogs(client) {
 
           if (processed.has(member.id)) continue;
 
+          console.log(`[JoinLogs] Sending legacy log for ${member.user.tag} (${member.id})`);
           // Needs a log!
           const embed = new EmbedBuilder()
             .setTitle('Legacy User Pending Info')
@@ -173,15 +184,20 @@ async function processLegacyJoinLogs(client) {
 
           processed.add(member.id);
           changed = true;
+          sentCount++;
         }
+        console.log(`[JoinLogs] Sent ${sentCount} legacy logs for ${guild.name}.`);
+      } else {
+        console.log(`[JoinLogs] No joinlogs config for ${guild.name}`);
       }
     } catch (err) {
-      console.error('Error processing legacy join logs for guild', guild.id, err);
+      console.error(`[JoinLogs] Error processing legacy join logs for guild ${guild.id}`, err);
     }
   }
 
   if (changed) {
     saveProcessed([...processed]);
+    console.log('[JoinLogs] Saved processed file.');
   }
 }
 
