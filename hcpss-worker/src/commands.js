@@ -1203,23 +1203,23 @@ export async function runStaffAppSetupCommand(body, env) {
 
 export async function runSetupJoinLogsCommand(body, env) {
   const guildId = body.guild_id || '';
-  const options = body.data?.options || [];
-  const channel = options.find(o => o.name === 'channel')?.value;
-  const pingRole = options.find(o => o.name === 'ping_role')?.value;
-  const giveRole = options.find(o => o.name === 'give_role')?.value;
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const channel = getCommandOption(options, 'channel');
+  const pingRole = getCommandOption(options, 'ping_role');
+  const giveRole = getCommandOption(options, 'give_role');
 
   if (!channel || !pingRole || !giveRole) {
-     return { content: '? Missing required options.', flags: 64 };
+    return { content: '\u274C Missing required options.', flags: 64 };
   }
 
-  await env.STATUS_KV.put(joinlogs_config: + guildId, JSON.stringify({
+  await env.STATUS_KV.put('joinlogs_config:' + guildId, JSON.stringify({
     channel,
     pingRole,
     giveRole
   }));
 
   return {
-    content: ? Join logs configured! When a user joins, I will post in <# + channel + >, ping <@& + pingRole + >, and give <@& + giveRole + > after staff fills their info.,
+    content: '\u2705 Join logs configured! When a user joins, I will post in <#' + channel + '>, ping <@&' + pingRole + '>, and give <@&' + giveRole + '> after staff fills their info.',
     flags: 64
   };
 }
