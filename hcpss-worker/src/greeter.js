@@ -380,7 +380,7 @@ export async function checkLegacyJoinLogs(env) {
   for (const guildId of guildIds) {
     try {
       // Skip if we already completed the legacy scan for this guild.
-      const doneKey = `joinlogs_legacy_done_v2:${guildId}`;
+      const doneKey = `joinlogs_legacy_done_v3:${guildId}`;
       if (await env.STATUS_KV.get(doneKey)) continue;
 
       // Read the joinlogs config from KV.
@@ -405,7 +405,7 @@ export async function checkLegacyJoinLogs(env) {
       if (!Array.isArray(members)) continue;
 
       // Load the set of already-processed user IDs from KV.
-      const processedKey = `joinlogs_processed_v2:${guildId}`;
+      const processedKey = `joinlogs_processed_v3:${guildId}`;
       const rawProcessed = await env.STATUS_KV.get(processedKey);
       const processed = new Set(rawProcessed ? JSON.parse(rawProcessed) : []);
 
