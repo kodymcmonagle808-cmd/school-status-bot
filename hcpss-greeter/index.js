@@ -493,6 +493,11 @@ client.on('interactionCreate', async (interaction) => {
       const member = await interaction.guild.members.fetch(userId);
       if (member) {
         await member.roles.add(giveRole);
+        try {
+          await member.setNickname(name);
+        } catch (nickError) {
+          console.error('Failed to set nickname for user', nickError);
+        }
       }
     } catch (e) {
       console.error('Failed to assign role to user', e);
