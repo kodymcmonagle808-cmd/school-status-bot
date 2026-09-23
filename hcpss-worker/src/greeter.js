@@ -2,7 +2,7 @@
 // Runs inside the scheduled cron job to maintain serverless operation.
 
 import { getConfig, getEffectiveConfig } from './config.js';
-import { jsonResponse } from './discord.js';
+import { jsonResponse, discordFetch } from './discord.js';
 import { logAction } from './actionlog.js';
 
 /**
@@ -380,7 +380,7 @@ export async function checkLegacyJoinLogs(env) {
   for (const guildId of guildIds) {
     try {
       // Skip if we already completed the legacy scan for this guild.
-      const doneKey = `joinlogs_legacy_done:${guildId}`;
+      const doneKey = `joinlogs_legacy_done_v2:${guildId}`;
       if (await env.STATUS_KV.get(doneKey)) continue;
 
       // Read the joinlogs config from KV.
@@ -405,7 +405,7 @@ export async function checkLegacyJoinLogs(env) {
       if (!Array.isArray(members)) continue;
 
       // Load the set of already-processed user IDs from KV.
-      const processedKey = `joinlogs_processed:${guildId}`;
+      const processedKey = `joinlogs_processed_v2:${guildId}`;
       const rawProcessed = await env.STATUS_KV.get(processedKey);
       const processed = new Set(rawProcessed ? JSON.parse(rawProcessed) : []);
 
@@ -446,7 +446,7 @@ export async function checkLegacyJoinLogs(env) {
           }]
         }];
 
-        const postResp = await fetch(
+        const postResp = await discordFetch(
           `https://discord.com/api/v10/channels/${channelId}/messages`,
           {
             method: 'POST',
@@ -464,12 +464,11 @@ export async function checkLegacyJoinLogs(env) {
 
         if (postResp.ok) {
           posted++;
+          processed.add(userId);
           console.log(`LegacyJoinLogs: Posted for ${member.user.username} (${userId}) in guild ${guildId}`);
         } else {
           console.error(`LegacyJoinLogs: Failed to post for ${userId} in channel ${channelId} (${postResp.status})`);
         }
-
-        processed.add(userId);
       }
 
       // Persist the processed set.
