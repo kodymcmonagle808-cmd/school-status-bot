@@ -21,6 +21,59 @@ import { doCheckAndPost } from './check.js';
 import { putCalendarEvent, deleteCalendarEvent } from './calendar.js';
 
 export async function handleModalSubmit(body, env, ctx, guildId) {
+  if (body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_modal_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetUserId = parts[2];
+    const giveRole = parts[3];
+
+    const name = getModalInputValue(body, 'user_name') || '';
+    const email = getModalInputValue(body, 'user_email') || '';
+    const school = getModalInputValue(body, 'user_school') || '';
+
+    // We must return a type 7 (UPDATE_MESSAGE) response to clear the button
+    // and update the embed, then we process the role assignment in the background.
+    const originalMessage = body.message;
+    const embed = (originalMessage.embeds && originalMessage.embeds[0]) ? originalMessage.embeds[0] : {};
+    
+    // Create an updated embed
+    const updatedEmbed = {
+      ...embed,
+      description: `User: <@${targetUserId}>\n\n**Set name:** ${name}\n**Email:** ${email}\n**School:** ${school}`
+    };
+
+    ctx.waitUntil((async () => {
+      try {
+        // 1. Add the role
+        await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${giveRole}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+        });
+
+        // 2. Set the nickname if a name was provided
+        if (name) {
+          await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}`, {
+            method: 'PATCH',
+            headers: { 
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ nick: name })
+          });
+        }
+      } catch (err) {
+        console.error('Failed to update member in join logs modal', err);
+      }
+    })());
+
+    return jsonResponse({
+      type: 7, // UPDATE_MESSAGE
+      data: {
+        embeds: [updatedEmbed],
+        components: [] // Clear the buttons
+      }
+    });
+  }
+
   // Handle announce modal before the canConfigure gate (staff can announce)
   if (body.data && body.data.custom_id === 'modal_announce') {
     if (!(await canUseCommands(body.member, env, guildId))) {

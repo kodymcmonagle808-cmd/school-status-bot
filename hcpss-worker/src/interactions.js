@@ -787,6 +787,52 @@ export async function handleInteraction(body, env, ctx) {
     return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
   }
 
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_fill_')) {
+    const parts = body.data.custom_id.split('_');
+    const userId = parts[2];
+    const giveRole = parts[3];
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Fill User Information',
+        custom_id: `join_modal_${userId}_${giveRole}`,
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'user_name',
+              label: 'Set name',
+              style: 1,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'user_email',
+              label: 'Email',
+              style: 1,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'user_school',
+              label: 'School',
+              style: 1,
+              required: true
+            }]
+          }
+        ]
+      }
+    });
+  }
+
   if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_join') {
     ctx.waitUntil((async () => {
       try {
