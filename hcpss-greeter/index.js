@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
 const play = require('play-dl');
 
@@ -406,9 +406,101 @@ client.on('guildMemberAdd', async (member) => {
   } catch (error) {
     console.error(`Could not send welcome DM to ${member.user.tag}. They might have DMs disabled.`, error);
   }
+
+  // Join logs logic
+  try {
+    const config = await getGuildConfig(member.guild.id);
+    if (config && config.joinlogs) {
+      const { channel: channelId, pingRole, giveRole } = config.joinlogs;
+      const channel = await member.guild.channels.fetch(channelId).catch(() => null);
+      if (channel) {
+        const embed = new EmbedBuilder()
+          .setTitle('New User Joined')
+          .setDescription(`User: <@${member.user.id}>\n\n**Set name:** (Empty)\n**Email:** (Empty)\n**School:** (Empty)`)
+          .setColor('Blue');
+        
+        const joinRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
+            .setLabel('fill in information')
+            .setStyle(ButtonStyle.Primary)
+        );
+
+        await channel.send({
+          content: `<@&${pingRole}>`,
+          embeds: [embed],
+          components: [joinRow]
+        });
+      }
+    }
+  } catch (error) {
+    console.error(`Error sending join logs for ${member.user.tag}`, error);
+  }
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton() && interaction.customId.startsWith('join_fill_')) {
+    const parts = interaction.customId.split('_');
+    const userId = parts[2];
+    const giveRole = parts[3];
+
+    const modal = new ModalBuilder()
+      .setCustomId(`join_modal_${userId}_${giveRole}`)
+      .setTitle('Fill User Information');
+        
+    const nameInput = new TextInputBuilder()
+      .setCustomId('user_name')
+      .setLabel("Set name")
+      .setStyle(TextInputStyle.Short);
+        
+    const emailInput = new TextInputBuilder()
+      .setCustomId('user_email')
+      .setLabel("Email")
+      .setStyle(TextInputStyle.Short);
+
+    const schoolInput = new TextInputBuilder()
+      .setCustomId('user_school')
+      .setLabel("School")
+      .setStyle(TextInputStyle.Short);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(nameInput),
+      new ActionRowBuilder().addComponents(emailInput),
+      new ActionRowBuilder().addComponents(schoolInput)
+    );
+
+    return interaction.showModal(modal);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('join_modal_')) {
+    const parts = interaction.customId.split('_');
+    const userId = parts[2];
+    const giveRole = parts[3];
+
+    const name = interaction.fields.getTextInputValue('user_name');
+    const email = interaction.fields.getTextInputValue('user_email');
+    const school = interaction.fields.getTextInputValue('user_school');
+
+    const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+    embed.setDescription(`User: <@${userId}>\n\n**Set name:** ${name}\n**Email:** ${email}\n**School:** ${school}`);
+
+    await interaction.message.edit({
+      embeds: [embed],
+      components: []
+    });
+    
+    try {
+      const member = await interaction.guild.members.fetch(userId);
+      if (member) {
+        await member.roles.add(giveRole);
+      }
+    } catch (e) {
+      console.error('Failed to assign role to user', e);
+    }
+
+    return interaction.reply({ content: 'Information updated and role assigned.', ephemeral: true });
+  }
+
   // If the interaction is not a select menu in a DM, ignore
   if (!interaction.isStringSelectMenu()) return;
   if (!interaction.customId.startsWith('greeter_roles_')) return;

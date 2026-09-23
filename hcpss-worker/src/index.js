@@ -131,11 +131,14 @@ export default {
         try {
           const rawCfg = await env.STATUS_KV.get(`config:${guildId}`);
           const cfg = rawCfg ? JSON.parse(rawCfg) : {};
+          const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+          const joinlogs = rawJoinLogs ? JSON.parse(rawJoinLogs) : null;
           return jsonResponse({
             music_channel_id: cfg.music_channel_id || null,
             music_role_id: cfg.music_role_id || null,
             music_vc_id: cfg.music_vc_id || null,
-            music_playlist_url: cfg.music_playlist_url || null
+            music_playlist_url: cfg.music_playlist_url || null,
+            joinlogs
           });
         } catch (err) {
           return new Response('Error fetching config', { status: 500 });

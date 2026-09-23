@@ -45,7 +45,8 @@ import {
   runDankStaffSetupCommand,
   runDankMemerCommand,
   runStaffAppSetupCommand,
-  handlePanelRefresh
+  handlePanelRefresh,
+  runSetupJoinLogsCommand
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
 import {
@@ -223,6 +224,13 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name === 'health') {
     return interactionResponse(await runHealthCommand(env, guildId));
+  }
+
+  if (body.type === 2 && body.data && body.data.name === 'setupjoinlogs') {
+    if (!memberIsAdmin(body.member)) {
+      return interactionResponse({ content: '❌ Only users with Administrator permissions can use this command.', flags: EPHEMERAL_FLAG });
+    }
+    return interactionResponse(await runSetupJoinLogsCommand(body, env));
   }
 
   if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {
