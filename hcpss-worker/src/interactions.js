@@ -833,6 +833,145 @@ export async function handleInteraction(body, env, ctx) {
     });
   }
 
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_ask_')) {
+    const parts = body.data.custom_id.split('_');
+    const userId = parts[2];
+    const giveRole = parts[3];
+
+    ctx.waitUntil((async () => {
+      try {
+        const dmChannelResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ recipient_id: userId })
+        });
+        if (!dmChannelResp.ok) return;
+        const dmChannel = await dmChannelResp.json();
+
+        await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            content: "Hello! The server staff needs you to fill out some information before you can fully join. Please click the button below to get started.",
+            components: [{
+              type: 1,
+              components: [{
+                type: 2,
+                style: 1,
+                label: 'Fill Information',
+                custom_id: `join_userfill_start_${guildId}_${giveRole}`
+              }]
+            }]
+          })
+        });
+      } catch (err) {
+        console.error('Failed to send ask DM', err);
+      }
+    })());
+
+    return interactionResponse({ content: 'DM sent to the user asking them to fill out their info.', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_userfill_start_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetGuildId = parts[3];
+    const giveRole = parts[4];
+    
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Fill Your Information',
+        custom_id: `join_user_submit_${targetGuildId}_${giveRole}`,
+        components: [
+          { type: 1, components: [{ type: 4, custom_id: 'user_name', label: 'Set name', style: 1, required: true }] },
+          { type: 1, components: [{ type: 4, custom_id: 'user_email', label: 'Email', style: 1, required: true }] },
+          { type: 1, components: [{ type: 4, custom_id: 'user_school', label: 'School', style: 1, required: true }] }
+        ]
+      }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_wrong_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetGuildId = parts[2];
+    
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Submit Corrections',
+        custom_id: `join_correction_submit_${targetGuildId}`,
+        components: [
+          { type: 1, components: [{ type: 4, custom_id: 'user_name', label: 'Set name', style: 1, required: true }] },
+          { type: 1, components: [{ type: 4, custom_id: 'user_email', label: 'Email', style: 1, required: true }] },
+          { type: 1, components: [{ type: 4, custom_id: 'user_school', label: 'School', style: 1, required: true }] }
+        ]
+      }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_approve_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetUserId = parts[2];
+    const giveRole = parts[3];
+
+    const embed = body.message.embeds && body.message.embeds[0];
+    let nameToSet = '';
+    if (embed && embed.description) {
+      const nameMatch = embed.description.match(/\*\*Set name:\*\* (.*)/);
+      if (nameMatch && nameMatch[1]) nameToSet = nameMatch[1].trim();
+    }
+
+    ctx.waitUntil((async () => {
+      try {
+        await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${giveRole}`, {
+          method: 'PUT',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+        });
+        if (nameToSet) {
+          await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}`, {
+            method: 'PATCH',
+            headers: { 
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ nick: nameToSet })
+          });
+        }
+      } catch (err) {
+        console.error('Failed to update member from approve', err);
+      }
+    })());
+
+    const updatedEmbed = {
+      ...embed,
+      title: '✅ User Submitted Info (Approved)',
+      color: 0x00FF00
+    };
+    return jsonResponse({
+      type: 7,
+      data: { embeds: [updatedEmbed], components: [] }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_deny_')) {
+    const embed = body.message.embeds && body.message.embeds[0];
+    const updatedEmbed = {
+      ...embed,
+      title: '❌ User Submitted Info (Denied)',
+      color: 0xFF0000
+    };
+    return jsonResponse({
+      type: 7,
+      data: { embeds: [updatedEmbed], components: [] }
+    });
+  }
+
   if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_join') {
     ctx.waitUntil((async () => {
       try {

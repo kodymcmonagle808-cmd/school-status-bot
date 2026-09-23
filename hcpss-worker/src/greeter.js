@@ -438,12 +438,20 @@ export async function checkLegacyJoinLogs(env) {
         };
         const components = [{
           type: 1,
-          components: [{
-            type: 2,
-            style: 1,
-            label: 'fill in information',
-            custom_id: `join_fill_${userId}_${giveRole}`
-          }]
+          components: [
+            {
+              type: 2,
+              style: 1,
+              label: 'fill in information',
+              custom_id: `join_fill_${userId}_${giveRole}`
+            },
+            {
+              type: 2,
+              style: 2,
+              label: 'Ask',
+              custom_id: `join_ask_${userId}_${giveRole}`
+            }
+          ]
         }];
 
         const postResp = await discordFetch(

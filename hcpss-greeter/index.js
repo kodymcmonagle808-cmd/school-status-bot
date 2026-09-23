@@ -423,7 +423,11 @@ client.on('guildMemberAdd', async (member) => {
           new ButtonBuilder()
             .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
             .setLabel('fill in information')
-            .setStyle(ButtonStyle.Primary)
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`join_ask_${member.user.id}_${giveRole}`)
+            .setLabel('Ask')
+            .setStyle(ButtonStyle.Secondary)
         );
 
         await channel.send({

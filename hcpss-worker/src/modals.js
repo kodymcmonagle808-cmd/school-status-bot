@@ -60,6 +60,40 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
             body: JSON.stringify({ nick: name })
           });
         }
+
+        // 3. Send confirmation DM
+        const dmChannelResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ recipient_id: targetUserId })
+        });
+        if (dmChannelResp.ok) {
+          const dmChannel = await dmChannelResp.json();
+          await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              content: `Hello! A staff member has set your server information:\n\n**Name:** ${name}\n**Email:** ${email}\n**School:** ${school}\n\nIf this is correct, you do not need to reply to this message. If it is incorrect, please click the button below.`,
+              components: [{
+                type: 1,
+                components: [{
+                  type: 2,
+                  style: 4, // Danger/Red
+                  label: 'Incorrect',
+                  custom_id: `join_wrong_${guildId}`
+                }]
+              }]
+            })
+          });
+        } else {
+          console.log(`Could not DM user ${targetUserId}, their DMs might be closed.`);
+        }
       } catch (err) {
         console.error('Failed to update member in join logs modal', err);
       }
@@ -72,6 +106,94 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
         components: [] // Clear the buttons
       }
     });
+  }
+
+  if (body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_user_submit_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetGuildId = parts[3];
+    const giveRole = parts[4];
+    
+    const userId = getInvokerId(body);
+    const name = getModalInputValue(body, 'user_name') || '';
+    const email = getModalInputValue(body, 'user_email') || '';
+    const school = getModalInputValue(body, 'user_school') || '';
+
+    ctx.waitUntil((async () => {
+      try {
+        const config = await getConfig(env, targetGuildId);
+        if (config && config.joinlogs && config.joinlogs.channel) {
+          const channelId = config.joinlogs.channel;
+          const pingRole = config.joinlogs.pingRole;
+          
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              content: pingRole ? `<@&${pingRole}> (User submitted info for review)` : '(User submitted info for review)',
+              embeds: [{
+                title: 'User Submitted Info for Review',
+                description: `User: <@${userId}>\n\n**Set name:** ${name}\n**Email:** ${email}\n**School:** ${school}`,
+                color: 0xFFA500
+              }],
+              components: [{
+                type: 1,
+                components: [
+                  { type: 2, style: 3, label: 'Approve', custom_id: `join_approve_${userId}_${giveRole}` },
+                  { type: 2, style: 4, label: 'Deny', custom_id: `join_deny_${userId}_${giveRole}` }
+                ]
+              }]
+            })
+          });
+        }
+      } catch (err) {
+        console.error('Failed to post user submission', err);
+      }
+    })());
+
+    return interactionResponse({ content: 'Your information has been sent to the server staff for review!', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_correction_submit_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetGuildId = parts[3];
+    
+    const userId = getInvokerId(body);
+    const name = getModalInputValue(body, 'user_name') || '';
+    const email = getModalInputValue(body, 'user_email') || '';
+    const school = getModalInputValue(body, 'user_school') || '';
+
+    ctx.waitUntil((async () => {
+      try {
+        const config = await getConfig(env, targetGuildId);
+        if (config && config.joinlogs && config.joinlogs.channel) {
+          const channelId = config.joinlogs.channel;
+          const pingRole = config.joinlogs.pingRole;
+          
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              content: pingRole ? `<@&${pingRole}> (User correction submitted)` : '(User correction submitted)',
+              embeds: [{
+                title: 'User Information Correction',
+                description: `User: <@${userId}> says their info is incorrect. They want:\n\n**Set name:** ${name}\n**Email:** ${email}\n**School:** ${school}\n\nPlease manually update their nickname/roles if needed.`,
+                color: 0xFF0000
+              }]
+            })
+          });
+        }
+      } catch (err) {
+        console.error('Failed to post user correction', err);
+      }
+    })());
+
+    return interactionResponse({ content: 'Your correction has been sent to the server staff!', flags: EPHEMERAL_FLAG });
   }
 
   // Handle announce modal before the canConfigure gate (staff can announce)
