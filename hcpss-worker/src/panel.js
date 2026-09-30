@@ -496,14 +496,15 @@ export async function buildWorkerUpdatesPayload(env) {
     }]
   }] : [];
 
-  if (lockable.length) {
-    components.push({
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'panel_owner_perms_select',
-        placeholder: '⚙️ Manage Command Permissions...',
-        options: lockable.map(s => ({
+  const permServers = servers.slice(0, 25);
+    if (permServers.length) {
+      components.push({
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'panel_owner_perms_select',
+          placeholder: '⚙️ Manage Command Permissions...',
+          options: permServers.map(s => ({
           label: s.name.slice(0, 100),
           value: s.id,
           description: 'Enable/disable commands for this server',
