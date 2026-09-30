@@ -496,6 +496,25 @@ export async function buildWorkerUpdatesPayload(env) {
     }]
   }] : [];
 
+  if (lockable.length) {
+    components.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'panel_owner_perms_select',
+        placeholder: '⚙️ Manage Command Permissions...',
+        options: lockable.map(s => ({
+          label: s.name.slice(0, 100),
+          value: s.id,
+          description: 'Enable/disable commands for this server',
+          emoji: { name: '⚙️' }
+        })),
+        min_values: 1,
+        max_values: 1
+      }]
+    });
+  }
+
   return { embeds: [embed], components };
 }
 
