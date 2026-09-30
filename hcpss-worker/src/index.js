@@ -128,8 +128,8 @@ export default {
         const guildId = url.searchParams.get('guild_id');
         if (!guildId || !env.STATUS_KV) return new Response('Bad Request', { status: 400 });
         try {
-          const rawCfg = await env.STATUS_KV.get(`config:${guildId}`);
-          const cfg = rawCfg ? JSON.parse(rawCfg) : {};
+
+          
           const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
           const joinlogs = rawJoinLogs ? JSON.parse(rawJoinLogs) : null;
           return jsonResponse({
