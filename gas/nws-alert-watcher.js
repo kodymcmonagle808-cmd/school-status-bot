@@ -169,7 +169,6 @@ function runWatchers() {
   }
 
   try {
-    checkHcpssEmails();
   } catch (e) {
     console.error('HCPSS email check failed: ' + e);
   }

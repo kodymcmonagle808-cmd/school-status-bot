@@ -79,6 +79,16 @@ export async function handleInteraction(body, env, ctx) {
     }
   }
 
+  if (body.type === 2 && body.data && body.data.name) {
+    const config = await getConfig(env, guildId);
+    if (config && config.disabled_commands && config.disabled_commands.includes(body.data.name)) {
+      return interactionResponse({
+        content: `❌ The \`/${body.data.name}\` command has been disabled in this server by the bot owner.`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+  }
+
   if (body.type === 5) {
     return await handleModalSubmit(body, env, ctx, guildId);
   }

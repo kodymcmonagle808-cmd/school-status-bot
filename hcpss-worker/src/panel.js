@@ -85,7 +85,6 @@ export const PANEL_NAV_TABS = [
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
-  { label: 'Music Settings', value: 'config_music', emoji: '🎵', description: 'Configure music channel and controls' },
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
   { label: 'Worker Updates', value: 'worker_updates', emoji: '🚀', description: 'Deploy history (bot owner only)' }
 ];
@@ -569,57 +568,6 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     return { embeds: [embed], components };
   }
 
-  if (page === 'config_music') {
-    const channel = config.music_channel_id ? `<#${config.music_channel_id}>` : '(not set)';
-    const role = config.music_role_id ? `<@&${config.music_role_id}>` : '(not set)';
-    const vcChannel = config.music_vc_id ? `<#${config.music_vc_id}>` : 'All Voice Channels';
-    const playlist = config.music_playlist_url ? `\`${config.music_playlist_url}\`` : 'Default Playlist';
-
-    const embed = {
-      title: '🎵 Control Panel — Music Settings',
-      color: 0x1DB954,
-      description: `### 🎵 Music Settings\n` +
-                   `• **Music Panel Channel**: ${channel}\n` +
-                   `• **Required Role for Song Button**: ${role}\n` +
-                   `• **Auto-Join Voice Channel**: ${vcChannel}\n` +
-                   `• **24/7 Playlist**: ${playlist}\n\n` +
-                   `*Configure the music features below. The bot will automatically join the configured VC (or any VC) to play the 24/7 playlist when a user joins.*`,
-      timestamp: new Date().toISOString()
-    };
-
-    const components = [
-      getNavBarRow('config_music'),
-      {
-        type: 1,
-        components: [{
-          type: 8,
-          custom_id: 'cfg_music_channel',
-          placeholder: 'Select text channel for Music Panel',
-          min_values: 1,
-          max_values: 1,
-          channel_types: [0, 5]
-        }]
-      },
-      {
-        type: 1,
-        components: [{
-          type: 8,
-          custom_id: 'cfg_music_vc',
-          placeholder: 'Select Voice Channel to auto-join (or clear for All)',
-          min_values: 0,
-          max_values: 1,
-          channel_types: [2] // Voice channels
-        }]
-      },
-      actionSelectRow([
-        { label: 'Set 24/7 Playlist URL', value: 'panel_btn_set_playlist', description: 'Set the Spotify/YouTube URL for the 24/7 stream', emoji: { name: '🎧' } },
-        { label: 'Send Music Panel', value: 'panel_btn_send_music', description: 'Send the music control panel to the selected channel', emoji: { name: '📤' } }
-      ])
-    ];
-
-    return { embeds: [embed], components };
-  }
-
   if (page === 'config_toggles') {
     const pings = config.toggle_pings !== false;
     const errorAlerts = config.toggle_error_alerts !== false;
@@ -641,7 +589,6 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const nwsAlerts = config.toggle_nws_alerts !== false;
     const emergencyAlerts = config.toggle_emergency_alerts !== false;
     const emergencyPing = config.toggle_emergency_ping !== false;
-    const emailAlerts = config.toggle_email_alerts !== false;
     const sessionGate = config.toggle_session_gate !== false;
     const abDay = config.toggle_ab_day !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
@@ -827,13 +774,6 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Let emergency alerts ping @everyone (needs Mention Everyone)',
         emoji: { name: '📣' },
         default: emergencyPing
-      },
-      {
-        label: 'HCPSS Email Notices',
-        value: 'toggle_email_alerts',
-        description: 'Post forwarded HCPSS announcement emails (no pings)',
-        emoji: { name: '📧' },
-        default: emailAlerts
       },
       {
         label: 'Skip Non-School Days',
@@ -1368,7 +1308,6 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
       { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📋' } },
       { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
-      { label: 'Toggle Voice Bot', value: 'panel_toggle_voice', description: 'Make the local node bot join/leave the voice channel', emoji: { name: '🔌' } },
       { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Wipe the panel list (the web log is unaffected)', emoji: { name: '🗑️' } }
     ], '⚡ Quick Actions...'),
     {
@@ -1533,12 +1472,6 @@ export async function applyConfigUpdate(body, env) {
     next.log_channel_id = values[0];
   } else if (customId === 'cfg_staff_role' && Array.isArray(values) && values[0]) {
     next.staff_role_id = values[0];
-  } else if (customId === 'cfg_music_channel' && Array.isArray(values) && values[0]) {
-    next.music_channel_id = values[0];
-  } else if (customId === 'cfg_music_role' && Array.isArray(values) && values[0]) {
-    next.music_role_id = values[0];
-  } else if (customId === 'cfg_music_vc') {
-    next.music_vc_id = (Array.isArray(values) && values[0]) ? values[0] : null;
   } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
     next.editing_status_key = values[0];
   } else if (customId === 'cfg_status_role') {
@@ -1587,7 +1520,6 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
     next.toggle_emergency_alerts = selected.includes('toggle_emergency_alerts');
     next.toggle_emergency_ping = selected.includes('toggle_emergency_ping');
-    next.toggle_email_alerts = selected.includes('toggle_email_alerts');
     next.toggle_session_gate = selected.includes('toggle_session_gate');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {

@@ -23,7 +23,6 @@ import { clearAqiCaches } from './aqi.js';
 import { CONTEXT_HOOK_COOLDOWN_SECONDS, contextHookCooldownKey } from './hookmode.js';
 import { handlePushData } from './pushdata.js';
 import { logAction, logDetail, logActionError } from './actionlog.js';
-import { handleEmailHook } from './emailhook.js';
 import { maybeTrackOutlookAccuracy } from './outlookaccuracy.js';
 import { maybeWatchServerMembership } from './serverwatch.js';
 import { maybeSweepSourceHealth } from './sourcehealth.js';
@@ -134,10 +133,6 @@ export default {
           const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
           const joinlogs = rawJoinLogs ? JSON.parse(rawJoinLogs) : null;
           return jsonResponse({
-            music_channel_id: cfg.music_channel_id || null,
-            music_role_id: cfg.music_role_id || null,
-            music_vc_id: cfg.music_vc_id || null,
-            music_playlist_url: cfg.music_playlist_url || null,
             joinlogs
           });
         } catch (err) {
@@ -180,7 +175,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/email-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook' || url.pathname === '/push-data') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook' || url.pathname === '/push-data') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -244,22 +239,6 @@ export default {
       return jsonResponse(result, result.ok ? 200 : 400);
     }
 
-    // An HCPSS announcement email arrived in the owner's inbox that may never
-    // reach the status page: forward it to every eligible guild's alert
-    // channel. Posted inline (no waitUntil) so the Apps Script only marks the
-    // email as forwarded after a real 2xx.
-    if (url.pathname === '/email-hook') {
-      let payload = null;
-      try { payload = await request.json(); } catch {}
-      const result = await handleEmailHook(env, payload || {});
-      return jsonResponse(result, result.ok ? 200 : 400);
-    }
-
-    // Outage numbers or road conditions changed: refresh the posted embeds
-    // with live data — but only while a power-threat warning is active
-    // (that's when the embeds show live storm sections), and at most one
-    // edit per 5 minutes. On a quiet day this ping costs a couple of KV
-    // reads and nothing else.
     if (url.pathname === '/refresh-hook') {
       ctx.waitUntil(maybeRefreshStormEmbeds(env, new Date(), {
         force: true,

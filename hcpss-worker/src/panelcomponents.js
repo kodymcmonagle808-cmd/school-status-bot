@@ -100,6 +100,74 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
 
   // Owner-only: toggle a server's lockdown from the Worker Updates page.
   // Lives on an ephemeral message only the owner can see, but verify anyway.
+  if (customId === 'panel_owner_perms_select') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Only the bot owner can manage permissions.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = values[0];
+    const config = await getConfig(env, targetGuildId);
+    const disabled = Array.isArray(config.disabled_commands) ? config.disabled_commands : [];
+    
+    const COMMAND_CHOICES = ['status', 'calendar', 'snowday', 'notify', 'myschool', 'setup', 'override', 'events', 'post_status', 'history', 'logs', 'stats', 'addroledm', 'dankstaffsetup', 'staffappsetup', 'setupjoinlogs', 'dankmemer', 'refresh-panel'];
+    
+    return interactionResponse({
+      content: `⚙️ **Command Permissions for Server ${targetGuildId}**\nSelect the commands you want to **DISABLE** for this server:`,
+      flags: EPHEMERAL_FLAG,
+      components: [
+        {
+          type: 1,
+          components: [{
+            type: 3,
+            custom_id: `cfg_owner_perms_save:${targetGuildId}`,
+            placeholder: 'Select commands to disable...',
+            options: COMMAND_CHOICES.map(cmd => ({
+              label: `/${cmd}`,
+              value: cmd,
+              default: disabled.includes(cmd)
+            })),
+            min_values: 0,
+            max_values: COMMAND_CHOICES.length
+          }]
+        },
+        {
+          type: 1,
+          components: [{
+            type: 2,
+            style: 2,
+            custom_id: 'panel_owner_return',
+            label: 'Back to Worker Updates',
+            emoji: { name: '⬅️' }
+          }]
+        }
+      ]
+    });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_save:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
+    config.disabled_commands = values || [];
+    await env.STATUS_KV.put(`guild_config:${targetGuildId}`, JSON.stringify(config));
+    
+    const ownerPayload = await buildWorkerUpdatesPayload(env);
+    ownerPayload.content = `✅ Saved disabled commands for server ${targetGuildId}: ` + (values.length ? values.map(v => `\`${v}\``).join(', ') : 'None (all allowed)');
+    return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
+  }
+
+  if (customId === 'panel_owner_return') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const ownerPayload = await buildWorkerUpdatesPayload(env);
+    return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
+  }
+
   if (customId === 'panel_owner_lock_select') {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
@@ -269,7 +337,418 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   // Simple page-navigation buttons share one pattern: panel_to_<page>.
   const NAV_BUTTON_PAGES = {
     panel_to_config_general: 'config_general',
-    panel_to_config_music: 'config_music',
+    panel_to_config_status: 'config_status',
+    panel_to_config_schedule: 'config_schedule',
+    panel_to_config_toggles: 'config_toggles',
+    panel_to_config_calendar: 'config_calendar',
+    panel_to_config_stats: 'config_stats',
+    panel_to_config_override_select: 'config_override_select',
+    panel_to_config_commands: 'config_commands',
+    panel_to_dashboard: 'dashboard',
+    panel_to_dashboard_logs: 'dashboard_logs'
+  };
+  if (NAV_BUTTON_PAGES[customId]) {
+    return renderPanelNav(env, body, guildId, NAV_BUTTON_PAGES[customId]);
+  }
+
+  if (customId === 'panel_to_dashboard_bot_status') {
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'dashboard_bot_status');
+
+    ctx.waitUntil((async () => {
+      const frames = [0.15, 0.4, 0.7, 1];
+      for (let i = 0; i < frames.length; i++) {
+        const payload = await buildBotStatusPayload(env, guildId, frames[i]);
+        await updateInteractionOriginal(env, body.token, payload);
+        if (i < frames.length - 1) await delay(450);
+      }
+    })());
+
+    return jsonResponse({ type: 6 });
+  }
+
+  if (customId === 'panel_btn_clear_override') {
+    await clearOverride(env, guildId);
+    const invokerId = getInvokerId(body);
+    ctx.waitUntil(doCheckAndPost(env, { source: 'override-clear', invokerId, guildId }));
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+    const payload = await buildControlPanelPayload(env, guildId);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId === 'panel_btn_reset_schedule') {
+    if (!(await canConfigure(body.member, env, guildId))) {
+      return interactionResponse({
+        content: 'You do not have permission to configure this bot.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    const storedCfg = await getConfig(env, guildId);
+    storedCfg.check_schedule = [...DEFAULT_CHECK_SCHEDULE];
+    await setConfig(env, guildId, storedCfg);
+    const invokerId = getInvokerId(body);
+    // The type-7 response below re-renders the panel message itself, so this
+    // needs no panel write — only the Cloudflare log line.
+    logAction(`🗓️ Check schedule reset to defaults${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
+    const payload = await buildControlPanelPayload(env, guildId, storedCfg);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId === 'panel_btn_add_time') {
+    const storedCfg = await getConfig(env, guildId);
+    const effectiveCfg = getEffectiveConfig(storedCfg);
+    if ((effectiveCfg.check_schedule || []).length >= 4) {
+      return interactionResponse({
+        content: '❌ You already have 4 check times. Remove one first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule_add');
+    const payload = await buildControlPanelPayload(env, guildId, storedCfg, 'config_schedule_add');
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('panel_btn_confirm_add_time')) {
+    if (!(await canConfigure(body.member, env, guildId))) {
+      return interactionResponse({
+        content: 'You do not have permission to configure this bot.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    // The picked time is encoded in the button's custom_id so the add is
+    // always exactly what the panel displayed, independent of KV staleness.
+    const bits = customId.split(':');
+    const hours = parseInt(bits[1], 10);
+    const mm = bits[2] || '';
+    if (isNaN(hours) || hours > 23 || !/^\d{2}$/.test(mm) || parseInt(mm, 10) > 59) {
+      return interactionResponse({
+        content: '❌ Could not read the picked time. Please try again.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    const newTime = `${hours}:${mm}`;
+
+    const storedCfg = await getConfig(env, guildId);
+    const current = getEffectiveConfig(storedCfg).check_schedule || [];
+    if (current.length >= 4 && !current.includes(newTime)) {
+      return interactionResponse({
+        content: '❌ You already have 4 check times. Remove one first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const merged = current.includes(newTime) ? current.slice() : [...current, newTime];
+    merged.sort((a, b) => {
+      const [ah, am] = a.split(':').map(Number);
+      const [bh, bm] = b.split(':').map(Number);
+      return (ah * 60 + am) - (bh * 60 + bm);
+    });
+    storedCfg.check_schedule = merged;
+    delete storedCfg.schedule_pick;
+    await setConfig(env, guildId, storedCfg);
+
+    const invokerId = getInvokerId(body);
+    logAction(`🗓️ Check time added: **${formatScheduleTimeLabel(newTime)}**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
+
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_schedule');
+    const payload = await buildControlPanelPayload(env, guildId, storedCfg, 'config_schedule');
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId === 'panel_btn_add_event') {
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Add Calendar Event',
+        custom_id: 'modal_add_event',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_event_date',
+              style: 1,
+              label: 'Date (YYYY-MM-DD)',
+              placeholder: '2026-12-25',
+              min_length: 10,
+              max_length: 10,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_event_desc',
+              style: 1,
+              label: 'Event Description',
+              placeholder: 'Christmas Holiday - Schools Closed',
+              max_length: 200,
+              required: true
+            }]
+          }
+        ]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_remove_event') {
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Remove Calendar Event',
+        custom_id: 'modal_remove_event',
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_event_date',
+            style: 1,
+            label: 'Date of Event to Remove (YYYY-MM-DD)',
+            placeholder: '2026-12-25',
+            min_length: 10,
+            max_length: 10,
+            required: true
+          }]
+        }]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_override_details') {
+    const config = await getConfig(env, guildId);
+    const overrideStatusKey = config.editing_override_status_key || 'normal_operations';
+    const statusLabel = STATUS_LABELS[overrideStatusKey] || 'Override';
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: `Set Override: ${statusLabel.split(' ')[0]}`,
+        custom_id: 'modal_set_override',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_override_days',
+              style: 1,
+              label: 'Duration in Days (1-30)',
+              placeholder: '1',
+              min_length: 1,
+              max_length: 2,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_override_title',
+              style: 1,
+              label: 'Embed Title Override (Optional)',
+              placeholder: `HCPSS Status (Override) - ${statusLabel}`,
+              required: false,
+              max_length: 256
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_override_details',
+              style: 2,
+              label: 'Details/Reason (Optional)',
+              placeholder: 'Inclement weather conditions...',
+              required: false,
+              max_length: 1000
+            }]
+          }
+        ]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_set_color') {
+    const config = await getConfig(env, guildId);
+    const editingKey = config.editing_status_key || 'normal_operations';
+    const statusLabel = ALL_STATUS_LABELS[editingKey] || editingKey;
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: `Set Color: ${statusLabel.split(' ')[0]}`,
+        custom_id: 'modal_set_color',
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_color',
+            style: 1,
+            label: `HEX Color for ${statusLabel.split(' ')[0]} (or default)`,
+            placeholder: '2ECC71',
+            min_length: 1,
+            max_length: 10,
+            required: true
+          }]
+        }]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_set_playlist') {
+    const config = await getConfig(env, guildId);
+    const currentPlaylist = config.music_playlist_url || '';
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Set 24/7 Playlist URL',
+        custom_id: 'modal_set_playlist',
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_playlist',
+            style: 1,
+            label: 'Spotify or YouTube Playlist URL (or clear)',
+            placeholder: 'https://open.spotify.com/playlist/...',
+            value: currentPlaylist,
+            min_length: 0,
+            max_length: 500,
+            required: false
+          }]
+        }]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_set_footer') {
+    const config = await getConfig(env, guildId);
+    const currentFooter = config.alert_embed_footer || '';
+
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Set Embed Footer Text',
+        custom_id: 'modal_set_footer',
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_footer',
+            style: 2,
+            label: 'Custom Footer (or default)',
+            placeholder: 'Howard County Public School System Daily Monitor',
+            value: currentFooter,
+            min_length: 1,
+            max_length: 1000,
+            required: true
+          }]
+        }]
+      }
+    });
+  }
+
+  if (customId === 'panel_action_select') {
+    const action = Array.isArray(body.data.values) && body.data.values[0];
+    if (action === 'panel_check') {
+      ctx.waitUntil(handlePanelCheck(body, env));
+      return deferredInteractionResponse();
+    }
+    if (action === 'panel_speed') {
+      ctx.waitUntil(handlePanelSpeed(body, env));
+      return deferredInteractionResponse();
+    }
+    if (action === 'panel_refresh') {
+      ctx.waitUntil(handlePanelRefresh(body, env));
+      return deferredInteractionResponse();
+    }
+    if (action === 'panel_history') {
+      const payload = await runHistoryCommand(env, guildId);
+      return interactionResponse(payload);
+    }
+    if (action === 'panel_logs') {
+      const payload = await runLogsCommand(env, guildId, getInvokerId(body));
+      return interactionResponse(payload);
+    }
+    if (action === 'panel_kv_debug') {
+      ctx.waitUntil(handlePanelKvDebug(body, env));
+      return deferredInteractionResponse();
+    }
+    if (action === 'panel_clear_logs') {
+      ctx.waitUntil(handlePanelClearLogs(body, env));
+      return deferredInteractionResponse();
+    }
+    if (action === 'panel_toggle_voice') {
+      return interactionResponse({
+        content: 'Please select a voice channel for the bot to join, or click to leave.',
+        flags: EPHEMERAL_FLAG,
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 8,
+              custom_id: 'panel_select_voice_channel',
+              channel_types: [2],
+              placeholder: 'Select Voice Channel...',
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 2,
+              style: 4,
+              custom_id: 'panel_leave_voice',
+              label: 'Disconnect from Voice'
+            }]
+          }
+        ]
+      });
+    }
+    // Any other option value is dispatched as if a component with that
+    // custom_id was used, so page action dropdowns can reuse the existing
+    // navigation/modal handlers below.
+    if (typeof action === 'string' && action.startsWith('panel_') && action !== 'panel_action_select') {
+      const forwarded = { ...body, data: { ...body.data, custom_id: action, values: [] } };
+      return await handlePanelComponent(forwarded, env, ctx, guildId);
+    }
+    return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
+  }
+
+  // Direct-button variants of the quick actions (kept for older panel messages)
+  if (customId === 'panel_speed') {
+    ctx.waitUntil(handlePanelSpeed(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_check') {
+    ctx.waitUntil(handlePanelCheck(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_history') {
+    const payload = await runHistoryCommand(env, guildId);
+    return interactionResponse(payload);
+  }
+
+  if (customId === 'panel_logs') {
+    const payload = await runLogsCommand(env, guildId, getInvokerId(body));
+    return interactionResponse(payload);
+  }
+
+  if (customId === 'panel_refresh') {
+    ctx.waitUntil(handlePanelRefresh(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_clear_logs') {
+    ctx.waitUntil(handlePanelClearLogs(body, env));
+    return deferredInteractionResponse();
+  }
+
+  // Simple page-navigation buttons share one pattern: panel_to_<page>.
+  const NAV_BUTTON_PAGES = {
+    panel_to_config_general: 'config_general',
     panel_to_config_status: 'config_status',
     panel_to_config_schedule: 'config_schedule',
     panel_to_config_toggles: 'config_toggles',
