@@ -240,6 +240,13 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "ownerpanel",
+    description: "Open the bot owner control panel.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
     name: "terms",
     description: "View the Terms and Conditions for this bot.",
     type: 1,

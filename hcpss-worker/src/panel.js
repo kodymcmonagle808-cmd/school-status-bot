@@ -85,8 +85,7 @@ export const PANEL_NAV_TABS = [
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
-  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
-  { label: 'Worker Updates', value: 'worker_updates', emoji: '🚀', description: 'Deploy history (bot owner only)' }
+  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
 ];
 
 function getNavTabForPage(page) {
@@ -515,6 +514,34 @@ export async function buildWorkerUpdatesPayload(env) {
       }]
     });
   }
+
+  // Owner action buttons
+  components.push({
+    type: 1,
+    components: [
+      {
+        type: 2,
+        style: 4,
+        custom_id: 'owner_force_check_all',
+        label: 'Force Check All Servers',
+        emoji: { name: '🔄' }
+      },
+      {
+        type: 2,
+        style: 1,
+        custom_id: 'owner_view_kv_stats',
+        label: 'KV Analytics',
+        emoji: { name: '💾' }
+      },
+      {
+        type: 2,
+        style: 2,
+        custom_id: 'owner_view_all_configs',
+        label: 'View All Configs',
+        emoji: { name: '📋' }
+      }
+    ]
+  });
 
   return { embeds: [embed], components };
 }

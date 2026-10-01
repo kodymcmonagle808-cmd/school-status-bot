@@ -21,7 +21,7 @@ import { toggleSubscriber } from './subscriptions.js';
 import { getConfig, getEffectiveConfig, canUseCommands, canConfigure } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { maybePushMemberCheckChange } from './check.js';
-import { buildControlPanelPayload, applyConfigUpdate } from './panel.js';
+import { buildControlPanelPayload, applyConfigUpdate, buildWorkerUpdatesPayload } from './panel.js';
 import {
   runCalendarCommand,
   runHistoryCommand,
@@ -133,6 +133,16 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'mapmyclass') {
       env.ctx = ctx; // Hack to pass ctx to handler without changing signature
       return await handleMapMyClass(body, env);
+    }
+
+    if (name === 'ownerpanel') {
+      const ownerId = String(env.OWNER_ID || '').trim();
+      const invokerId = getInvokerId(body);
+      if (!ownerId || invokerId !== ownerId) {
+        return interactionResponse({ content: '\u{1F512} Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
+      }
+      const ownerPayload = await buildWorkerUpdatesPayload(env);
+      return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
     }
 
     if (name === 'status') {
