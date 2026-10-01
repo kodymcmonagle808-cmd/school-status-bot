@@ -701,7 +701,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   }
 
 
-  if (customId === 'owner_force_check_all') {
+  if (customId === 'panel_owner_force_check_all') {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
@@ -710,7 +710,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return interactionResponse({ content: '🔄 Force check triggered for all servers! Results will appear in your log channels.', flags: EPHEMERAL_FLAG });
   }
 
-  if (customId === 'owner_view_kv_stats') {
+  if (customId === 'panel_owner_view_kv_stats') {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
@@ -734,7 +734,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     });
   }
 
-  if (customId === 'owner_view_all_configs') {
+  if (customId === 'panel_owner_view_all_configs') {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });

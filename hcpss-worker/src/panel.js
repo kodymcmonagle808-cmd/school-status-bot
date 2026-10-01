@@ -522,21 +522,21 @@ export async function buildWorkerUpdatesPayload(env) {
       {
         type: 2,
         style: 4,
-        custom_id: 'owner_force_check_all',
+        custom_id: 'panel_owner_force_check_all',
         label: 'Force Check All Servers',
         emoji: { name: '🔄' }
       },
       {
         type: 2,
         style: 1,
-        custom_id: 'owner_view_kv_stats',
+        custom_id: 'panel_owner_view_kv_stats',
         label: 'KV Analytics',
         emoji: { name: '💾' }
       },
       {
         type: 2,
         style: 2,
-        custom_id: 'owner_view_all_configs',
+        custom_id: 'panel_owner_view_all_configs',
         label: 'View All Configs',
         emoji: { name: '📋' }
       }
