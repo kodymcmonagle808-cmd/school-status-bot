@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
 const play = require('play-dl');
 
@@ -104,6 +104,12 @@ musicPlayer.on(AudioPlayerStatus.Idle, () => {
 
 client.once('ready', () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
+
+  // Set the bot's Discord presence / status
+  client.user.setPresence({
+    activities: [{ name: 'HCPSS Status', type: ActivityType.Watching }],
+    status: 'online',
+  });
 
   // Auto-join voice channel every 15 minutes for 30 seconds
   const TARGET_VOICE_CHANNEL_ID = '1547401974969012335';
@@ -423,11 +429,7 @@ client.on('guildMemberAdd', async (member) => {
           new ButtonBuilder()
             .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
             .setLabel('fill in information')
-            .setStyle(ButtonStyle.Primary),
-          new ButtonBuilder()
-            .setCustomId(`join_ask_${member.user.id}_${giveRole}`)
-            .setLabel('Ask')
-            .setStyle(ButtonStyle.Secondary)
+            .setStyle(ButtonStyle.Primary)
         );
 
         await channel.send({
