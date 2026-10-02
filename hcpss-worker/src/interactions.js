@@ -141,8 +141,16 @@ export async function handleInteraction(body, env, ctx) {
       if (!ownerId || invokerId !== ownerId) {
         return interactionResponse({ content: '\u{1F512} Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
       }
-      const ownerPayload = await buildWorkerUpdatesPayload(env);
-      return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
+      ctx.waitUntil((async () => {
+        try {
+          const ownerPayload = await buildWorkerUpdatesPayload(env);
+          await updateInteractionOriginal(env, body.token, { ...ownerPayload });
+        } catch (e) {
+          console.error('ownerpanel deferred render failed:', e);
+          await updateInteractionOriginal(env, body.token, { content: '\u274C Failed to load owner panel: ' + e.message });
+        }
+      })());
+      return deferredInteractionResponse(true);
     }
 
     if (name === 'status') {
@@ -415,7 +423,8 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_') && body.data.custom_id !== 'panel_trigger_test_alert') {
-    if (!(await canUseCommands(body.member, env, guildId))) {
+    const isOwnerPanel = body.data.custom_id.startsWith('panel_owner_');
+    if (!isOwnerPanel && !(await canUseCommands(body.member, env, guildId))) {
       return interactionResponse({
         content: 'You do not have permission to use the control panel.',
         flags: EPHEMERAL_FLAG
