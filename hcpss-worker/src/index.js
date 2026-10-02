@@ -226,12 +226,41 @@ export default {
           if (dataResp.ok) {
             const items = await dataResp.json();
             for (const item of items) {
-              const postText = item.text || item.postText || item.message || item.description || '';
-              const postAuthor = item.pageName || item.authorName || item.username || 'Social Media';
-              const postLink = item.url || item.postUrl || item.link || null;
-              const postImage = item.topImage || (Array.isArray(item.images) && item.images[0]) || item.image || null;
+              // Facebook Posts Scraper returns video/reel data with these fields:
+              // - thumbnail / image.uri / preferred_thumbnail.image.uri -> the image
+              // - canonical_uri_with_fallback / url / permalink_url -> the link
+              // - caption slug is embedded in the canonical URL path
+
+              // Get the image
+              const postImage =
+                item.thumbnail ||
+                (item.image && item.image.uri) ||
+                (item.preferred_thumbnail && item.preferred_thumbnail.image && item.preferred_thumbnail.image.uri) ||
+                null;
+
+              // Get the link
+              const postLink =
+                item.canonical_uri_with_fallback ||
+                item.permalink_url ||
+                item.url ||
+                null;
+
+              // Extract caption from the canonical URL slug (e.g. /videos/i-scream-you-scream-.../)
+              let postText = item.text || item.postText || item.message || item.description || '';
+              if (!postText && postLink) {
+                const slugMatch = postLink.match(/\/(?:videos|posts|reel)\/([^\/]+)\//);
+                if (slugMatch && slugMatch[1] && !/^\d+$/.test(slugMatch[1])) {
+                  postText = slugMatch[1].replace(/-/g, ' ');
+                  // Capitalize first letter
+                  postText = postText.charAt(0).toUpperCase() + postText.slice(1);
+                }
+              }
+
+              const postAuthor = item.pageName || item.authorName || item.username || 'HCPSS';
+              const isVideo = item.__typename === 'Video' || !!item.videoDeliveryLegacyFields;
+
               if (postText || postImage) {
-                posts.push({ text: postText, author: postAuthor, postUrl: postLink, image: postImage });
+                posts.push({ text: postText, author: postAuthor, postUrl: postLink, image: postImage, isVideo });
               }
             }
           }
@@ -250,14 +279,15 @@ export default {
 
       // Post each item to Discord
       let posted = 0;
-      for (const { text, author, postUrl, image } of posts) {
+      for (const { text, author, postUrl, image, isVideo } of posts) {
+        const typeLabel = isVideo ? '🎬 New Video from' : '📢 New Post from';
         const embed = {
-          title: author ? `New Post from ${author}` : 'New Social Media Post',
+          title: author ? `${typeLabel} ${author}` : '📢 New Social Media Post',
           description: text || '',
           url: postUrl || null,
           color: 0x4267B2, // Facebook blue
           timestamp: new Date().toISOString(),
-          footer: { text: 'Social Webhook Forwarder' }
+          footer: { text: isVideo ? 'Facebook Video' : 'Facebook Post' }
         };
         if (image && typeof image === 'string' && image.startsWith('http')) {
           embed.image = { url: image };
