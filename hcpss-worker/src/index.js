@@ -248,7 +248,7 @@ export default {
               // Extract caption from the canonical URL slug (e.g. /videos/i-scream-you-scream-.../)
               let postText = item.text || item.postText || item.message || item.description || '';
               if (!postText && postLink) {
-                const slugMatch = postLink.match(/\/(?:videos|posts|reel)\/([^\/]+)\//);
+                const slugMatch = postLink.match(/\/(?:videos|posts|reel)\/([^/]+)\//);
                 if (slugMatch && slugMatch[1] && !/^\d+$/.test(slugMatch[1])) {
                   postText = slugMatch[1].replace(/-/g, ' ');
                   // Capitalize first letter
