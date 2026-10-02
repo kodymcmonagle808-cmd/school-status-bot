@@ -212,45 +212,69 @@ export default {
         return new Response('Invalid JSON payload', { status: 400 });
       }
 
-      const { text, author, url: postUrl, image } = payload;
-      if (!text && !image) {
-        return new Response('Missing text or image', { status: 400 });
+      // Build list of posts to send.
+      // Supports two formats:
+      //   1. Apify "run finished" webhook: { resource: { defaultDatasetId } }
+      //   2. Direct: { text, author, url, image }
+      let posts = [];
+
+      if (payload.resource && payload.resource.defaultDatasetId) {
+        // Apify webhook — fetch actual scraped posts from the dataset
+        const datasetId = payload.resource.defaultDatasetId;
+        try {
+          const dataResp = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?clean=true&limit=5`);
+          if (dataResp.ok) {
+            const items = await dataResp.json();
+            for (const item of items) {
+              const postText = item.text || item.postText || item.message || item.description || '';
+              const postAuthor = item.pageName || item.authorName || item.username || 'Social Media';
+              const postLink = item.url || item.postUrl || item.link || null;
+              const postImage = item.topImage || (Array.isArray(item.images) && item.images[0]) || item.image || null;
+              if (postText || postImage) {
+                posts.push({ text: postText, author: postAuthor, postUrl: postLink, image: postImage });
+              }
+            }
+          }
+        } catch (e) {
+          return new Response('Failed to fetch Apify dataset: ' + e.message, { status: 500 });
+        }
+      } else {
+        // Direct format
+        const { text, author, url: postUrl, image } = payload;
+        if (text || image) posts.push({ text, author, postUrl, image });
       }
 
-      const embed = {
-        title: author ? `New Post from ${author}` : 'New Social Media Post',
-        description: text || '',
-        url: postUrl || null,
-        color: 0x1DA1F2,
-        timestamp: new Date().toISOString(),
-        footer: { text: 'Social Webhook Forwarder' }
-      };
-
-      if (image && typeof image === 'string' && image.startsWith('http')) {
-        embed.image = { url: image };
+      if (posts.length === 0) {
+        return jsonResponse({ success: true, posted: 0 });
       }
 
-      // Send to Discord
-      const postResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          embeds: [embed]
-        })
-      });
-
-      if (!postResp.ok) {
-        return new Response('Failed to post to Discord', { status: 502 });
+      // Post each item to Discord
+      let posted = 0;
+      for (const { text, author, postUrl, image } of posts) {
+        const embed = {
+          title: author ? `New Post from ${author}` : 'New Social Media Post',
+          description: text || '',
+          url: postUrl || null,
+          color: 0x4267B2, // Facebook blue
+          timestamp: new Date().toISOString(),
+          footer: { text: 'Social Webhook Forwarder' }
+        };
+        if (image && typeof image === 'string' && image.startsWith('http')) {
+          embed.image = { url: image };
+        }
+        const postResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ embeds: [embed] })
+        });
+        if (postResp.ok) posted++;
       }
 
       // Log it
       const { logAction } = await import('./actionlog.js');
-      ctx.waitUntil(logAction(env, guildId, `📢 Forwarded social post to <#${channelId}>`));
+      ctx.waitUntil(logAction(env, guildId, `📢 Forwarded ${posted} social post(s) to <#${channelId}>`));
 
-      return jsonResponse({ success: true });
+      return jsonResponse({ success: true, posted });
     }
 
     if (url.pathname === '/push-data') {
