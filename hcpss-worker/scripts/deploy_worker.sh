@@ -247,6 +247,22 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "social-link",
+    description: "Generate a webhook URL to forward Facebook/Instagram posts via IFTTT or Make.com",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      {
+        name: "channel",
+        description: "The channel where new posts should be forwarded.",
+        type: 7,
+        channel_types: [0, 5],
+        required: true
+      }
+    ]
+  },
+  {
     name: "terms",
     description: "View the Terms and Conditions for this bot.",
     type: 1,

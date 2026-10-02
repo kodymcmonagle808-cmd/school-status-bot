@@ -35,6 +35,7 @@ import {
   runHelpCommand,
   runSnowdayCommand,
   runNotifyCommand,
+  runSocialLinkCommand,
   runMyDataViewCommand,
   runMyDataDeletePrompt,
   runMySchoolCommand,
@@ -129,6 +130,7 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'help') return interactionResponse(runHelpCommand());
     if (name === 'notify') return interactionResponse(await runNotifyCommand(body, env));
     if (name === 'myschool') return interactionResponse(await runMySchoolCommand(body, env));
+    if (name === 'social-link') return interactionResponse(await runSocialLinkCommand(body, env));
     if (name === 'setupclasses') return await handleSetupClasses(body, env);
     if (name === 'mapmyclass') {
       env.ctx = ctx; // Hack to pass ctx to handler without changing signature
