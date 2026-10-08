@@ -164,57 +164,7 @@ async function logToPanel(guildId, message) {
 }
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
-  // Trigger when joining a VC or switching VCs
-  if (newState.channelId && oldState.channelId !== newState.channelId) {
-    if (newState.member.user.bot) return;
-
-    const channel = newState.channel;
-    const guildId = channel.guild.id;
-    
-    await logToPanel(guildId, `User ${newState.member.user.tag} joined ${channel.name}. Checking config...`);
-
-    // Fetch config to check for VC restrictions and get playlist URL
-    const config = await getGuildConfig(guildId);
-    if (config) {
-      if (config.music_vc_id && channel.id !== config.music_vc_id) {
-        await logToPanel(guildId, `Ignored: user joined ${channel.name}, but bot is restricted to <#${config.music_vc_id}>.`);
-        return; // User joined a different VC, ignore
-      }
-      if (config.music_playlist_url) {
-        currentPlaylistUrl = config.music_playlist_url;
-      }
-    }
-
-    if (!currentVoiceConnection || currentVoiceChannel?.id !== channel.id) {
-      console.log(`User joined VC. Bot joining ${channel.name} to play music.`);
-      await logToPanel(guildId, `Joining ${channel.name} and starting music...`);
-      
-      if (currentVoiceConnection) {
-        currentVoiceConnection.destroy();
-      }
-
-      currentVoiceChannel = channel;
-      currentVoiceConnection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
-        selfDeaf: true,
-        selfMute: false,
-      });
-
-      currentVoiceConnection.subscribe(musicPlayer);
-
-      if (!isPlayingMusic) {
-        if (musicQueue.length === 0) {
-          await logToPanel(guildId, `Loading playlist into queue...`);
-          await loadPlaylist();
-        }
-        playNextSong();
-      }
-    } else {
-      await logToPanel(guildId, `Bot is already in ${channel.name} playing music.`);
-    }
-  } else if (oldState.channelId && !newState.channelId) {
+  if (oldState.channelId && !newState.channelId) {
     const channel = oldState.channel;
     if (currentVoiceChannel && currentVoiceChannel.id === channel.id) {
       const members = channel.members.filter(m => !m.user.bot);
@@ -426,11 +376,15 @@ client.on('guildMemberAdd', async (member) => {
           .setColor('Blue');
         
         const joinRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
-            .setLabel('fill in information')
-            .setStyle(ButtonStyle.Primary)
-        );
+            new ButtonBuilder()
+              .setCustomId(`join_fill_${member.user.id}_${giveRole}`)
+              .setLabel('fill in information')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`join_bot_${member.user.id}`)
+              .setLabel('Bot')
+              .setStyle(ButtonStyle.Secondary)
+          );
 
         await channel.send({
           content: `<@&${pingRole}>`,
@@ -445,6 +399,35 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isButton() && interaction.customId.startsWith('join_bot_')) {
+    const parts = interaction.customId.split('_');
+    const userId = parts[2];
+    
+    // Find a role named "bot" or "bots"
+    const botRole = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === 'bot' || r.name.toLowerCase() === 'bots' || r.name.toLowerCase() === 'bot role');
+    
+    const embed = EmbedBuilder.from(interaction.message.embeds[0]);
+    embed.setDescription(`User: <@${userId}>\n\n**Skipped:** Marked as Bot`);
+    embed.setColor('Green');
+    
+    await interaction.message.edit({
+      embeds: [embed],
+      components: []
+    });
+    
+    if (botRole) {
+      try {
+        const member = await interaction.guild.members.fetch(userId);
+        if (member) {
+          await member.roles.add(botRole);
+        }
+      } catch (e) {
+        console.error('Failed to add bot role:', e);
+      }
+    }
+    return interaction.reply({ content: 'User marked as bot and skipped form. Role added if found.', flags: 64 });
+  }
+
   if (interaction.isButton() && interaction.customId.startsWith('join_fill_')) {
     const parts = interaction.customId.split('_');
     const userId = parts[2];
