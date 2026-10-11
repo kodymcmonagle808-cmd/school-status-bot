@@ -1,7 +1,9 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
-const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } = require('@discordjs/voice');
-const play = require('play-dl');
+const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior, StreamType } = require('@discordjs/voice');
+const { Readable } = require('stream');
+const ffmpegStatic = require('ffmpeg-static');
+process.env.FFMPEG_PATH = ffmpegStatic;
 
 const client = new Client({
   intents: [
@@ -27,79 +29,217 @@ const ROLE_MAPPINGS = {
 
 let currentVoiceConnection = null;
 let currentVoiceChannel = null;
+let activeMusicTextChannel = null;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
     noSubscriber: NoSubscriberBehavior.Play,
   },
 });
+
+let innertubeClient = null;
+async function getInnertube() {
+  if (!innertubeClient) {
+    const { Innertube } = await import('youtubei.js');
+    innertubeClient = await Innertube.create();
+  }
+  return innertubeClient;
+}
+
+let playlistTracks = [];
 let musicQueue = [];
 let isPlayingMusic = false;
+let currentPlaylistUrl = process.env.PLAYLIST_URL || 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=a4658eaa73b64ba4';
 
-async function playNextSong() {
+async function loadPlaylist(targetUrl) {
+  const url = targetUrl || currentPlaylistUrl;
+  try {
+    if (url.includes('spotify.com')) {
+      const match = url.match(/playlist\/([a-zA-Z0-9]+)/);
+      if (match) {
+        const playlistId = match[1];
+        console.log(`Scraping Spotify playlist metadata for: ${playlistId}`);
+        const res = await fetch(`https://open.spotify.com/embed/playlist/${playlistId}`);
+        const html = await res.text();
+        const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+        if (nextDataMatch) {
+          const parsed = JSON.parse(nextDataMatch[1]);
+          const entity = parsed?.props?.pageProps?.state?.data?.entity;
+          if (entity && Array.isArray(entity.trackList)) {
+            playlistTracks = entity.trackList.map(t => ({
+              title: t.title,
+              artist: t.subtitle,
+              query: `${t.title} ${t.subtitle}`.trim(),
+              preview: t.audioPreview ? t.audioPreview.url : null
+            }));
+            musicQueue = [...playlistTracks];
+            console.log(`Loaded ${musicQueue.length} tracks from Spotify playlist "${entity.name}".`);
+            return;
+          }
+        }
+      }
+    } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      const yt = await getInnertube();
+      const playlist = await yt.getPlaylist(url).catch(() => null);
+      if (playlist && playlist.videos) {
+        playlistTracks = playlist.videos.map(v => ({
+          title: v.title?.text || 'YouTube Track',
+          videoId: v.id,
+          query: v.id
+        }));
+        musicQueue = [...playlistTracks];
+        console.log(`Loaded ${musicQueue.length} tracks from YouTube playlist.`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("Error loading playlist:", err);
+  }
+
   if (musicQueue.length === 0) {
-    await loadPlaylist();
+    console.log("Using default fallback tracks in queue.");
+    playlistTracks = [
+      { title: 'Lofi Hip Hop Radio', query: 'lofi hip hop radio beats to relax study to' }
+    ];
+    musicQueue = [...playlistTracks];
+  }
+}
+
+async function resolveTrack(input) {
+  if (!input) return null;
+  if (typeof input !== 'string') return input;
+  const str = input.trim();
+  if (str.includes('spotify.com')) {
+    const trackMatch = str.match(/track\/([a-zA-Z0-9]+)/);
+    if (trackMatch) {
+      const trackId = trackMatch[1];
+      try {
+        const res = await fetch(`https://open.spotify.com/embed/track/${trackId}`);
+        const html = await res.text();
+        const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+        if (nextDataMatch) {
+          const parsed = JSON.parse(nextDataMatch[1]);
+          const entity = parsed?.props?.pageProps?.state?.data?.entity;
+          if (entity) {
+            const title = entity.title || entity.name || 'Spotify Track';
+            const artist = entity.subtitle || entity.artist || '';
+            return {
+              title,
+              artist,
+              query: `${title} ${artist}`.trim(),
+              preview: entity.audioPreview ? entity.audioPreview.url : null
+            };
+          }
+        }
+      } catch (err) {
+        console.error('Error resolving Spotify track:', err);
+      }
+    }
+  }
+  return { query: str, title: str };
+}
+
+async function playNextSong(textChannel) {
+  if (textChannel) activeMusicTextChannel = textChannel;
+  if (!currentVoiceConnection) {
+    isPlayingMusic = false;
+    return;
+  }
+
+  if (musicQueue.length === 0) {
+    if (playlistTracks.length > 0) {
+      musicQueue = [...playlistTracks];
+    } else {
+      await loadPlaylist();
+    }
     if (musicQueue.length === 0) {
       isPlayingMusic = false;
       return;
     }
   }
 
-  const track = musicQueue.shift();
+  const trackItem = musicQueue.shift();
+  let trackQuery = typeof trackItem === 'string' ? trackItem : (trackItem.query || trackItem.title);
+  let songTitle = typeof trackItem === 'object' && trackItem.title ? `${trackItem.title}${trackItem.artist ? ` - ${trackItem.artist}` : ''}` : trackQuery;
+
   try {
-    if (track.startsWith('http')) {
-      let stream = await play.stream(track);
-      let resource = createAudioResource(stream.stream, { inputType: stream.type });
-      musicPlayer.play(resource);
-      isPlayingMusic = true;
-      console.log(`Now playing stream: ${track}`);
-    } else {
-      let searched = await play.search(track, { limit: 1 });
-      if (searched && searched.length > 0) {
-        let stream = await play.stream(searched[0].url);
-        let resource = createAudioResource(stream.stream, { inputType: stream.type });
-        musicPlayer.play(resource);
-        isPlayingMusic = true;
-        console.log(`Now playing: ${searched[0].title}`);
-      } else {
-        console.log(`Could not find ${track} on YouTube. Skipping...`);
-        playNextSong();
+    const yt = await getInnertube();
+    let videoId = null;
+
+    if (trackItem && trackItem.videoId) {
+      videoId = trackItem.videoId;
+    } else if (typeof trackQuery === 'string' && trackQuery.startsWith('http')) {
+      const idMatch = trackQuery.match(/(?:v=|\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      if (idMatch) {
+        videoId = idMatch[1];
       }
     }
-  } catch (err) {
-    console.error("Error playing song:", err);
-    setTimeout(playNextSong, 2000);
-  }
-}
 
-let currentPlaylistUrl = process.env.PLAYLIST_URL || 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=a4658eaa73b64ba4';
+    if (!videoId) {
+      const search = await yt.search(trackQuery);
+      const video = search.videos?.[0];
+      if (video) {
+        videoId = video.id;
+        if (!trackItem.title) {
+          songTitle = video.title?.text || songTitle;
+        }
+      }
+    }
 
-async function loadPlaylist() {
-  const url = currentPlaylistUrl;
-  try {
-    if (play.is_expired()) {
-        await play.refreshToken();
+    let stream = null;
+    if (videoId) {
+      const { downloadMultiStep } = require('simple-ytdl-core');
+      stream = await downloadMultiStep(yt, videoId).catch(err => {
+        console.error(`downloadMultiStep failed for ${videoId}:`, err.message);
+        return null;
+      });
     }
-    
-    if (url.includes('spotify')) {
-      let sp_data = await play.spotify(url);
-      let tracks = await sp_data.all_tracks();
-      musicQueue = tracks.map(t => `${t.name} ${t.artists.map(a => a.name).join(' ')}`);
-    } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
-      let yt_data = await play.playlist_info(url, { incomplete: true });
-      let tracks = await yt_data.all_tracks();
-      musicQueue = tracks.map(t => t.url);
+
+    if (!stream && trackItem.preview) {
+      console.log(`Falling back to Spotify audio preview for: ${songTitle}`);
+      const res = await fetch(trackItem.preview).catch(() => null);
+      if (res && res.ok) {
+        stream = Readable.fromWeb(res.body);
+      }
     }
-    console.log(`Loaded ${musicQueue.length} tracks into queue.`);
+
+    if (!stream) {
+      console.log(`Could not stream: "${songTitle}". Moving to next track...`);
+      setTimeout(() => playNextSong(activeMusicTextChannel), 1500);
+      return;
+    }
+
+    const resource = createAudioResource(stream, {
+      inputType: StreamType.Arbitrary,
+      inlineVolume: true
+    });
+    if (resource.volume) {
+      resource.volume.setVolume(1.0);
+    }
+
+    musicPlayer.play(resource);
+    isPlayingMusic = true;
+    console.log(`Now playing: ${songTitle}`);
+
+    if (activeMusicTextChannel) {
+      const m = await activeMusicTextChannel.send(`🎶 Now playing: **${songTitle}**`).catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 7000);
+    }
   } catch (err) {
-    console.error("Error loading playlist. Falling back to Lofi Girl stream...", err.message);
-    musicQueue = ["https://www.youtube.com/watch?v=jfKfPfyJRdk"];
+    console.error(`Error playing track "${songTitle}":`, err);
+    setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
   }
 }
 
 musicPlayer.on(AudioPlayerStatus.Idle, () => {
   isPlayingMusic = false;
-  playNextSong();
+  playNextSong(activeMusicTextChannel);
+});
+
+musicPlayer.on('error', error => {
+  console.error('AudioPlayer error:', error.message);
+  isPlayingMusic = false;
+  setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
 });
 
 client.once('ready', () => {
@@ -257,7 +397,7 @@ client.on('messageCreate', async (message) => {
         if (musicQueue.length === 0) {
           await loadPlaylist();
         }
-        playNextSong();
+        playNextSong(message.channel);
       }
     };
 
@@ -348,7 +488,7 @@ client.on('messageCreate', async (message) => {
           await playInVoice(targetVc);
         }
       } else {
-        playNextSong();
+        playNextSong(message.channel);
       }
 
       const m = await message.channel.send('▶️ Playing normal 24/7 playlist!').catch(() => null);
@@ -362,7 +502,15 @@ client.on('messageCreate', async (message) => {
       const userId = parts[3];
 
       if (songUrl) {
-        musicQueue.unshift(songUrl);
+        let queuedName = songUrl;
+        if (songUrl.includes('spotify.com/playlist/')) {
+          await loadPlaylist(songUrl);
+          queuedName = 'Spotify Playlist';
+        } else {
+          const resolved = await resolveTrack(songUrl);
+          musicQueue.unshift(resolved);
+          queuedName = resolved.title || resolved.query || songUrl;
+        }
 
         if (!currentVoiceConnection) {
           const config = await getGuildConfig(message.guild.id);
@@ -380,10 +528,10 @@ client.on('messageCreate', async (message) => {
             await playInVoice(targetVc);
           }
         } else if (!isPlayingMusic) {
-          playNextSong();
+          playNextSong(message.channel);
         }
 
-        const m = await message.channel.send(`🎵 Queued: **${songUrl}**`).catch(() => null);
+        const m = await message.channel.send(`🎵 Queued: **${queuedName}**`).catch(() => null);
         if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       }
       return;
@@ -469,30 +617,37 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton() && interaction.customId.startsWith('join_bot_')) {
     const parts = interaction.customId.split('_');
     const userId = parts[2];
-    
-    // Find a role named "bot" or "bots"
-    const botRole = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === 'bot' || r.name.toLowerCase() === 'bots' || r.name.toLowerCase() === 'bot role');
-    
+
     const embed = EmbedBuilder.from(interaction.message.embeds[0]);
-    embed.setDescription(`User: <@${userId}>\n\n**Skipped:** Marked as Bot`);
+    embed.setDescription(`User: <@${userId}>\n\n**Status:** Marked as Bot (skipped information)`);
     embed.setColor('Green');
-    
-    await interaction.message.edit({
+
+    // Acknowledge immediately to Discord so it never hangs with "Interaction received."
+    await interaction.update({
       embeds: [embed],
       components: []
-    });
-    
-    if (botRole) {
-      try {
-        const member = await interaction.guild.members.fetch(userId);
+    }).catch(() => {});
+
+    try {
+      const allRoles = await interaction.guild.roles.fetch();
+      const botRole = allRoles.find(r => {
+        const n = (r.name || '').toLowerCase();
+        return n === 'bot' || n === 'bots' || n === 'bot role' || n === 'bot rules' || n === 'bots role';
+      });
+
+      if (botRole) {
+        const member = await interaction.guild.members.fetch(userId).catch(() => null);
         if (member) {
-          await member.roles.add(botRole);
+          await member.roles.add(botRole).catch(() => {});
+          await interaction.followUp({ content: `✅ <@${userId}> was marked as a bot and assigned the **${botRole.name}** role.`, ephemeral: true }).catch(() => {});
         }
-      } catch (e) {
-        console.error('Failed to add bot role:', e);
+      } else {
+        await interaction.followUp({ content: `✅ <@${userId}> was marked as a bot (skipped information). Note: No server role named 'Bot' was found.`, ephemeral: true }).catch(() => {});
       }
+    } catch (e) {
+      console.error('Failed to assign bot role in join_bot_:', e);
     }
-    return interaction.reply({ content: 'User marked as bot and skipped form. Role added if found.', flags: 64 });
+    return;
   }
 
   if (interaction.isButton() && interaction.customId.startsWith('join_fill_')) {
