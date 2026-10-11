@@ -148,12 +148,17 @@ async function playNextSong(textChannel) {
 
   if (musicQueue.length === 0) {
     if (playlistTracks.length > 0) {
+      console.log('End of queue reached. Looping back to start of playlist...');
       musicQueue = [...playlistTracks];
     } else {
       await loadPlaylist();
+      if (playlistTracks.length > 0) {
+        musicQueue = [...playlistTracks];
+      }
     }
     if (musicQueue.length === 0) {
-      isPlayingMusic = false;
+      console.log('Queue empty; retrying in 5 seconds to keep 24/7 playback looping...');
+      setTimeout(() => playNextSong(activeMusicTextChannel), 5000);
       return;
     }
   }
@@ -264,22 +269,9 @@ async function logToPanel(guildId, message) {
   }
 }
 
+// Keep bot playing 24/7; do not disconnect when users leave VC
 client.on('voiceStateUpdate', async (oldState, newState) => {
-  if (oldState.channelId && !newState.channelId) {
-    const channel = oldState.channel;
-    if (currentVoiceChannel && currentVoiceChannel.id === channel.id) {
-      const members = channel.members.filter(m => !m.user.bot);
-      if (members.size === 0) {
-        console.log("VC is empty. Leaving and pausing music.");
-        await logToPanel(channel.guild.id, `VC is empty. Pausing music and disconnecting...`);
-        musicPlayer.pause();
-        isPlayingMusic = false;
-        currentVoiceConnection.destroy();
-        currentVoiceConnection = null;
-        currentVoiceChannel = null;
-      }
-    }
-  }
+  // Voice state logging or no-op; bot remains connected and playing
 });
 
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
