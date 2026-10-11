@@ -370,28 +370,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (message.content === '!ownerpanel' && message.author.username.toLowerCase() === 'couskody') {
-    const musicEmbed = new EmbedBuilder()
-      .setTitle('🎵 Music Controls (Owner Panel)')
-      .setColor(0x1DB954)
-      .setDescription('Use the buttons below to control the music bot globally. This panel is sent to your DMs so it stays forever!');
-
-    const row1 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('music_btn_join').setLabel('Join').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('music_btn_song').setLabel('Song').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('music_btn_normal').setLabel('Normal Play').setStyle(ButtonStyle.Success)
-    );
-
-    const row2 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('music_btn_pause').setLabel('Pause').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('music_btn_resume').setLabel('Resume').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('music_btn_skip').setLabel('Skip').setStyle(ButtonStyle.Danger)
-    );
-
-    await message.author.send({ embeds: [musicEmbed], components: [row1, row2] }).catch(() => {});
-    await message.reply('✅ Owner panel sent to your DMs!').catch(() => {});
-    return;
-  }
 
   // Handle music channel message deletions and verification
   if (message.guild) {
