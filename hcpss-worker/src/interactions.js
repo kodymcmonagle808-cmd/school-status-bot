@@ -182,6 +182,32 @@ export async function handleInteraction(body, env, ctx) {
       return deferredInteractionResponse(true);
     }
 
+    if (name === 'emergencyleave') {
+      const ownerId = String(env.OWNER_ID || '').trim();
+      const invokerId = getInvokerId(body);
+      if (!ownerId || invokerId !== ownerId) {
+        return interactionResponse({ content: '🔒 Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
+      }
+      ctx.waitUntil((async () => {
+        try {
+          const config = await getConfig(env, guildId);
+          const channelId = config.music_channel_id || body.channel_id;
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: `GREET_BOT_COMMAND: EMERGENCY_LEAVE` })
+          });
+          await updateInteractionOriginal(env, body.token, {
+            content: '🚨 **Emergency shutdown activated.** Music stopped, VC left, greetings disabled. HCPSS status checking is still running.'
+          });
+        } catch (e) {
+          console.error('emergencyleave dispatch failed:', e);
+          await updateInteractionOriginal(env, body.token, { content: '❌ Failed to send emergency shutdown command: ' + e.message });
+        }
+      })());
+      return deferredInteractionResponse(true);
+    }
+
     if (name === 'status') {
       ctx.waitUntil(runStatusCommand(body, env));
       return deferredInteractionResponse();

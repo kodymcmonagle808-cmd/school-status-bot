@@ -34,6 +34,7 @@ let activeMusicTextChannel = null;
 let isExplicitlyDisconnected = false;
 let isPlayingErrorTTS = false;
 let lastErrorTTSTime = 0;
+let emergencyMode = false;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
@@ -260,6 +261,11 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
 let consecutiveSkipCount = 0;
 
 async function playNextSong(textChannel) {
+  if (emergencyMode) {
+    console.log('🚨 Emergency mode: skipping playNextSong.');
+    isPlayingMusic = false;
+    return;
+  }
   if (textChannel) activeMusicTextChannel = textChannel;
   if (!currentVoiceConnection) {
     isPlayingMusic = false;
@@ -578,6 +584,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: JOIN') || content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
+      if (emergencyMode) { emergencyMode = false; console.log('Emergency mode cleared by JOIN command.'); }
       const parts = content.split(' ');
       const userId = parts[2];
       const fallbackChannelId = parts[3];
@@ -638,6 +645,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: PLAY_NORMAL')) {
+      if (emergencyMode) { emergencyMode = false; console.log('Emergency mode cleared by PLAY_NORMAL command.'); }
       const parts = content.split(' ');
       const userId = parts[2];
 
@@ -743,6 +751,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: RESUME')) {
+      if (emergencyMode) { emergencyMode = false; console.log('Emergency mode cleared by RESUME command.'); }
       if (!currentVoiceConnection) {
         const config = await getGuildConfig(guild.id);
         let targetVc = null;
@@ -762,10 +771,36 @@ client.on('messageCreate', async (message) => {
       if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       return;
     }
+
+    if (content.startsWith('GREET_BOT_COMMAND: EMERGENCY_LEAVE')) {
+      console.log('🚨 EMERGENCY LEAVE activated — shutting down music, VC, and greetings.');
+      emergencyMode = true;
+      isExplicitlyDisconnected = true;
+
+      // Stop music
+      try { musicPlayer.stop(true); } catch {}
+      isPlayingMusic = false;
+      musicQueue = [];
+
+      // Leave VC
+      if (currentVoiceConnection) {
+        try { currentVoiceConnection.destroy(); } catch {}
+        currentVoiceConnection = null;
+        currentVoiceChannel = null;
+      }
+
+      const m = await message.channel.send('🚨 **Emergency shutdown activated.** Music stopped, VC left, greetings disabled. HCPSS status checking is still running.').catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 30000);
+      return;
+    }
   }
 });
 
 client.on('guildMemberAdd', async (member) => {
+  if (emergencyMode) {
+    console.log(`🚨 Emergency mode: skipping greeting for ${member.user.tag}`);
+    return;
+  }
   try {
     const row = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()

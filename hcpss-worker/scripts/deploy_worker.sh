@@ -457,6 +457,13 @@ payload=$(jq -n '[
       { name: "ping_role", description: "The role to ping when a user joins.", type: 8, required: true },
       { name: "give_role", description: "The role to give the user after their info is filled.", type: 8, required: true }
     ]
+  },
+  {
+    name: "emergencyleave",
+    description: "Emergency shutdown: stops music, leaves VC, disables greetings. HCPSS status stays active.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
   }
 ]')
 
