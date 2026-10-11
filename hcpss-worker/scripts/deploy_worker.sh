@@ -460,7 +460,7 @@ payload=$(jq -n '[
   },
   {
     name: "emergency",
-    description: "Emergency shutdown (Bot Owner only): stops music, leaves VC, disables greetings. HCPSS status stays active.",
+    description: "Owner only: emergency shutdown — stops music, leaves VC, disables greetings.",
     type: 1,
     integration_types: [0],
     contexts: [0]
