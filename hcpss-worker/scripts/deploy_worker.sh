@@ -459,7 +459,7 @@ payload=$(jq -n '[
     ]
   },
   {
-    name: "emergencyleave",
+    name: "emergency",
     description: "Emergency shutdown: stops music, leaves VC, disables greetings. HCPSS status stays active.",
     type: 1,
     integration_types: [0],

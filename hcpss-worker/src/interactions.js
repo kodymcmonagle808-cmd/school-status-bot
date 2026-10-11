@@ -81,12 +81,16 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 2 && body.data && body.data.name) {
-    const config = await getConfig(env, guildId);
-    if (config && config.disabled_commands && config.disabled_commands.includes(body.data.name)) {
-      return interactionResponse({
-        content: `❌ The \`/${body.data.name}\` command has been disabled in this server by the bot owner.`,
-        flags: EPHEMERAL_FLAG
-      });
+    const cmdName = body.data.name;
+    if (cmdName !== 'ownerpanel') {
+      const config = await getConfig(env, guildId);
+      const disabled = Array.isArray(config.disabled_commands) ? config.disabled_commands : [];
+      if (disabled.includes(cmdName) || (cmdName === 'emergency' && disabled.includes('emergencyleave'))) {
+        return interactionResponse({
+          content: `❌ The \`/${cmdName}\` command has been disabled in this server by the bot owner.`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
     }
   }
 
@@ -182,7 +186,7 @@ export async function handleInteraction(body, env, ctx) {
       return deferredInteractionResponse(true);
     }
 
-    if (name === 'emergencyleave') {
+    if (name === 'emergency' || name === 'emergencyleave') {
       const ownerId = String(env.OWNER_ID || '').trim();
       const invokerId = getInvokerId(body);
       if (!ownerId || invokerId !== ownerId) {
@@ -201,7 +205,7 @@ export async function handleInteraction(body, env, ctx) {
             content: '🚨 **Emergency shutdown activated.** Music stopped, VC left, greetings disabled. HCPSS status checking is still running.'
           });
         } catch (e) {
-          console.error('emergencyleave dispatch failed:', e);
+          console.error('emergency dispatch failed:', e);
           await updateInteractionOriginal(env, body.token, { content: '❌ Failed to send emergency shutdown command: ' + e.message });
         }
       })());
