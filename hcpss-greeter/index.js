@@ -31,12 +31,30 @@ const ROLE_MAPPINGS = {
 let currentVoiceConnection = null;
 let currentVoiceChannel = null;
 let activeMusicTextChannel = null;
+let isExplicitlyDisconnected = false;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
     noSubscriber: NoSubscriberBehavior.Play,
   },
 });
+
+async function playAudioErrorMessage(text) {
+  if (!currentVoiceConnection) return;
+  try {
+    console.log(`🔊 Playing audio error message in VC: "${text}"`);
+    const cleanText = text.replace(/[^a-zA-Z0-9 ,.?!'-]/g, ' ').slice(0, 100);
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(cleanText)}`;
+    const resource = createAudioResource(ttsUrl, {
+      inputType: StreamType.Arbitrary,
+      inlineVolume: false
+    });
+    musicPlayer.play(resource);
+    isPlayingMusic = true;
+  } catch (err) {
+    console.error('Failed to play error TTS:', err);
+  }
+}
 
 let innertubeClient = null;
 async function getInnertube() {
@@ -277,7 +295,7 @@ async function playNextSong(textChannel) {
         const m = await activeMusicTextChannel.send(`⚠️ Skipped: **${songTitle}** (could not find full audio)`).catch(() => null);
         if (m) setTimeout(() => m.delete().catch(() => {}), 6000);
       }
-      setTimeout(() => playNextSong(activeMusicTextChannel), 1500);
+      await playAudioErrorMessage(`Error loading song: ${songTitle.slice(0, 30)}. Skipping to next track.`);
       return;
     }
 
@@ -299,7 +317,7 @@ async function playNextSong(textChannel) {
     }
   } catch (err) {
     console.error(`Error playing track "${songTitle}":`, err);
-    setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
+    await playAudioErrorMessage('Playback error occurred. Skipping track.');
   }
 }
 
@@ -311,36 +329,7 @@ musicPlayer.on(AudioPlayerStatus.Idle, () => {
 musicPlayer.on('error', error => {
   console.error('AudioPlayer error:', error.message);
   isPlayingMusic = false;
-  setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
-});
-
-client.once('ready', () => {
-  console.log(`Greeter bot logged in as ${client.user.tag}`);
-
-  // Set the bot's Discord presence / status
-  client.user.setPresence({
-    activities: [{ name: 'HCPSS Status', type: ActivityType.Watching }],
-    status: 'online',
-  });
-});
-
-async function logToPanel(guildId, message) {
-  try {
-    await fetch(`${WORKER_URL}/api/log`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guild_id: guildId, message })
-    });
-  } catch (err) {
-    console.error("Failed to log to panel", err);
-  }
-}
-
-// Keep bot playing 24/7; do not disconnect when users leave VC
-client.on('voiceStateUpdate', async (oldState, newState) => {
-  // Voice state logging or no-op; bot remains connected and playing
-});
-
+  playAudioErrorMessage('Audio stream error. Resuming queue.');
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
 const configCache = new Map();
 const configCacheTime = new Map();
@@ -363,6 +352,101 @@ async function getGuildConfig(guildId) {
   }
   return null;
 }
+
+// 24/7 Voice playback and auto-reconnect logic
+const playInVoice = async (vc, textChannel = null) => {
+  isExplicitlyDisconnected = false;
+  if (textChannel) activeMusicTextChannel = textChannel;
+  if (currentVoiceConnection) {
+    try { currentVoiceConnection.destroy(); } catch {}
+  }
+  currentVoiceChannel = vc;
+  currentVoiceConnection = joinVoiceChannel({
+    channelId: vc.id,
+    guildId: vc.guild.id,
+    adapterCreator: vc.guild.voiceAdapterCreator,
+    selfDeaf: true,
+    selfMute: false,
+  });
+
+  currentVoiceConnection.subscribe(musicPlayer);
+
+  currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+    if (isExplicitlyDisconnected) return;
+    console.log('Voice connection lost. Attempting to recover...');
+    try {
+      await Promise.race([
+        entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5000),
+      ]);
+    } catch {
+      if (!isExplicitlyDisconnected && currentVoiceChannel) {
+        console.log('Voice connection lost. Auto-reconnecting in 3s to keep 24/7 music running...');
+        setTimeout(() => {
+          if (!isExplicitlyDisconnected && currentVoiceChannel) {
+            playInVoice(currentVoiceChannel, activeMusicTextChannel);
+          }
+        }, 3000);
+      }
+    }
+  });
+
+  if (!isPlayingMusic) {
+    if (musicQueue.length === 0) {
+      await loadPlaylist();
+    }
+    playNextSong(activeMusicTextChannel);
+  }
+};
+
+client.once('ready', async () => {
+  console.log(`Greeter bot logged in as ${client.user.tag}`);
+
+  // Set the bot's Discord presence / status
+  client.user.setPresence({
+    activities: [{ name: 'HCPSS Status', type: ActivityType.Watching }],
+    status: 'online',
+  });
+
+  // Auto-connect to configured 24/7 VC on startup or deployment restart
+  try {
+    for (const [guildId, guild] of client.guilds.cache) {
+      const config = await getGuildConfig(guildId);
+      if (config && config.music_vc_id) {
+        const vc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
+        if (vc) {
+          console.log(`[Auto-Join 24/7] Connecting to configured VC: ${vc.name} (${vc.id})`);
+          let txt = null;
+          if (config.music_channel_id) {
+            txt = await guild.channels.fetch(config.music_channel_id).catch(() => null);
+          }
+          await playInVoice(vc, txt);
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error auto-joining 24/7 VC on startup:', err);
+  }
+});
+
+async function logToPanel(guildId, message) {
+  try {
+    await fetch(`${WORKER_URL}/api/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guild_id: guildId, message })
+    });
+  } catch (err) {
+    console.error("Failed to log to panel", err);
+  }
+}
+
+// Keep bot playing 24/7; do not disconnect when users leave VC
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  // Voice state logging or no-op; bot remains connected and playing
+});
+
 
 client.on('messageCreate', async (message) => {
   if (message.content === '!greeter-ping') {
@@ -429,45 +513,6 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // Helper to start playback in a channel
-    const playInVoice = async (vc) => {
-      if (currentVoiceConnection) {
-        currentVoiceConnection.destroy();
-      }
-      currentVoiceChannel = vc;
-      currentVoiceConnection = joinVoiceChannel({
-        channelId: vc.id,
-        guildId: vc.guild.id,
-        adapterCreator: vc.guild.voiceAdapterCreator,
-        selfDeaf: true,
-        selfMute: false,
-      });
-
-      currentVoiceConnection.subscribe(musicPlayer);
-
-      currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
-        if (!currentVoiceConnection) return;
-        try {
-          await Promise.race([
-            entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5000),
-            entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5000),
-          ]);
-        } catch {
-          if (currentVoiceConnection) currentVoiceConnection.destroy();
-          currentVoiceConnection = null;
-          currentVoiceChannel = null;
-          isPlayingMusic = false;
-        }
-      });
-
-      if (!isPlayingMusic) {
-        if (musicQueue.length === 0) {
-          await loadPlaylist();
-        }
-        playNextSong(message.channel);
-      }
-    };
-
     if (content.startsWith('GREET_BOT_COMMAND: JOIN') || content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
       const parts = content.split(' ');
       const userId = parts[2];
@@ -490,6 +535,7 @@ client.on('messageCreate', async (message) => {
 
       // Check if LEAVE command or toggle off
       if (userId === 'LEAVE' || fallbackChannelId === 'LEAVE') {
+        isExplicitlyDisconnected = true;
         if (currentVoiceConnection) {
           musicPlayer.pause();
           isPlayingMusic = false;
@@ -510,6 +556,7 @@ client.on('messageCreate', async (message) => {
 
       // If already in that VC, toggle off (disconnect)
       if (currentVoiceConnection && currentVoiceChannel && currentVoiceChannel.id === targetVc.id) {
+        isExplicitlyDisconnected = true;
         musicPlayer.pause();
         isPlayingMusic = false;
         currentVoiceConnection.destroy();
