@@ -461,8 +461,10 @@ client.on('messageCreate', async (message) => {
   if (message.guild) {
     const config = await getGuildConfig(message.guild.id);
     if (config && config.music_channel_id && message.channel.id === config.music_channel_id) {
-      // 1. Delete message after 5 seconds (except our own messages)
-      if (message.author.id !== client.user.id) {
+      // 1. Delete message after 5 seconds (except control panel embeds)
+      if (message.content.startsWith('GREET_BOT_COMMAND:')) {
+        message.delete().catch(() => {});
+      } else if (message.author.id !== client.user.id) {
         setTimeout(() => {
           message.delete().catch(() => {});
         }, 5000);
@@ -500,10 +502,6 @@ client.on('messageCreate', async (message) => {
 
   // We can still log to console, but we'll also send status updates to the channel for the command
   if (message.content.startsWith('GREET_BOT_COMMAND:')) {
-    if (!message.author.bot) {
-      return;
-    }
-
     const content = message.content.trim();
     // Delete the trigger message right away if possible
     message.delete().catch(() => {});
@@ -654,11 +652,20 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: SKIP')) {
-      if (currentVoiceConnection) {
-        musicPlayer.stop(); // Stops the current track, triggering playNextSong
-        const m = await message.channel.send('⏭️ Skipped current track.').catch(() => null);
-        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      if (!currentVoiceConnection) {
+        const config = await getGuildConfig(guild.id);
+        let targetVc = null;
+        if (config && config.music_vc_id) {
+          targetVc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
+        }
+        if (targetVc) {
+          await playInVoice(targetVc, message.channel);
+        }
+      } else {
+        musicPlayer.stop(); // Stops the current track, triggering Idle event -> playNextSong
       }
+      const m = await message.channel.send('⏭️ Skipped current track.').catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       return;
     }
 
@@ -672,11 +679,23 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: RESUME')) {
-      if (currentVoiceConnection) {
+      if (!currentVoiceConnection) {
+        const config = await getGuildConfig(guild.id);
+        let targetVc = null;
+        if (config && config.music_vc_id) {
+          targetVc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
+        }
+        if (targetVc) {
+          await playInVoice(targetVc, message.channel);
+        }
+      } else {
         musicPlayer.unpause();
-        const m = await message.channel.send('▶️ Resumed playback.').catch(() => null);
-        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+        if (!isPlayingMusic) {
+          playNextSong(message.channel);
+        }
       }
+      const m = await message.channel.send('▶️ Resumed playback.').catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       return;
     }
   }
