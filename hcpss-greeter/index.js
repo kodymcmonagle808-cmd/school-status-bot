@@ -263,7 +263,10 @@ async function playNextSong(textChannel) {
       if (result) {
         stream = result.stream;
         audioSource = result.source;
-        songTitle = result.resolvedTitle || songTitle;
+        // Only use the YouTube title if we don't have a clean Spotify title
+        if (!trackItem.title || trackItem.title === 'YouTube Track') {
+          songTitle = result.resolvedTitle || songTitle;
+        }
       }
     }
 
