@@ -82,10 +82,10 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name) {
     const cmdName = body.data.name;
-    if (cmdName !== 'ownerpanel') {
+    if (cmdName !== 'ownerpanel' && cmdName !== 'ownerpannel' && cmdName !== 'emergency' && cmdName !== 'emergencyleave') {
       const config = await getConfig(env, guildId);
       const disabled = Array.isArray(config.disabled_commands) ? config.disabled_commands : [];
-      if (disabled.includes(cmdName) || (cmdName === 'emergency' && disabled.includes('emergencyleave'))) {
+      if (disabled.includes(cmdName)) {
         return interactionResponse({
           content: `❌ The \`/${cmdName}\` command has been disabled in this server by the bot owner.`,
           flags: EPHEMERAL_FLAG

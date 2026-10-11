@@ -81,8 +81,7 @@ export const OWNER_ADMIN_COMMANDS = [
   { value: 'dankstaffsetup', label: '/dankstaffsetup', description: 'Dank Memer application config' },
   { value: 'staffappsetup', label: '/staffappsetup', description: 'Staff application config' },
   { value: 'social-link', label: '/social-link', description: 'Social webhook generator' },
-  { value: 'mydata', label: '/mydata', description: 'View or erase server data' },
-  { value: 'emergency', label: '/emergency', description: 'Emergency shutdown (music, VC, greetings)' }
+  { value: 'mydata', label: '/mydata', description: 'View or erase server data' }
 ];
 
 export function buildOwnerPermsPayload(targetGuildId, disabledCommands = []) {
