@@ -330,6 +330,8 @@ musicPlayer.on('error', error => {
   console.error('AudioPlayer error:', error.message);
   isPlayingMusic = false;
   playAudioErrorMessage('Audio stream error. Resuming queue.');
+});
+
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
 const configCache = new Map();
 const configCacheTime = new Map();
