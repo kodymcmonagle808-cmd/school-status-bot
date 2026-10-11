@@ -32,6 +32,8 @@ let currentVoiceConnection = null;
 let currentVoiceChannel = null;
 let activeMusicTextChannel = null;
 let isExplicitlyDisconnected = false;
+let isPlayingErrorTTS = false;
+let lastErrorTTSTime = 0;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
@@ -41,8 +43,16 @@ const musicPlayer = createAudioPlayer({
 
 async function playAudioErrorMessage(text) {
   if (!currentVoiceConnection) return;
+  // Prevent TTS spam — only allow one TTS every 30 seconds
+  const now = Date.now();
+  if (now - lastErrorTTSTime < 30000) {
+    console.log('Skipping TTS error (cooldown active).');
+    return;
+  }
+  lastErrorTTSTime = now;
   try {
     console.log(`🔊 Playing audio error message in VC: "${text}"`);
+    isPlayingErrorTTS = true;
     const cleanText = text.replace(/[^a-zA-Z0-9 ,.?!'-]/g, ' ').slice(0, 100);
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(cleanText)}`;
     const resource = createAudioResource(ttsUrl, {
@@ -53,6 +63,7 @@ async function playAudioErrorMessage(text) {
     isPlayingMusic = true;
   } catch (err) {
     console.error('Failed to play error TTS:', err);
+    isPlayingErrorTTS = false;
   }
 }
 
@@ -354,19 +365,35 @@ async function playNextSong(textChannel) {
     }
   } catch (err) {
     console.error(`Error playing track "${songTitle}":`, err);
+    consecutiveSkipCount++;
+    if (consecutiveSkipCount >= 3) {
+      console.log('3 tracks errored in a row. Stopping to prevent loop.');
+      isPlayingMusic = false;
+      consecutiveSkipCount = 0;
+      return;
+    }
     setTimeout(() => playNextSong(activeMusicTextChannel), 3000);
   }
 }
 
 musicPlayer.on(AudioPlayerStatus.Idle, () => {
   isPlayingMusic = false;
+  if (isPlayingErrorTTS) {
+    // TTS just finished — don't immediately call playNextSong (prevents infinite loop)
+    isPlayingErrorTTS = false;
+    console.log('TTS error message finished. Waiting 10s before retrying playback...');
+    setTimeout(() => playNextSong(activeMusicTextChannel), 10000);
+    return;
+  }
   playNextSong(activeMusicTextChannel);
 });
 
 musicPlayer.on('error', error => {
   console.error('AudioPlayer error:', error.message);
   isPlayingMusic = false;
-  playAudioErrorMessage('Audio stream error. Resuming queue.');
+  // Don't call playAudioErrorMessage here — it plays on the same player
+  // and triggers Idle → playNextSong → fail → error → TTS loop.
+  // The Idle event will fire automatically and retry.
 });
 
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
