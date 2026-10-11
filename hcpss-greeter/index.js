@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } = require('discord.js');
 const { joinVoiceChannel, VoiceConnectionStatus, entersState, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior, StreamType } = require('@discordjs/voice');
 const { Readable } = require('stream');
+const play = require('play-dl');
 const ffmpegStatic = require('ffmpeg-static');
 process.env.FFMPEG_PATH = ffmpegStatic;
 
@@ -139,6 +140,88 @@ async function resolveTrack(input) {
   return { query: str, title: str };
 }
 
+// Initialize SoundCloud client_id for play-dl fallback
+let scInitialized = false;
+async function initSoundCloud() {
+  if (scInitialized) return;
+  try {
+    const clientId = await play.getFreeClientID();
+    await play.setToken({ soundcloud: { client_id: clientId } });
+    scInitialized = true;
+    console.log('SoundCloud client initialized for fallback streaming.');
+  } catch (err) {
+    console.error('SoundCloud init failed (non-fatal):', err.message);
+  }
+}
+
+// Multi-provider full audio stream resolver
+// NEVER falls back to Spotify 30s previews — only full-length songs
+async function getFullAudioStream(yt, trackQuery, songTitle) {
+  const { downloadMultiStep } = require('simple-ytdl-core');
+
+  // --- Provider 1: YouTube (primary search, try top 3 candidates) ---
+  try {
+    const search = await yt.search(trackQuery);
+    const candidates = search.videos ? search.videos.slice(0, 3) : [];
+    for (const v of candidates) {
+      try {
+        const stream = await downloadMultiStep(yt, v.id);
+        if (stream) {
+          console.log(`[YouTube] Full stream obtained: "${v.title?.text}" (${v.id})`);
+          return { stream, source: 'YouTube', resolvedTitle: v.title?.text || songTitle };
+        }
+      } catch (err) {
+        console.log(`[YouTube] Candidate ${v.id} failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.log(`[YouTube] Primary search failed for "${trackQuery}": ${err.message}`);
+  }
+
+  // --- Provider 2: YouTube (secondary search with "audio" appended) ---
+  try {
+    const audioQuery = `${trackQuery} audio`;
+    console.log(`[YouTube] Trying secondary query: "${audioQuery}"`);
+    const search2 = await yt.search(audioQuery);
+    const candidates2 = search2.videos ? search2.videos.slice(0, 2) : [];
+    for (const v of candidates2) {
+      try {
+        const stream = await downloadMultiStep(yt, v.id);
+        if (stream) {
+          console.log(`[YouTube] Full stream via secondary search: "${v.title?.text}" (${v.id})`);
+          return { stream, source: 'YouTube', resolvedTitle: v.title?.text || songTitle };
+        }
+      } catch (err) {
+        console.log(`[YouTube] Secondary candidate ${v.id} failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.log(`[YouTube] Secondary search failed: ${err.message}`);
+  }
+
+  // --- Provider 3: SoundCloud via play-dl ---
+  try {
+    await initSoundCloud();
+    console.log(`[SoundCloud] Searching for: "${trackQuery}"`);
+    const scResults = await play.search(trackQuery, { source: { soundcloud: 'tracks' }, limit: 5 });
+    for (const track of scResults) {
+      try {
+        const scStream = await play.stream(track.url);
+        if (scStream && scStream.stream) {
+          console.log(`[SoundCloud] Full stream obtained: "${track.name}"`);
+          return { stream: scStream.stream, source: 'SoundCloud', resolvedTitle: track.name || songTitle };
+        }
+      } catch (err) {
+        console.log(`[SoundCloud] Track "${track.name}" stream failed: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    console.log(`[SoundCloud] Fallback failed: ${err.message}`);
+  }
+
+  return null; // All providers exhausted
+}
+
 async function playNextSong(textChannel) {
   if (textChannel) activeMusicTextChannel = textChannel;
   if (!currentVoiceConnection) {
@@ -169,8 +252,9 @@ async function playNextSong(textChannel) {
 
   try {
     const yt = await getInnertube();
-    let videoId = null;
 
+    // If we already have a videoId, try it directly first
+    let videoId = null;
     if (trackItem && trackItem.videoId) {
       videoId = trackItem.videoId;
     } else if (typeof trackQuery === 'string' && trackQuery.startsWith('http')) {
@@ -180,36 +264,36 @@ async function playNextSong(textChannel) {
       }
     }
 
-    if (!videoId) {
-      const search = await yt.search(trackQuery);
-      const video = search.videos?.[0];
-      if (video) {
-        videoId = video.id;
-        if (!trackItem.title) {
-          songTitle = video.title?.text || songTitle;
-        }
-      }
-    }
-
     let stream = null;
+    let audioSource = 'Unknown';
+
     if (videoId) {
+      // Direct videoId — try downloadMultiStep first
       const { downloadMultiStep } = require('simple-ytdl-core');
       stream = await downloadMultiStep(yt, videoId).catch(err => {
-        console.error(`downloadMultiStep failed for ${videoId}:`, err.message);
+        console.log(`[YouTube] Direct videoId ${videoId} failed: ${err.message}`);
         return null;
       });
+      if (stream) audioSource = 'YouTube';
     }
 
-    if (!stream && trackItem.preview) {
-      console.log(`Falling back to Spotify audio preview for: ${songTitle}`);
-      const res = await fetch(trackItem.preview).catch(() => null);
-      if (res && res.ok) {
-        stream = Readable.fromWeb(res.body);
+    // If no stream yet, use multi-provider resolver
+    if (!stream) {
+      const result = await getFullAudioStream(yt, trackQuery, songTitle);
+      if (result) {
+        stream = result.stream;
+        audioSource = result.source;
+        songTitle = result.resolvedTitle || songTitle;
       }
     }
 
+    // NEVER fall back to Spotify 30s preview — skip track instead
     if (!stream) {
-      console.log(`Could not stream: "${songTitle}". Moving to next track...`);
+      console.log(`❌ Could not stream (all providers exhausted): "${songTitle}". Skipping...`);
+      if (activeMusicTextChannel) {
+        const m = await activeMusicTextChannel.send(`⚠️ Skipped: **${songTitle}** (could not find full audio)`).catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 6000);
+      }
       setTimeout(() => playNextSong(activeMusicTextChannel), 1500);
       return;
     }
@@ -224,7 +308,7 @@ async function playNextSong(textChannel) {
 
     musicPlayer.play(resource);
     isPlayingMusic = true;
-    console.log(`Now playing: ${songTitle}`);
+    console.log(`🎶 Now playing (${audioSource}): ${songTitle}`);
 
     if (activeMusicTextChannel) {
       const m = await activeMusicTextChannel.send(`🎶 Now playing: **${songTitle}**`).catch(() => null);
