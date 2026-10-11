@@ -100,7 +100,7 @@ async function loadPlaylist(targetUrl) {
   if (musicQueue.length === 0) {
     console.log("Using default fallback tracks in queue.");
     playlistTracks = [
-      { title: 'Lofi Hip Hop Radio', query: 'lofi hip hop radio beats to relax study to' }
+      { title: 'Eternity', artist: 'Alex Warren', query: 'Eternity Alex Warren audio' }
     ];
     musicQueue = [...playlistTracks];
   }
@@ -159,10 +159,10 @@ async function initSoundCloud() {
 async function getFullAudioStream(yt, trackQuery, songTitle) {
   const { downloadMultiStep } = require('simple-ytdl-core');
 
-  // --- Provider 1: YouTube (primary search, try top 3 candidates) ---
+  // --- Provider 1: YouTube (primary search, try top 1 candidate only to avoid random songs) ---
   try {
     const search = await yt.search(trackQuery);
-    const candidates = search.videos ? search.videos.slice(0, 3) : [];
+    const candidates = search.videos ? search.videos.slice(0, 1) : [];
     for (const v of candidates) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
@@ -178,12 +178,12 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
     console.log(`[YouTube] Primary search failed for "${trackQuery}": ${err.message}`);
   }
 
-  // --- Provider 2: YouTube (secondary search with "audio" appended) ---
+  // --- Provider 2: YouTube (secondary search with "audio" appended, try top 1 candidate) ---
   try {
     const audioQuery = `${trackQuery} audio`;
     console.log(`[YouTube] Trying secondary query: "${audioQuery}"`);
     const search2 = await yt.search(audioQuery);
-    const candidates2 = search2.videos ? search2.videos.slice(0, 2) : [];
+    const candidates2 = search2.videos ? search2.videos.slice(0, 1) : [];
     for (const v of candidates2) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
@@ -197,26 +197,6 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
     }
   } catch (err) {
     console.log(`[YouTube] Secondary search failed: ${err.message}`);
-  }
-
-  // --- Provider 3: SoundCloud via play-dl ---
-  try {
-    await initSoundCloud();
-    console.log(`[SoundCloud] Searching for: "${trackQuery}"`);
-    const scResults = await play.search(trackQuery, { source: { soundcloud: 'tracks' }, limit: 5 });
-    for (const track of scResults) {
-      try {
-        const scStream = await play.stream(track.url);
-        if (scStream && scStream.stream) {
-          console.log(`[SoundCloud] Full stream obtained: "${track.name}"`);
-          return { stream: scStream.stream, source: 'SoundCloud', resolvedTitle: track.name || songTitle };
-        }
-      } catch (err) {
-        console.log(`[SoundCloud] Track "${track.name}" stream failed: ${err.message}`);
-      }
-    }
-  } catch (err) {
-    console.log(`[SoundCloud] Fallback failed: ${err.message}`);
   }
 
   return null; // All providers exhausted
