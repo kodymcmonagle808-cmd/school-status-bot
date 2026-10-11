@@ -111,47 +111,7 @@ client.once('ready', () => {
     status: 'online',
   });
 
-  // Auto-join voice channel every 15 minutes for 30 seconds
-  const TARGET_VOICE_CHANNEL_ID = '1547401974969012335';
-  
-  setInterval(async () => {
-    try {
-      const channel = await client.channels.fetch(TARGET_VOICE_CHANNEL_ID).catch(() => null);
-      if (channel) {
-        console.log(`Auto-joining voice channel ${channel.name} for 30 seconds...`);
-        
-        if (currentVoiceConnection) {
-          currentVoiceConnection.destroy();
-        }
-
-        currentVoiceChannel = channel;
-        currentVoiceConnection = joinVoiceChannel({
-          channelId: channel.id,
-          guildId: channel.guild.id,
-          adapterCreator: channel.guild.voiceAdapterCreator,
-          selfDeaf: true,
-          selfMute: true,
-        });
-
-        // Disconnect after 30 seconds
-        setTimeout(() => {
-          if (currentVoiceConnection && currentVoiceChannel?.id === TARGET_VOICE_CHANNEL_ID) {
-            console.log(`Disconnecting from auto-joined voice channel ${channel.name}.`);
-            currentVoiceConnection.destroy();
-            currentVoiceConnection = null;
-            currentVoiceChannel = null;
-          }
-        }, 30 * 1000);
-      } else {
-        console.log(`Auto-join failed: Could not find channel with ID ${TARGET_VOICE_CHANNEL_ID}`);
-      }
-    } catch (err) {
-      console.error(`Error during auto-join interval:`, err);
-    }
-  }, 15 * 60 * 1000);
-});
-
-async function logToPanel(guildId, message) {
+  async function logToPanel(guildId, message) {
   try {
     await fetch(`${WORKER_URL}/api/log`, {
       method: 'POST',
@@ -252,77 +212,183 @@ client.on('messageCreate', async (message) => {
   }
 
   // We can still log to console, but we'll also send status updates to the channel for the command
-  if (message.content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
+  if (message.content.startsWith('GREET_BOT_COMMAND:')) {
     if (!message.author.bot) {
-      await message.channel.send("❌ Ignoring command because it wasn't sent by a bot.");
       return;
     }
 
-    const parts = message.content.split(' ');
-    const targetChannelId = parts.length > 2 ? parts[2] : null;
+    const content = message.content.trim();
+    // Delete the trigger message right away
+    message.delete().catch(() => {});
 
-    if (currentVoiceConnection) {
-      await message.channel.send("🔌 Disconnecting from current voice channel...");
-      currentVoiceConnection.destroy();
-      currentVoiceConnection = null;
-      currentVoiceChannel = null;
-    }
-    
-    if (targetChannelId && targetChannelId !== 'LEAVE') {
-      await message.channel.send(`🔍 Attempting to join voice channel ID: \`${targetChannelId}\`...`);
-      const channel = await client.channels.fetch(targetChannelId).catch(err => {
-        return null;
+    // Helper to start playback in a channel
+    const playInVoice = async (vc) => {
+      if (currentVoiceConnection) {
+        currentVoiceConnection.destroy();
+      }
+      currentVoiceChannel = vc;
+      currentVoiceConnection = joinVoiceChannel({
+        channelId: vc.id,
+        guildId: vc.guild.id,
+        adapterCreator: vc.guild.voiceAdapterCreator,
+        selfDeaf: true,
+        selfMute: false,
       });
-      
-      if (channel) {
-        await message.channel.send(`✅ Found channel: **${channel.name}**. Joining now...`);
-        currentVoiceChannel = channel;
+
+      currentVoiceConnection.subscribe(musicPlayer);
+
+      currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
+        if (!currentVoiceConnection) return;
         try {
-          currentVoiceConnection = joinVoiceChannel({
-            channelId: channel.id,
-            guildId: channel.guild.id,
-            adapterCreator: channel.guild.voiceAdapterCreator,
-            selfDeaf: true,
-            selfMute: true,
-          });
-          
-          await message.channel.send("🎙️ Successfully called join mechanism!");
-          
-          currentVoiceConnection.on(VoiceConnectionStatus.Disconnected, async () => {
-            if (!currentVoiceConnection) return;
-            try {
-              await Promise.race([
-                entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5_000),
-                entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5_000),
-              ]);
-            } catch (error) {
-              if (currentVoiceConnection) currentVoiceConnection.destroy();
-              if (currentVoiceChannel) {
-                 currentVoiceConnection = joinVoiceChannel({
-                   channelId: currentVoiceChannel.id,
-                   guildId: currentVoiceChannel.guild.id,
-                   adapterCreator: currentVoiceChannel.guild.voiceAdapterCreator,
-                   selfDeaf: true,
-                   selfMute: true,
-                 });
-              }
-            }
-          });
-        } catch (err) {
-          await message.channel.send(`❌ Error while trying to join: ${err.message}`);
+          await Promise.race([
+            entersState(currentVoiceConnection, VoiceConnectionStatus.Signalling, 5000),
+            entersState(currentVoiceConnection, VoiceConnectionStatus.Connecting, 5000),
+          ]);
+        } catch {
+          if (currentVoiceConnection) currentVoiceConnection.destroy();
+          currentVoiceConnection = null;
+          currentVoiceChannel = null;
+          isPlayingMusic = false;
+        }
+      });
+
+      if (!isPlayingMusic) {
+        if (musicQueue.length === 0) {
+          await loadPlaylist();
+        }
+        playNextSong();
+      }
+    };
+
+    if (content.startsWith('GREET_BOT_COMMAND: JOIN') || content.startsWith('GREET_BOT_COMMAND: TOGGLE_VOICE')) {
+      const parts = content.split(' ');
+      const userId = parts[2];
+      const fallbackChannelId = parts[3];
+
+      let targetVc = null;
+      if (userId && userId !== 'LEAVE') {
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        if (member && member.voice && member.voice.channel) {
+          targetVc = member.voice.channel;
+        }
+      }
+      if (!targetVc && fallbackChannelId && fallbackChannelId !== 'LEAVE') {
+        targetVc = await message.guild.channels.fetch(fallbackChannelId).catch(() => null);
+      }
+      if (!targetVc && userId && userId !== 'LEAVE') {
+        // userId might actually be a channel ID (from TOGGLE_VOICE)
+        targetVc = await message.guild.channels.fetch(userId).catch(() => null);
+      }
+
+      // Check if LEAVE command or toggle off
+      if (userId === 'LEAVE' || fallbackChannelId === 'LEAVE') {
+        if (currentVoiceConnection) {
+          musicPlayer.pause();
+          isPlayingMusic = false;
+          currentVoiceConnection.destroy();
+          currentVoiceConnection = null;
+          currentVoiceChannel = null;
+        }
+        const m = await message.channel.send('🔌 Disconnected from voice.').catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+        return;
+      }
+
+      if (!targetVc) {
+        const m = await message.channel.send('❌ Please join a voice channel first (or set a default Voice Channel in the Control Panel).').catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+        return;
+      }
+
+      // If already in that VC, toggle off (disconnect)
+      if (currentVoiceConnection && currentVoiceChannel && currentVoiceChannel.id === targetVc.id) {
+        musicPlayer.pause();
+        isPlayingMusic = false;
+        currentVoiceConnection.destroy();
+        currentVoiceConnection = null;
+        currentVoiceChannel = null;
+        const m = await message.channel.send(`🔌 Disconnected from **${targetVc.name}**.`).catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+        return;
+      }
+
+      await playInVoice(targetVc);
+      const m = await message.channel.send(`🎶 Joined **${targetVc.name}** and started playing!`).catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      return;
+    }
+
+    if (content.startsWith('GREET_BOT_COMMAND: PLAY_NORMAL')) {
+      const parts = content.split(' ');
+      const userId = parts[2];
+
+      const config = await getGuildConfig(message.guild.id);
+      if (config && config.music_playlist_url) {
+        currentPlaylistUrl = config.music_playlist_url;
+      } else {
+        currentPlaylistUrl = 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=a4658eaa73b64ba4';
+      }
+
+      musicQueue = [];
+      await loadPlaylist();
+
+      if (!currentVoiceConnection) {
+        let targetVc = null;
+        if (userId) {
+          const member = await message.guild.members.fetch(userId).catch(() => null);
+          if (member && member.voice && member.voice.channel) {
+            targetVc = member.voice.channel;
+          }
+        }
+        if (!targetVc && config && config.music_vc_id) {
+          targetVc = await message.guild.channels.fetch(config.music_vc_id).catch(() => null);
+        }
+        if (targetVc) {
+          await playInVoice(targetVc);
         }
       } else {
-        await message.channel.send(`❌ Could not find or access a voice channel with ID \`${targetChannelId}\`. Make sure the bot has permissions to view it.`);
+        playNextSong();
       }
+
+      const m = await message.channel.send('▶️ Playing normal 24/7 playlist!').catch(() => null);
+      if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      return;
     }
-    
-    // We will wait 5 seconds before deleting the trigger message so people can see the logs
-    setTimeout(() => {
-      message.delete().catch(() => {});
-    }, 5000);
+
+    if (content.startsWith('GREET_BOT_COMMAND: PLAY_SONG')) {
+      const parts = content.split(' ');
+      const songUrl = parts[2];
+      const userId = parts[3];
+
+      if (songUrl) {
+        musicQueue.unshift(songUrl);
+
+        if (!currentVoiceConnection) {
+          const config = await getGuildConfig(message.guild.id);
+          let targetVc = null;
+          if (userId) {
+            const member = await message.guild.members.fetch(userId).catch(() => null);
+            if (member && member.voice && member.voice.channel) {
+              targetVc = member.voice.channel;
+            }
+          }
+          if (!targetVc && config && config.music_vc_id) {
+            targetVc = await message.guild.channels.fetch(config.music_vc_id).catch(() => null);
+          }
+          if (targetVc) {
+            await playInVoice(targetVc);
+          }
+        } else if (!isPlayingMusic) {
+          playNextSong();
+        }
+
+        const m = await message.channel.send(`🎵 Queued: **${songUrl}**`).catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      }
+      return;
+    }
   }
 });
-
 
 client.on('guildMemberAdd', async (member) => {
   try {

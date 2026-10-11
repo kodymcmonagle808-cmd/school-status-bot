@@ -263,8 +263,31 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
   if (body.data && body.data.custom_id === 'modal_music_song') {
     const link = getModalInputValue(body, 'input_music_link').trim();
+    const invokerId = getInvokerId(body);
+    const channelId = body.channel_id;
+
+    ctx.waitUntil((async () => {
+      try {
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: PLAY_SONG ${link} ${invokerId}` })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          setTimeout(async () => {
+            await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+              method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            }).catch(() => {});
+          }, 3000);
+        }
+      } catch (e) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: PLAY_SONG', e);
+      }
+    })());
+
     return interactionResponse({
-      content: `🎵 **The music bot only listens to real people!**\nCopy and send this command into the chat:\n\`\`\`\nm!play ${link}\n\`\`\``,
+      content: `🎶 Added **${link}** to queue! Our bot will play it shortly.`,
       flags: EPHEMERAL_FLAG
     });
   }

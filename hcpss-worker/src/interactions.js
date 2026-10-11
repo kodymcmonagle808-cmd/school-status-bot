@@ -818,6 +818,49 @@ export async function handleInteraction(body, env, ctx) {
     return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
   }
 
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_bot_')) {
+    const parts = body.data.custom_id.split('_');
+    const targetUserId = parts[2];
+    const originalMessage = body.message;
+    const embed = (originalMessage && originalMessage.embeds && originalMessage.embeds[0]) ? originalMessage.embeds[0] : {};
+    const updatedEmbed = {
+      ...embed,
+      description: `User: <@${targetUserId}>\n\n**Status:** Marked as Bot (skipped information)`,
+      color: 0x57F287
+    };
+
+    ctx.waitUntil((async () => {
+      try {
+        const rolesResp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+        });
+        if (rolesResp.ok) {
+          const roles = await rolesResp.json();
+          const botRole = roles.find(r => {
+            const name = (r.name || '').toLowerCase();
+            return name === 'bot' || name === 'bots' || name === 'bot role' || name === 'bot rules' || name === 'bots role';
+          });
+          if (botRole) {
+            await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${botRole.id}`, {
+              method: 'PUT',
+              headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to assign bot role in join_bot_:', err);
+      }
+    })());
+
+    return jsonResponse({
+      type: 7,
+      data: {
+        embeds: [updatedEmbed],
+        components: []
+      }
+    });
+  }
+
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_fill_')) {
     const parts = body.data.custom_id.split('_');
     const userId = parts[2];
@@ -1004,66 +1047,61 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_join') {
+    const invokerId = getInvokerId(body);
+    ctx.waitUntil((async () => {
+      try {
+        const config = await getConfig(env, guildId);
+        const channelId = body.channel_id;
+        const targetVc = config.music_vc_id || '';
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: JOIN ${invokerId} ${targetVc}` })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          setTimeout(async () => {
+            await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+              method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            }).catch(() => {});
+          }, 3000);
+        }
+      } catch (e) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: JOIN', e);
+      }
+    })());
+
+    return interactionResponse({
+      content: '🎙️ Requesting our bot to join voice...',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_normal') {
+    const invokerId = getInvokerId(body);
     ctx.waitUntil((async () => {
       try {
         const channelId = body.channel_id;
         const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ content: 'm!join' })
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: PLAY_NORMAL ${invokerId}` })
         });
         const msg = await resp.json();
         if (msg.id) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
-            method: 'DELETE',
-            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-          });
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    })());
-    return interactionResponse({ content: 'Join command sent!', flags: EPHEMERAL_FLAG });
-  }
-
-  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_normal') {
-    const link = 'https://open.spotify.com/playlist/1Njedyj01AnBWG2MbUtCEt?si=QYOsPmOeQ7qQrIybyUcIuQ&utm_source=copy-link&pi=PIAugKKQTS29_&pt=6b3c22efcf12ac162e4f59e71c26b2c8';
-    
-    ctx.waitUntil((async () => {
-      try {
-        const config = await getConfig(env, guildId);
-        const roleId = config.music_role_id;
-        if (roleId && body.member && body.member.user) {
-          const hasRole = Array.isArray(body.member.roles) && body.member.roles.includes(roleId);
-          if (!hasRole) {
-            const userId = body.member.user.id;
-            await env.STATUS_KV.put(`temp_dj_${guildId}_${userId}`, 'true', { expirationTtl: 60 });
-            // Add the role
-            await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
-              method: 'PUT',
-              headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-            });
-            // Auto-remove after 5 seconds
-            setTimeout(async () => {
-              await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-              });
-              await env.STATUS_KV.delete(`temp_dj_${guildId}_${userId}`);
-            }, 5000);
-          }
+          setTimeout(async () => {
+            await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+              method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+            }).catch(() => {});
+          }, 3000);
         }
       } catch (err) {
-        console.error(err);
+        console.error('Failed to dispatch GREET_BOT_COMMAND: PLAY_NORMAL', err);
       }
     })());
 
     return interactionResponse({
-      content: `🎵 **The music bot only listens to real people!**\nCopy and send this command into the chat:\n\`\`\`\nm!play ${link}\n\`\`\``,
+      content: '▶️ Starting the normal 24/7 playlist on our bot...',
       flags: EPHEMERAL_FLAG
     });
   }
