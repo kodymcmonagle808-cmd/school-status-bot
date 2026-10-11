@@ -71,7 +71,8 @@ async function playAudioErrorMessage(text) {
 let innertubeClient = null;
 async function getInnertube() {
   if (!innertubeClient) {
-    const { Innertube } = await import('youtubei.js');
+    const { Innertube, Log } = await import('youtubei.js');
+    Log.setLevel(Log.Level.ERROR);
     innertubeClient = await Innertube.create();
   }
   return innertubeClient;
@@ -130,7 +131,11 @@ async function loadPlaylist(targetUrl) {
   if (musicQueue.length === 0) {
     console.log("Using default fallback tracks in queue.");
     playlistTracks = [
-      { title: 'Eternity', artist: 'Alex Warren', query: 'Eternity Alex Warren audio' }
+      { title: 'Eternity', artist: 'Alex Warren', query: 'Eternity Alex Warren official audio' },
+      { title: 'The Outside', artist: 'Alex Warren', query: 'The Outside Alex Warren official audio' },
+      { title: 'You’ll Be Alright, Kid', artist: 'Alex Warren', query: 'You’ll Be Alright Kid Alex Warren official audio' },
+      { title: 'Never Be Far', artist: 'Alex Warren', query: 'Never Be Far Alex Warren official audio' },
+      { title: 'Save You a Seat', artist: 'Alex Warren', query: 'Save You a Seat Alex Warren official audio' }
     ];
     musicQueue = [...playlistTracks];
   }
@@ -189,10 +194,10 @@ async function initSoundCloud() {
 async function getFullAudioStream(yt, trackQuery, songTitle) {
   const { downloadMultiStep } = require('simple-ytdl-core');
 
-  // --- Provider 1: YouTube (primary search, try top 1 candidate only to avoid random songs) ---
+  // --- Provider 1: YouTube (primary search, try top 3 candidates to skip unplayable items) ---
   try {
     const search = await yt.search(trackQuery);
-    const candidates = search.videos ? search.videos.slice(0, 1) : [];
+    const candidates = search.videos ? search.videos.slice(0, 3) : [];
     for (const v of candidates) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
@@ -208,12 +213,12 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
     console.log(`[YouTube] Primary search failed for "${trackQuery}": ${err.message}`);
   }
 
-  // --- Provider 2: YouTube (secondary search with "audio" appended, try top 1 candidate) ---
+  // --- Provider 2: YouTube (secondary search with "audio" appended, try top 3 candidates) ---
   try {
     const audioQuery = `${trackQuery} audio`;
     console.log(`[YouTube] Trying secondary query: "${audioQuery}"`);
     const search2 = await yt.search(audioQuery);
-    const candidates2 = search2.videos ? search2.videos.slice(0, 1) : [];
+    const candidates2 = search2.videos ? search2.videos.slice(0, 3) : [];
     for (const v of candidates2) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
@@ -240,9 +245,8 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
       const name = (t.name || '').toLowerCase();
       const badWords = ['slowed', 'reverb', 'remix', 'cover', 'sped up', 'instrumental', 'tribute', 'parody', 'mashup'];
       if (badWords.some(w => name.includes(w))) return false;
-      const userName = (t.user?.name || '').toLowerCase();
-      return userName.includes('alex warren') || name.includes(scQuery.toLowerCase());
-    });
+      return true;
+    }) || scResults[0];
 
     if (cleanTrack) {
       console.log(`[SoundCloud] Found clean match: "${cleanTrack.name}" by "${cleanTrack.user?.name}"`);
@@ -259,6 +263,7 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
 }
 
 let consecutiveSkipCount = 0;
+let isLoadingSong = false;
 
 async function playNextSong(textChannel) {
   if (emergencyMode) {
@@ -271,6 +276,11 @@ async function playNextSong(textChannel) {
     isPlayingMusic = false;
     return;
   }
+  if (isLoadingSong) {
+    console.log('playNextSong already resolving a track, skipping concurrent invocation.');
+    return;
+  }
+  isLoadingSong = true;
 
   if (musicQueue.length === 0) {
     if (playlistTracks.length > 0) {
@@ -284,6 +294,7 @@ async function playNextSong(textChannel) {
     }
     if (musicQueue.length === 0) {
       console.log('Queue empty; retrying in 5 seconds to keep 24/7 playback looping...');
+      isLoadingSong = false;
       setTimeout(() => playNextSong(activeMusicTextChannel), 5000);
       return;
     }
@@ -338,13 +349,13 @@ async function playNextSong(textChannel) {
       consecutiveSkipCount++;
       console.log(`❌ Could not stream: "${songTitle}". (${consecutiveSkipCount} in a row)`);
       if (consecutiveSkipCount >= 3) {
-        console.log('3 tracks failed in a row. Stopping playback to prevent infinite loop.');
+        console.log('3 tracks failed in a row. Pausing for 30s before retrying 24/7 playback...');
         if (activeMusicTextChannel) {
-          const m = await activeMusicTextChannel.send('⚠️ Playback paused: unable to stream audio at the moment.').catch(() => null);
+          const m = await activeMusicTextChannel.send('⚠️ Playback temporarily paused: unable to stream audio. Retrying in 30 seconds...').catch(() => null);
           if (m) setTimeout(() => m.delete().catch(() => {}), 10000);
         }
-        isPlayingMusic = false;
         consecutiveSkipCount = 0;
+        setTimeout(() => playNextSong(activeMusicTextChannel), 30000);
         return;
       }
       setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
@@ -373,12 +384,15 @@ async function playNextSong(textChannel) {
     console.error(`Error playing track "${songTitle}":`, err);
     consecutiveSkipCount++;
     if (consecutiveSkipCount >= 3) {
-      console.log('3 tracks errored in a row. Stopping to prevent loop.');
+      console.log('3 tracks errored in a row. Pausing for 30s before retrying...');
       isPlayingMusic = false;
       consecutiveSkipCount = 0;
+      setTimeout(() => playNextSong(activeMusicTextChannel), 30000);
       return;
     }
     setTimeout(() => playNextSong(activeMusicTextChannel), 3000);
+  } finally {
+    isLoadingSong = false;
   }
 }
 
@@ -462,6 +476,13 @@ const playInVoice = async (vc, textChannel = null) => {
       }
     }
   });
+
+  try {
+    await entersState(currentVoiceConnection, VoiceConnectionStatus.Ready, 15000);
+    console.log(`Voice connection ready in ${vc.name}`);
+  } catch (err) {
+    console.error('Voice connection failed to reach Ready status in 15s:', err.message);
+  }
 
   if (!isPlayingMusic) {
     if (musicQueue.length === 0) {
@@ -683,9 +704,18 @@ client.on('messageCreate', async (message) => {
     }
 
     if (content.startsWith('GREET_BOT_COMMAND: PLAY_SONG')) {
-      const parts = content.split(' ');
-      const songUrl = parts[2];
-      const userId = parts[3];
+      const prefix = 'GREET_BOT_COMMAND: PLAY_SONG ';
+      const rest = content.slice(prefix.length).trim();
+      const lastSpaceIdx = rest.lastIndexOf(' ');
+      let songUrl = rest;
+      let userId = null;
+      if (lastSpaceIdx !== -1) {
+        const possibleUser = rest.slice(lastSpaceIdx + 1).trim();
+        if (/^\d{17,20}$/.test(possibleUser)) {
+          songUrl = rest.slice(0, lastSpaceIdx).trim();
+          userId = possibleUser;
+        }
+      }
 
       if (songUrl) {
         let queuedName = songUrl;
@@ -734,7 +764,11 @@ client.on('messageCreate', async (message) => {
           await playInVoice(targetVc, message.channel);
         }
       } else {
-        musicPlayer.stop(); // Stops the current track, triggering Idle event -> playNextSong
+        if (musicPlayer.state.status === AudioPlayerStatus.Idle) {
+          playNextSong(message.channel);
+        } else {
+          musicPlayer.stop(); // Stops the current track, triggering Idle event -> playNextSong
+        }
       }
       const m = await message.channel.send('⏭️ Skipped current track.').catch(() => null);
       if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
@@ -744,6 +778,7 @@ client.on('messageCreate', async (message) => {
     if (content.startsWith('GREET_BOT_COMMAND: PAUSE')) {
       if (currentVoiceConnection) {
         musicPlayer.pause();
+        isPlayingMusic = false;
         const m = await message.channel.send('⏸️ Paused playback.').catch(() => null);
         if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       }
@@ -762,8 +797,10 @@ client.on('messageCreate', async (message) => {
           await playInVoice(targetVc, message.channel);
         }
       } else {
-        musicPlayer.unpause();
-        if (!isPlayingMusic) {
+        if (musicPlayer.state.status === AudioPlayerStatus.Paused) {
+          musicPlayer.unpause();
+          isPlayingMusic = true;
+        } else if (musicPlayer.state.status === AudioPlayerStatus.Idle) {
           playNextSong(message.channel);
         }
       }
