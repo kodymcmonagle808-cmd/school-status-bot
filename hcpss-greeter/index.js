@@ -217,8 +217,36 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
     console.log(`[YouTube] Secondary search failed: ${err.message}`);
   }
 
+  // --- Provider 3: Official SoundCloud track (never remixes, covers, or slowed) ---
+  try {
+    await initSoundCloud();
+    // Clean query: strip "official audio" when searching SoundCloud
+    const scQuery = trackQuery.replace(/official audio/gi, '').trim();
+    console.log(`[SoundCloud] Searching for clean track: "${scQuery}"`);
+    const scResults = await play.search(scQuery, { source: { soundcloud: 'tracks' }, limit: 5 });
+    const cleanTrack = scResults.find(t => {
+      const name = (t.name || '').toLowerCase();
+      const badWords = ['slowed', 'reverb', 'remix', 'cover', 'sped up', 'instrumental', 'tribute', 'parody', 'mashup'];
+      if (badWords.some(w => name.includes(w))) return false;
+      const userName = (t.user?.name || '').toLowerCase();
+      return userName.includes('alex warren') || name.includes(scQuery.toLowerCase());
+    });
+
+    if (cleanTrack) {
+      console.log(`[SoundCloud] Found clean match: "${cleanTrack.name}" by "${cleanTrack.user?.name}"`);
+      const scStream = await play.stream(cleanTrack.url);
+      if (scStream && scStream.stream) {
+        return { stream: scStream.stream, source: 'SoundCloud', resolvedTitle: cleanTrack.name || songTitle };
+      }
+    }
+  } catch (err) {
+    console.log(`[SoundCloud] Fallback failed: ${err.message}`);
+  }
+
   return null; // All providers exhausted
 }
+
+let consecutiveSkipCount = 0;
 
 async function playNextSong(textChannel) {
   if (textChannel) activeMusicTextChannel = textChannel;
@@ -290,14 +318,23 @@ async function playNextSong(textChannel) {
 
     // NEVER fall back to Spotify 30s preview — skip track instead
     if (!stream) {
-      console.log(`❌ Could not stream (all providers exhausted): "${songTitle}". Skipping...`);
-      if (activeMusicTextChannel) {
-        const m = await activeMusicTextChannel.send(`⚠️ Skipped: **${songTitle}** (could not find full audio)`).catch(() => null);
-        if (m) setTimeout(() => m.delete().catch(() => {}), 6000);
+      consecutiveSkipCount++;
+      console.log(`❌ Could not stream: "${songTitle}". (${consecutiveSkipCount} in a row)`);
+      if (consecutiveSkipCount >= 3) {
+        console.log('3 tracks failed in a row. Stopping playback to prevent infinite loop.');
+        if (activeMusicTextChannel) {
+          const m = await activeMusicTextChannel.send('⚠️ Playback paused: unable to stream audio at the moment.').catch(() => null);
+          if (m) setTimeout(() => m.delete().catch(() => {}), 10000);
+        }
+        isPlayingMusic = false;
+        consecutiveSkipCount = 0;
+        return;
       }
-      await playAudioErrorMessage(`Error loading song: ${songTitle.slice(0, 30)}. Skipping to next track.`);
+      setTimeout(() => playNextSong(activeMusicTextChannel), 2000);
       return;
     }
+
+    consecutiveSkipCount = 0;
 
     const resource = createAudioResource(stream, {
       inputType: StreamType.Arbitrary,
@@ -317,7 +354,7 @@ async function playNextSong(textChannel) {
     }
   } catch (err) {
     console.error(`Error playing track "${songTitle}":`, err);
-    await playAudioErrorMessage('Playback error occurred. Skipping track.');
+    setTimeout(() => playNextSong(activeMusicTextChannel), 3000);
   }
 }
 
