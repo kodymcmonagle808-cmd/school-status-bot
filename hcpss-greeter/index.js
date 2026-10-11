@@ -300,7 +300,7 @@ async function playNextSong(textChannel) {
 
     const resource = createAudioResource(stream, {
       inputType: StreamType.Arbitrary,
-      inlineVolume: true
+      inlineVolume: false
     });
     if (resource.volume) {
       resource.volume.setVolume(1.0);
@@ -387,6 +387,29 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (message.content === '!ownerpanel' && message.author.username.toLowerCase() === 'couskody') {
+    const musicEmbed = new EmbedBuilder()
+      .setTitle('🎵 Music Controls (Owner Panel)')
+      .setColor(0x1DB954)
+      .setDescription('Use the buttons below to control the music bot globally. This panel is sent to your DMs so it stays forever!');
+
+    const row1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('music_btn_join').setLabel('Join').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('music_btn_song').setLabel('Song').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('music_btn_normal').setLabel('Normal Play').setStyle(ButtonStyle.Success)
+    );
+
+    const row2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('music_btn_pause').setLabel('Pause').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('music_btn_resume').setLabel('Resume').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('music_btn_skip').setLabel('Skip').setStyle(ButtonStyle.Danger)
+    );
+
+    await message.author.send({ embeds: [musicEmbed], components: [row1, row2] }).catch(() => {});
+    await message.reply('✅ Owner panel sent to your DMs!').catch(() => {});
+    return;
+  }
+
   // Handle music channel message deletions and verification
   if (message.guild) {
     const config = await getGuildConfig(message.guild.id);
@@ -435,8 +458,15 @@ client.on('messageCreate', async (message) => {
     }
 
     const content = message.content.trim();
-    // Delete the trigger message right away
+    // Delete the trigger message right away if possible
     message.delete().catch(() => {});
+
+    // Fallback for DMs
+    const guild = message.guild || client.guilds.cache.first();
+    if (!guild) {
+      console.log('No guild available to execute GREET_BOT_COMMAND');
+      return;
+    }
 
     // Helper to start playback in a channel
     const playInVoice = async (vc) => {
@@ -484,17 +514,17 @@ client.on('messageCreate', async (message) => {
 
       let targetVc = null;
       if (userId && userId !== 'LEAVE') {
-        const member = await message.guild.members.fetch(userId).catch(() => null);
+        const member = await guild.members.fetch(userId).catch(() => null);
         if (member && member.voice && member.voice.channel) {
           targetVc = member.voice.channel;
         }
       }
       if (!targetVc && fallbackChannelId && fallbackChannelId !== 'LEAVE') {
-        targetVc = await message.guild.channels.fetch(fallbackChannelId).catch(() => null);
+        targetVc = await guild.channels.fetch(fallbackChannelId).catch(() => null);
       }
       if (!targetVc && userId && userId !== 'LEAVE') {
         // userId might actually be a channel ID (from TOGGLE_VOICE)
-        targetVc = await message.guild.channels.fetch(userId).catch(() => null);
+        targetVc = await guild.channels.fetch(userId).catch(() => null);
       }
 
       // Check if LEAVE command or toggle off
@@ -539,7 +569,7 @@ client.on('messageCreate', async (message) => {
       const parts = content.split(' ');
       const userId = parts[2];
 
-      const config = await getGuildConfig(message.guild.id);
+      const config = await getGuildConfig(guild.id);
       if (config && config.music_playlist_url) {
         currentPlaylistUrl = config.music_playlist_url;
       } else {
@@ -552,13 +582,13 @@ client.on('messageCreate', async (message) => {
       if (!currentVoiceConnection) {
         let targetVc = null;
         if (userId) {
-          const member = await message.guild.members.fetch(userId).catch(() => null);
+          const member = await guild.members.fetch(userId).catch(() => null);
           if (member && member.voice && member.voice.channel) {
             targetVc = member.voice.channel;
           }
         }
         if (!targetVc && config && config.music_vc_id) {
-          targetVc = await message.guild.channels.fetch(config.music_vc_id).catch(() => null);
+          targetVc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
         }
         if (targetVc) {
           await playInVoice(targetVc);
@@ -589,16 +619,16 @@ client.on('messageCreate', async (message) => {
         }
 
         if (!currentVoiceConnection) {
-          const config = await getGuildConfig(message.guild.id);
+          const config = await getGuildConfig(guild.id);
           let targetVc = null;
           if (userId) {
-            const member = await message.guild.members.fetch(userId).catch(() => null);
+            const member = await guild.members.fetch(userId).catch(() => null);
             if (member && member.voice && member.voice.channel) {
               targetVc = member.voice.channel;
             }
           }
           if (!targetVc && config && config.music_vc_id) {
-            targetVc = await message.guild.channels.fetch(config.music_vc_id).catch(() => null);
+            targetVc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
           }
           if (targetVc) {
             await playInVoice(targetVc);
@@ -608,6 +638,33 @@ client.on('messageCreate', async (message) => {
         }
 
         const m = await message.channel.send(`🎵 Queued: **${queuedName}**`).catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      }
+      return;
+    }
+
+    if (content.startsWith('GREET_BOT_COMMAND: SKIP')) {
+      if (currentVoiceConnection) {
+        musicPlayer.stop(); // Stops the current track, triggering playNextSong
+        const m = await message.channel.send('⏭️ Skipped current track.').catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      }
+      return;
+    }
+
+    if (content.startsWith('GREET_BOT_COMMAND: PAUSE')) {
+      if (currentVoiceConnection) {
+        musicPlayer.pause();
+        const m = await message.channel.send('⏸️ Paused playback.').catch(() => null);
+        if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
+      }
+      return;
+    }
+
+    if (content.startsWith('GREET_BOT_COMMAND: RESUME')) {
+      if (currentVoiceConnection) {
+        musicPlayer.unpause();
+        const m = await message.channel.send('▶️ Resumed playback.').catch(() => null);
         if (m) setTimeout(() => m.delete().catch(() => {}), 5000);
       }
       return;

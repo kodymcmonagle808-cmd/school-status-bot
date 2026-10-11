@@ -663,14 +663,24 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       description: 'Use the buttons below to control the music bot.'
     };
 
-    const musicComponents = [{
-      type: 1,
-      components: [
-        { type: 2, style: 1, custom_id: 'music_btn_join', label: 'Join' },
-        { type: 2, style: 2, custom_id: 'music_btn_song', label: 'Song' },
-        { type: 2, style: 3, custom_id: 'music_btn_normal', label: 'Normal Play' }
-      ]
-    }];
+    const musicComponents = [
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 1, custom_id: 'music_btn_join', label: 'Join' },
+          { type: 2, style: 2, custom_id: 'music_btn_song', label: 'Song' },
+          { type: 2, style: 3, custom_id: 'music_btn_normal', label: 'Normal Play' }
+        ]
+      },
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 2, custom_id: 'music_btn_pause', label: 'Pause' },
+          { type: 2, style: 3, custom_id: 'music_btn_resume', label: 'Resume' },
+          { type: 2, style: 4, custom_id: 'music_btn_skip', label: 'Skip' }
+        ]
+      }
+    ];
 
     ctx.waitUntil((async () => {
       try {

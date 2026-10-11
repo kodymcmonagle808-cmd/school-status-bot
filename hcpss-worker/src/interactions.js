@@ -1137,6 +1137,54 @@ export async function handleInteraction(body, env, ctx) {
     });
   }
 
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_skip') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: SKIP` })
+        });
+      } catch (err) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: SKIP', err);
+      }
+    })());
+    return interactionResponse({ content: '⏭️ Skipping current track...', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_pause') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: PAUSE` })
+        });
+      } catch (err) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: PAUSE', err);
+      }
+    })());
+    return interactionResponse({ content: '⏸️ Paused playback...', flags: EPHEMERAL_FLAG });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_resume') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: RESUME` })
+        });
+      } catch (err) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: RESUME', err);
+      }
+    })());
+    return interactionResponse({ content: '▶️ Resumed playback...', flags: EPHEMERAL_FLAG });
+  }
+
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('dank_approve:') || body.data.custom_id.startsWith('dank_disapprove:') || body.data.custom_id.startsWith('staff_approve:') || body.data.custom_id.startsWith('staff_disapprove:'))) {
     if (!(await canUseCommands(body.member, env, guildId))) {
       return interactionResponse({ content: '❌ You do not have permission to review applications.', flags: EPHEMERAL_FLAG });
