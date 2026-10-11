@@ -137,19 +137,46 @@ export async function handleInteraction(body, env, ctx) {
       return await handleMapMyClass(body, env);
     }
 
-    if (name === 'ownerpanel') {
+    if (name === 'ownerpanel' || name === 'ownerpannel') {
       const ownerId = String(env.OWNER_ID || '').trim();
       const invokerId = getInvokerId(body);
       if (!ownerId || invokerId !== ownerId) {
-        return interactionResponse({ content: '\u{1F512} Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
+        return interactionResponse({ content: '🔒 Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
       }
       ctx.waitUntil((async () => {
         try {
           const ownerPayload = await buildWorkerUpdatesPayload(env);
-          await updateInteractionOriginal(env, body.token, { ...ownerPayload });
+
+          // Create a DM channel with the bot owner
+          const dmChannelResp = await fetch('https://discord.com/api/v10/users/@me/channels', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ recipient_id: invokerId })
+          });
+
+          if (dmChannelResp.ok) {
+            const dmChannel = await dmChannelResp.json();
+            await fetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(ownerPayload)
+            });
+
+            await updateInteractionOriginal(env, body.token, {
+              content: '📬 Owner Panel has been sent to your DMs so it stays forever!'
+            });
+          } else {
+            throw new Error('Could not open a DM channel. Please check your privacy settings.');
+          }
         } catch (e) {
-          console.error('ownerpanel deferred render failed:', e);
-          await updateInteractionOriginal(env, body.token, { content: '\u274C Failed to load owner panel: ' + e.message });
+          console.error('ownerpanel DM failed:', e);
+          await updateInteractionOriginal(env, body.token, { content: '❌ Failed to send owner panel to DMs: ' + e.message });
         }
       })());
       return deferredInteractionResponse(true);
