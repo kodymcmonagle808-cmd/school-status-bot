@@ -275,11 +275,10 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
         });
         const msg = await resp.json();
         if (msg.id) {
-          setTimeout(async () => {
-            await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
-              method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
-            }).catch(() => {});
-          }, 3000);
+          await new Promise(r => setTimeout(r, 1000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          }).catch(() => {});
         }
       } catch (e) {
         console.error('Failed to dispatch GREET_BOT_COMMAND: PLAY_SONG', e);

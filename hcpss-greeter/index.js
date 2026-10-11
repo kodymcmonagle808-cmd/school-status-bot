@@ -110,8 +110,9 @@ client.once('ready', () => {
     activities: [{ name: 'HCPSS Status', type: ActivityType.Watching }],
     status: 'online',
   });
+});
 
-  async function logToPanel(guildId, message) {
+async function logToPanel(guildId, message) {
   try {
     await fetch(`${WORKER_URL}/api/log`, {
       method: 'POST',
