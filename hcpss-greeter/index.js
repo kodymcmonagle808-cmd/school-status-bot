@@ -70,7 +70,7 @@ async function loadPlaylist(targetUrl) {
             playlistTracks = entity.trackList.map(t => ({
               title: t.title,
               artist: t.subtitle,
-              query: `${t.title} ${t.subtitle}`.trim(),
+              query: `${t.title} ${t.subtitle} official audio`.trim(),
               preview: t.audioPreview ? t.audioPreview.url : null
             }));
             musicQueue = [...playlistTracks];
@@ -127,7 +127,7 @@ async function resolveTrack(input) {
             return {
               title,
               artist,
-              query: `${title} ${artist}`.trim(),
+              query: `${title} ${artist} official audio`.trim(),
               preview: entity.audioPreview ? entity.audioPreview.url : null
             };
           }
