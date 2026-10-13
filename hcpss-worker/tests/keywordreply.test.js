@@ -153,3 +153,28 @@ test('the owner panel includes a refresh button', async () => {
   assert.ok(ids.includes('panel_owner_refresh'), 'refresh button present');
 });
 
+test('the music leave button acks and forwards a leave command to the greeter', async (t) => {
+  const posted = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
+    const u = String(url);
+    if (u.includes('/channels/') && (opts.method || 'GET') === 'POST') {
+      posted.push(JSON.parse(opts.body || '{}').content);
+      return new Response(JSON.stringify({ id: 'm1' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(null, { status: 204 });
+  });
+
+  const env = makeEnv();
+  // Run ctx.waitUntil callbacks synchronously so the forwarded command is captured.
+  const runCtx = { waitUntil: (p) => { Promise.resolve(p).catch(() => {}); } };
+  const out = await json(handleInteraction(
+    component('music_btn_leave', { member: member({ admin: true }) }), env, runCtx));
+
+  // Ephemeral ack.
+  assert.equal(out.type, 4);
+  assert.match(out.data.content, /Disconnecting/i);
+  // The leave command is dispatched to the greeter via a channel message.
+  assert.ok(posted.some(c => typeof c === 'string' && c.includes('GREET_BOT_COMMAND: TOGGLE_VOICE LEAVE')),
+    'forwarded a leave command');
+});
+

@@ -1242,6 +1242,29 @@ export async function handleInteraction(body, env, ctx) {
     return interactionResponse({ content: '▶️ Resumed playback...', flags: EPHEMERAL_FLAG });
   }
 
+  if (body.type === 3 && body.data && body.data.custom_id === 'music_btn_leave') {
+    ctx.waitUntil((async () => {
+      try {
+        const channelId = body.channel_id;
+        const resp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: `GREET_BOT_COMMAND: TOGGLE_VOICE LEAVE` })
+        });
+        const msg = await resp.json();
+        if (msg.id) {
+          await new Promise(r => setTimeout(r, 1000));
+          await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${msg.id}`, {
+            method: 'DELETE', headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error('Failed to dispatch GREET_BOT_COMMAND: TOGGLE_VOICE LEAVE', err);
+      }
+    })());
+    return interactionResponse({ content: '🚪 Disconnecting from voice...', flags: EPHEMERAL_FLAG });
+  }
+
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('dank_approve:') || body.data.custom_id.startsWith('dank_disapprove:') || body.data.custom_id.startsWith('staff_approve:') || body.data.custom_id.startsWith('staff_disapprove:'))) {
     if (!(await canUseCommands(body.member, env, guildId))) {
       return interactionResponse({ content: '❌ You do not have permission to review applications.', flags: EPHEMERAL_FLAG });

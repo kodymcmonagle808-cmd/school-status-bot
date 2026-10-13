@@ -859,7 +859,8 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         components: [
           { type: 2, style: 2, custom_id: 'music_btn_pause', label: 'Pause' },
           { type: 2, style: 3, custom_id: 'music_btn_resume', label: 'Resume' },
-          { type: 2, style: 4, custom_id: 'music_btn_skip', label: 'Skip' }
+          { type: 2, style: 4, custom_id: 'music_btn_skip', label: 'Skip' },
+          { type: 2, style: 4, custom_id: 'music_btn_leave', label: 'Leave', emoji: { name: '🚪' } }
         ]
       }
     ];

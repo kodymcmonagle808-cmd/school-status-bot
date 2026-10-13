@@ -399,7 +399,12 @@ async function playNextSong(textChannel) {
   }
   if (textChannel) activeMusicTextChannel = textChannel;
   if (!currentVoiceConnection) {
+    // No voice connection yet. This is the usual reason "nothing is playing":
+    // the bot hasn't joined a VC (no Voice Channel configured, or Join wasn't
+    // pressed). Log it once per call so the Render logs make the cause obvious.
     isPlayingMusic = false;
+    console.log('playNextSong: no active voice connection — not in a voice channel. ' +
+      'Set a Voice Channel in Music Settings or press Join while in a VC.');
     return;
   }
   if (isLoadingSong) {
@@ -633,24 +638,45 @@ client.once('ready', async () => {
   // Auto-connect to configured 24/7 VC on startup or deployment restart.
   // Gated by MUSIC_ENABLED so the voice runtime stays dormant while music is
   // disabled in the panel; all playback code below is preserved.
-  if (MUSIC_ENABLED) try {
-    for (const [guildId, guild] of client.guilds.cache) {
-      const config = await getGuildConfig(guildId);
-      if (config && config.music_vc_id) {
-        const vc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
-        if (vc) {
-          console.log(`[Auto-Join 24/7] Connecting to configured VC: ${vc.name} (${vc.id})`);
-          let txt = null;
-          if (config.music_channel_id) {
-            txt = await guild.channels.fetch(config.music_channel_id).catch(() => null);
+  if (MUSIC_ENABLED) {
+    // The guild cache can still be empty the instant 'ready' fires (a Render
+    // cold start), which would skip the auto-join entirely. Retry a few times
+    // until the cache fills, then attempt the join once.
+    const attemptAutoJoin = async () => {
+      try {
+        for (const [guildId, guild] of client.guilds.cache) {
+          const config = await getGuildConfig(guildId);
+          if (config && config.music_vc_id) {
+            const vc = await guild.channels.fetch(config.music_vc_id).catch(() => null);
+            if (vc) {
+              console.log(`[Auto-Join 24/7] Connecting to configured VC: ${vc.name} (${vc.id})`);
+              let txt = null;
+              if (config.music_channel_id) {
+                txt = await guild.channels.fetch(config.music_channel_id).catch(() => null);
+              }
+              await playInVoice(vc, txt);
+              return true;
+            }
           }
-          await playInVoice(vc, txt);
-          break;
         }
+      } catch (err) {
+        console.error('Error auto-joining 24/7 VC on startup:', err);
       }
-    }
-  } catch (err) {
-    console.error('Error auto-joining 24/7 VC on startup:', err);
+      return false;
+    };
+
+    (async () => {
+      for (let i = 0; i < 5; i++) {
+        if (client.guilds.cache.size > 0) {
+          if (await attemptAutoJoin()) return;
+          break; // cache was ready but no VC configured — nothing to retry
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      if (client.guilds.cache.size === 0) {
+        console.log('[Auto-Join 24/7] Guild cache still empty after retries; will join on next Join press.');
+      }
+    })();
   }
 });
 
@@ -681,10 +707,14 @@ client.on('messageCreate', async (message) => {
 
   // Keyword auto-reply: staff configure rules on the control panel's Auto-Reply
   // tab. Each rule targets one channel with its own keywords and reply. When a
-  // user sends one of a rule's keywords in that channel, the bot replies with
-  // the rule's message. A plain messageCreate can't send a true ephemeral, so
-  // the reply is auto-deleted after a few seconds — the closest equivalent —
-  // and the user's original message is left alone.
+  // user sends one of a rule's keywords in that channel, the bot responds with
+  // the rule's message.
+  //
+  // Discord cannot send a true ephemeral ("only you can see this") from a
+  // messageCreate event — that flag only works as a reply to an interaction.
+  // The closest real equivalent is a DM: private to that user, no channel
+  // clutter, nothing to delete. If their DMs are closed we fall back to a brief
+  // in-channel reply that auto-deletes.
   if (message.guild && !message.author.bot) {
     const config = await getGuildConfig(message.guild.id);
     if (config) {
@@ -712,9 +742,14 @@ client.on('messageCreate', async (message) => {
         if (!hit) continue;
         const replyText = rule.response ||
           'If you would like to report a staff member, you can open a ticket to report the user.';
-        const reply = await message.channel.send(replyText).catch(() => null);
-        if (reply) {
-          setTimeout(() => reply.delete().catch(() => {}), 8000);
+
+        // Try a private DM first (the ephemeral-like behavior).
+        const dmOk = await message.author.send(replyText).then(() => true).catch(() => false);
+        if (!dmOk) {
+          // DMs closed: fall back to a short in-channel reply that self-deletes.
+          const reply = await message.reply({ content: replyText, allowedMentions: { repliedUser: false } })
+            .catch(() => null);
+          if (reply) setTimeout(() => reply.delete().catch(() => {}), 8000);
         }
         break; // one reply per message is enough
       }
