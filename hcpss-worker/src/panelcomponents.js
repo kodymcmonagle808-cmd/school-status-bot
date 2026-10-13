@@ -705,6 +705,80 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     });
   }
 
+  if (customId === 'panel_btn_add_keyword') {
+    if (!(await canConfigure(body.member, env, guildId))) {
+      return interactionResponse({
+        content: 'You do not have permission to configure this bot.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    // Two-step: first ask which channel, then the keywords + reply. We open the
+    // keyword modal directly and capture the channel ID as text so staff can set
+    // everything in one pass (Discord modals can't mix a channel picker with
+    // text inputs).
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: 'Add Auto-Reply Rule',
+        custom_id: 'modal_add_keyword',
+        components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_keyword_channel',
+              style: 1,
+              label: 'Channel ID to watch',
+              placeholder: 'Right-click a channel → Copy Channel ID (e.g. 123456789012345678)',
+              min_length: 17,
+              max_length: 20,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_keyword_terms',
+              style: 2,
+              label: 'Keywords / phrases (comma-separated)',
+              placeholder: 'mod abuse, staff abuse',
+              min_length: 1,
+              max_length: 500,
+              required: true
+            }]
+          },
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_keyword_response',
+              style: 2,
+              label: 'Reply message',
+              placeholder: 'If you would like to report a staff member, you can open a ticket to report the user.',
+              min_length: 1,
+              max_length: 1000,
+              required: true
+            }]
+          }
+        ]
+      }
+    });
+  }
+
+  if (customId === 'panel_btn_remove_keyword') {
+    if (!(await canConfigure(body.member, env, guildId))) {
+      return interactionResponse({
+        content: 'You do not have permission to configure this bot.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    return interactionResponse({
+      content: '🗑️ Use the **remove rule** dropdown on the Auto-Reply page to pick a rule to delete.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (customId === 'panel_btn_set_playlist') {
     const config = await getConfig(env, guildId);
     const currentPlaylist = config.music_playlist_url || '';
@@ -818,6 +892,18 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return deferredInteractionResponse();
   }
 
+
+  if (customId === 'panel_owner_refresh') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    // The owner panel is delivered as an ephemeral follow-up in the DM. This
+    // button lives on that follow-up, so a type-7 response edits it in place
+    // with freshly-read stats — no new message, no log write.
+    const payload = await buildWorkerUpdatesPayload(env);
+    return jsonResponse({ type: 7, data: payload });
+  }
 
   if (customId === 'panel_owner_force_check_all') {
     const ownerId = String(env.OWNER_ID || '').trim();

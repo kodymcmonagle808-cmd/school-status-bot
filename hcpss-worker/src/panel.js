@@ -80,6 +80,7 @@ export const PANEL_NAV_TABS = [
   { label: 'Recent Logs', value: 'dashboard_logs', emoji: '📋', description: 'Recent bot activity logs' },
   { label: 'Bot Health', value: 'dashboard_bot_status', emoji: '📡', description: 'Ping, uptime, and health metric bars' },
   { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, and embed footer' },
+  { label: 'Music Settings', value: 'config_music', emoji: '🎵', description: 'Configure music channel and controls' },
   { label: 'Check Schedule', value: 'config_schedule', emoji: '🗓️', description: 'Daily status check times' },
   { label: 'Feature Toggles', value: 'config_toggles', emoji: '🔔', description: 'Turn bot features on or off' },
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
@@ -522,6 +523,13 @@ export async function buildWorkerUpdatesPayload(env) {
     components: [
       {
         type: 2,
+        style: 2,
+        custom_id: 'panel_owner_refresh',
+        label: 'Refresh',
+        emoji: { name: '🔄' }
+      },
+      {
+        type: 2,
         style: 4,
         custom_id: 'panel_owner_force_check_all',
         label: 'Force Check All Servers',
@@ -618,33 +626,55 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
 
   if (page === 'config_autoreply') {
-    const channel = config.keyword_channel_id ? `<#${config.keyword_channel_id}>` : '(not set)';
+    const rules = Array.isArray(config.keyword_rules) ? config.keyword_rules : [];
+    const ruleLines = rules.length
+      ? rules.map((r, i) => {
+          const ch = r.channel_id ? `<#${r.channel_id}>` : '(no channel)';
+          const kws = Array.isArray(r.keywords) && r.keywords.length ? r.keywords.map(k => `\`${k}\``).join(', ') : '(none)';
+          const resp = r.response ? `→ ${r.response.length > 120 ? r.response.slice(0, 117) + '…' : r.response}` : '';
+          return `**${i + 1}.** ${ch}\n   • **Keywords:** ${kws}\n   • **Reply:** ${resp}`;
+        }).join('\n')
+      : '*No auto-reply rules yet. Add one below.*';
+
     const embed = {
       title: '💬 Control Panel — Keyword Auto-Reply',
       color: 0x9B59B6,
       description: `### 💬 Keyword Auto-Reply\n` +
-                   `• **Watch Channel**: ${channel}\n\n` +
-                   `*When a user sends a keyword in the watch channel, the bot replies with a premade message that only stays visible briefly (ephemeral-style).*\n\n` +
-                   `*Built-in keyword: \`mod abuse\` / \`staff abuse\`.*\n` +
-                   `*Premade reply: "If you would like to report a staff member, you can open a ticket to report the user."*\n\n` +
-                   `*Pick a channel below to enable it. Clear the selection to disable.*`,
+                   `When a user sends one of a rule's keywords **in that rule's channel**, the bot replies with the rule's message and auto-deletes it after a few seconds.\n\n` +
+                   `${ruleLines}\n\n` +
+                   `*Use **Add Auto-Reply Rule** to set a channel, its keywords (comma-separated), and the reply. Use the remove menu to delete a rule.*`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
       getNavBarRow('config_autoreply'),
-      {
+      actionSelectRow([
+        { label: 'Add Auto-Reply Rule', value: 'panel_btn_add_keyword', description: 'Pick a channel, keywords, and reply message', emoji: { name: '➕' } },
+        ...(rules.length
+          ? [{ label: 'Remove Auto-Reply Rule', value: 'panel_btn_remove_keyword', description: 'Choose a rule to delete', emoji: { name: '🗑️' } }]
+          : [])
+      ])
+    ];
+
+    // A remove menu appears only once there is at least one rule to remove.
+    if (rules.length) {
+      components.push({
         type: 1,
         components: [{
-          type: 8,
-          custom_id: 'cfg_keyword_channel',
-          placeholder: 'Select channel to watch for keywords',
-          min_values: 0,
-          max_values: 1,
-          channel_types: [0, 5]
+          type: 3,
+          custom_id: 'cfg_keyword_remove_select',
+          placeholder: '🗑️ Select a rule to remove...',
+          options: rules.slice(0, 25).map((r, i) => ({
+            label: `#${i + 1} ${(Array.isArray(r.keywords) && r.keywords[0]) || 'rule'}`.slice(0, 100),
+            value: String(i),
+            description: r.channel_id ? `Channel ${r.channel_id}` : 'No channel',
+            emoji: { name: '🗑️' }
+          })),
+          min_values: 1,
+          max_values: 1
         }]
-      }
-    ];
+      });
+    }
 
     return { embeds: [embed], components };
   }
@@ -1620,9 +1650,14 @@ export async function applyConfigUpdate(body, env) {
     next.music_role_id = values[0];
   } else if (customId === 'cfg_music_vc') {
     next.music_vc_id = (Array.isArray(values) && values[0]) ? values[0] : null;
-  } else if (customId === 'cfg_keyword_channel') {
-    // min_values 0 lets the menu be cleared to disable the keyword auto-reply.
-    next.keyword_channel_id = (Array.isArray(values) && values[0]) ? values[0] : null;
+  } else if (customId === 'cfg_keyword_remove_select' && Array.isArray(values) && values[0] !== undefined) {
+    // Remove an auto-reply rule by its index in the list.
+    if (Array.isArray(next.keyword_rules)) {
+      const idx = parseInt(values[0], 10);
+      if (!Number.isNaN(idx) && idx >= 0 && idx < next.keyword_rules.length) {
+        next.keyword_rules.splice(idx, 1);
+      }
+    }
   } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
     next.editing_status_key = values[0];
   } else if (customId === 'cfg_status_role') {

@@ -36,10 +36,9 @@ let isPlayingErrorTTS = false;
 let lastErrorTTSTime = 0;
 let emergencyMode = false;
 
-// Music is temporarily disabled in Discord (the Music Settings tab is hidden
-// from the control panel), but all playback/voice code is intentionally kept.
-// Flip this to true to re-enable the 24/7 auto-join and voice runtime.
-const MUSIC_ENABLED = false;
+// Music is enabled in Discord. Flip this to false to temporarily disable the
+// 24/7 auto-join and voice runtime without deleting any playback code.
+const MUSIC_ENABLED = true;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
@@ -194,20 +193,134 @@ async function initSoundCloud() {
   }
 }
 
-// Multi-provider full audio stream resolver
-// NEVER falls back to Spotify 30s previews — only full-length songs
-async function getFullAudioStream(yt, trackQuery, songTitle) {
+// Patterns that mark a video as the WRONG version of a song (remix, cover,
+// slowed/sped-up, live, lyric video, long mixes, etc.). A hit strongly
+// deprioritizes the candidate so the official studio version wins.
+const BAD_VERSION_PATTERNS = [
+  /\bremix\b/i, /\bcover(ed|ing)?\b/i, /\bslowed\b/i, /\bsped[\s-]?up\b/i,
+  /\bspeed[\s-]?up\b/i, /\breverb\b/i, /\bnightcore\b/i, /\b8d\b/i,
+  /\bbass[\s-]?boosted\b/i, /\blive\b/i, /\bacoustic\b/i, /\binstrumental\b/i,
+  /\bkaraoke\b/i, /\blyrics?\b/i, /\btribute\b/i, /\bparody\b/i,
+  /\bmashup\b/i, /\bmash[\s-]?up\b/i, /\bfull album\b/i, /\bextended\b/i,
+  /\bradio edit\b/i, /\b\d+\s*(hour|hours|hr)\b/i, /\bnon[\s-]?stop\b/i
+];
+
+// Patterns that mark a video as a likely OFFICIAL upload.
+const GOOD_VERSION_PATTERNS = [
+  /\bofficial\b/i, /\bprovided to youtube\b/i, /\bauto[\s-]?generated\b/i, /\bvevo\b/i
+];
+
+// Score a YouTube search result against the track we actually want so the
+// correct studio version is tried first and wrong versions are skipped.
+function scoreVideoCandidate(v, wantTitle, wantArtist) {
+  const title = (v.title?.text || '').toLowerCase();
+  const author = (v.author?.name || '').toLowerCase();
+  const wt = (wantTitle || '').toLowerCase();
+  const wa = (wantArtist || '').toLowerCase();
+  let score = 0;
+
+  for (const re of BAD_VERSION_PATTERNS) if (re.test(title)) score -= 100;
+  for (const re of GOOD_VERSION_PATTERNS) if (re.test(title)) score += 12;
+
+  if (/- topic$/.test(author) || author.includes('topic')) score += 18;
+  if (author.includes('vevo')) score += 18;
+  if (v.author?.is_verified_artist) score += 12;
+
+  if (wt && title.includes(wt)) score += 40;
+  if (wa && (title.includes(wa) || author.includes(wa))) score += 30;
+
+  const secs = v.duration?.seconds || 0;
+  if (secs && secs < 45) score -= 120;   // teaser / snippet
+  if (secs && secs > 900) score -= 60;   // likely a long mix / loop
+
+  return score;
+}
+
+function rankVideoCandidates(videos, wantTitle, wantArtist) {
+  return (videos || [])
+    .filter(v => v && v.id && v.is_live !== true)
+    .map(v => ({ v, score: scoreVideoCandidate(v, wantTitle, wantArtist) }))
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.v);
+}
+
+// YouTube Music returns canonical studio tracks (item_type === "song"), which
+// is the single most reliable source for the exact version of a song. We apply
+// the "Songs" filter to get a clean shelf, then rank so the official studio cut
+// wins over the occasional "sped up"/"8D"/by-another-artist entry that can
+// still appear in the results.
+async function searchYouTubeMusicSongs(yt, query, wantTitle = '', wantArtist = '') {
+  try {
+    const search = await yt.music.search(query);
+    let shelf = search.songs;
+    if (!shelf && typeof search.applyFilter === 'function') {
+      // The unfiltered page returns a top-result card instead of a songs shelf;
+      // applying the "Songs" filter produces the canonical track list.
+      const filtered = await search.applyFilter('Songs').catch(() => null);
+      shelf = filtered && filtered.songs;
+    }
+    const items = (shelf && shelf.contents) || [];
+    const wt = (wantTitle || '').toLowerCase();
+    const wa = (wantArtist || '').toLowerCase();
+    const scored = items
+      .filter(item => item && item.item_type === 'song' && item.id)
+      .map(item => {
+        const title = item.title || '';
+        const artist =
+          (item.artists && item.artists[0] && item.artists[0].name) ||
+          (item.authors && item.authors[0] && item.authors[0].name) || '';
+        let score = 0;
+        const lt = title.toLowerCase();
+        const la = artist.toLowerCase();
+        if (BAD_VERSION_PATTERNS.some(re => re.test(title))) score -= 100;
+        if (wt && lt.includes(wt)) score += 40;
+        if (wa && la.includes(wa)) score += 40;       // canonical entry is by the real artist
+        else if (wa && lt.includes(wa)) score += 15;
+        return { id: item.id, title, artist, score };
+      })
+      .sort((a, b) => b.score - a.score);
+    return scored;
+  } catch (err) {
+    console.log(`[YouTube Music] Search failed for "${query}": ${err.message}`);
+    return [];
+  }
+}
+
+// Multi-provider full audio stream resolver.
+// NEVER falls back to Spotify 30s previews — only full-length songs, and always
+// the correct version (YouTube Music canonical tracks first, then ranked YT).
+async function getFullAudioStream(yt, trackQuery, songTitle, meta = {}) {
   const { downloadMultiStep } = require('simple-ytdl-core');
 
-  // --- Provider 1: YouTube (primary search, try top 3 candidates to skip unplayable items) ---
+  const wantTitle = meta.title || '';
+  const wantArtist = meta.artist || '';
+  const cleanQuery =
+    [wantTitle, wantArtist].filter(Boolean).join(' ').trim() ||
+    trackQuery.replace(/official audio/gi, '').replace(/\s+/g, ' ').trim();
+
+  // --- Provider 0: YouTube Music (canonical studio tracks, exact version) ---
+  const musicSongs = await searchYouTubeMusicSongs(yt, cleanQuery, wantTitle, wantArtist);
+  for (const s of musicSongs.slice(0, 5)) {
+    try {
+      const stream = await downloadMultiStep(yt, s.id);
+      if (stream) {
+        console.log(`[YouTube Music] Canonical track: "${s.title}" by "${s.artist}" (${s.id})`);
+        return { stream, source: 'YouTube Music', resolvedTitle: `${s.title}${s.artist ? ` - ${s.artist}` : ''}` };
+      }
+    } catch (err) {
+      console.log(`[YouTube Music] Candidate ${s.id} failed: ${err.message}`);
+    }
+  }
+
+  // --- Provider 1: YouTube search, ranked to skip wrong versions ---
   try {
-    const search = await yt.search(trackQuery);
-    const candidates = search.videos ? search.videos.slice(0, 3) : [];
-    for (const v of candidates) {
+    const search = await yt.search(cleanQuery);
+    const ranked = rankVideoCandidates(search.videos, wantTitle, wantArtist);
+    for (const v of ranked.slice(0, 8)) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
         if (stream) {
-          console.log(`[YouTube] Full stream obtained: "${v.title?.text}" (${v.id})`);
+          console.log(`[YouTube] Ranked match: "${v.title?.text}" by "${v.author?.name}" (${v.id})`);
           return { stream, source: 'YouTube', resolvedTitle: v.title?.text || songTitle };
         }
       } catch (err) {
@@ -215,16 +328,16 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
       }
     }
   } catch (err) {
-    console.log(`[YouTube] Primary search failed for "${trackQuery}": ${err.message}`);
+    console.log(`[YouTube] Primary search failed for "${cleanQuery}": ${err.message}`);
   }
 
-  // --- Provider 2: YouTube (secondary search with "audio" appended, try top 3 candidates) ---
+  // --- Provider 2: YouTube (secondary search with "audio" appended), ranked ---
   try {
-    const audioQuery = `${trackQuery} audio`;
+    const audioQuery = `${cleanQuery} audio`;
     console.log(`[YouTube] Trying secondary query: "${audioQuery}"`);
     const search2 = await yt.search(audioQuery);
-    const candidates2 = search2.videos ? search2.videos.slice(0, 3) : [];
-    for (const v of candidates2) {
+    const ranked2 = rankVideoCandidates(search2.videos, wantTitle, wantArtist);
+    for (const v of ranked2.slice(0, 6)) {
       try {
         const stream = await downloadMultiStep(yt, v.id);
         if (stream) {
@@ -243,15 +356,23 @@ async function getFullAudioStream(yt, trackQuery, songTitle) {
   try {
     await initSoundCloud();
     // Clean query: strip "official audio" when searching SoundCloud
-    const scQuery = trackQuery.replace(/official audio/gi, '').trim();
+    const scQuery = cleanQuery;
     console.log(`[SoundCloud] Searching for clean track: "${scQuery}"`);
-    const scResults = await play.search(scQuery, { source: { soundcloud: 'tracks' }, limit: 5 });
-    const cleanTrack = scResults.find(t => {
+    const scResults = await play.search(scQuery, { source: { soundcloud: 'tracks' }, limit: 8 });
+    const wt = wantTitle.toLowerCase();
+    const wa = wantArtist.toLowerCase();
+    const scScore = (t) => {
       const name = (t.name || '').toLowerCase();
-      const badWords = ['slowed', 'reverb', 'remix', 'cover', 'sped up', 'instrumental', 'tribute', 'parody', 'mashup'];
-      if (badWords.some(w => name.includes(w))) return false;
-      return true;
-    }) || scResults[0];
+      const author = (t.user?.name || '').toLowerCase();
+      let s = 0;
+      if (BAD_VERSION_PATTERNS.some(re => re.test(name))) s -= 100;
+      if (wt && name.includes(wt)) s += 40;
+      if (wa && (name.includes(wa) || author.includes(wa))) s += 30;
+      return s;
+    };
+    const cleanTrack = [...scResults]
+      .filter(t => t && t.url)
+      .sort((a, b) => scScore(b) - scScore(a))[0];
 
     if (cleanTrack) {
       console.log(`[SoundCloud] Found clean match: "${cleanTrack.name}" by "${cleanTrack.user?.name}"`);
@@ -338,7 +459,10 @@ async function playNextSong(textChannel) {
 
     // If no stream yet, use multi-provider resolver
     if (!stream) {
-      const result = await getFullAudioStream(yt, trackQuery, songTitle);
+      const result = await getFullAudioStream(yt, trackQuery, songTitle, {
+        title: (trackItem && trackItem.title) || '',
+        artist: (trackItem && trackItem.artist) || ''
+      });
       if (result) {
         stream = result.stream;
         audioSource = result.source;
@@ -555,22 +679,44 @@ client.on('messageCreate', async (message) => {
   }
 
 
-  // Keyword auto-reply: in the channel chosen on the control panel's Auto-Reply
-  // tab, if a user sends a keyword the bot replies with a premade "secret"
-  // message. A plain messageCreate can't send a true ephemeral, so the reply is
-  // auto-deleted after a few seconds — the closest equivalent — and the user's
-  // original message is left alone.
+  // Keyword auto-reply: staff configure rules on the control panel's Auto-Reply
+  // tab. Each rule targets one channel with its own keywords and reply. When a
+  // user sends one of a rule's keywords in that channel, the bot replies with
+  // the rule's message. A plain messageCreate can't send a true ephemeral, so
+  // the reply is auto-deleted after a few seconds — the closest equivalent —
+  // and the user's original message is left alone.
   if (message.guild && !message.author.bot) {
     const config = await getGuildConfig(message.guild.id);
-    if (config && config.keyword_channel_id && message.channel.id === config.keyword_channel_id) {
+    if (config) {
       const text = (message.content || '').toLowerCase();
-      if (text.includes('mod abuse') || text.includes('staff abuse')) {
-        const reply = await message.channel.send(
-          'If you would like to report a staff member, you can open a ticket to report the user.'
-        ).catch(() => null);
+
+      // Build the effective rule list: the staff-managed rules plus the legacy
+      // single-channel rule (kept so older configs keep working).
+      const rules = [];
+      if (Array.isArray(config.keyword_rules)) {
+        for (const r of config.keyword_rules) {
+          if (r && r.channel_id === message.channel.id && Array.isArray(r.keywords)) {
+            rules.push({ keywords: r.keywords, response: r.response });
+          }
+        }
+      }
+      if (config.keyword_channel_id && config.keyword_channel_id === message.channel.id) {
+        rules.push({
+          keywords: ['mod abuse', 'staff abuse'],
+          response: 'If you would like to report a staff member, you can open a ticket to report the user.'
+        });
+      }
+
+      for (const rule of rules) {
+        const hit = rule.keywords.some(k => k && text.includes(String(k).toLowerCase()));
+        if (!hit) continue;
+        const replyText = rule.response ||
+          'If you would like to report a staff member, you can open a ticket to report the user.';
+        const reply = await message.channel.send(replyText).catch(() => null);
         if (reply) {
           setTimeout(() => reply.delete().catch(() => {}), 8000);
         }
+        break; // one reply per message is enough
       }
     }
   }

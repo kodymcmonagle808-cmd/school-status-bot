@@ -457,6 +457,53 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     // No need to redirect page, staying on config_music
   }
 
+  if (modalId === 'modal_add_keyword') {
+    const channelRaw = getModalInputValue(body, 'input_keyword_channel').trim();
+    const termsRaw = getModalInputValue(body, 'input_keyword_terms') || '';
+    const responseRaw = getModalInputValue(body, 'input_keyword_response').trim();
+
+    // Accept a raw ID or a <#id> mention / full channel URL, so staff can paste
+    // whatever is easiest to copy.
+    const channelMatch = channelRaw.match(/(\d{17,20})/);
+    if (!channelMatch) {
+      return interactionResponse({
+        content: '❌ Invalid channel. Paste the channel ID (enable Developer Mode, then right-click the channel → Copy Channel ID).',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    const channelId = channelMatch[1];
+
+    const keywords = termsRaw
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 25);
+    if (!keywords.length) {
+      return interactionResponse({
+        content: '❌ Add at least one keyword or phrase.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    if (!Array.isArray(config.keyword_rules)) config.keyword_rules = [];
+    if (config.keyword_rules.length >= 25) {
+      return interactionResponse({
+        content: '❌ You already have 25 auto-reply rules (the Discord limit). Remove one first.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+    config.keyword_rules.push({
+      channel_id: channelId,
+      keywords,
+      response: responseRaw.slice(0, 1000)
+    });
+    updated = true;
+
+    const invokerId = getInvokerId(body);
+    logAction(`💬 Auto-reply rule added for <#${channelId}>: ${keywords.join(', ')}${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_autoreply');
+  }
+
   if (modalId === 'modal_set_footer') {
     const val = getModalInputValue(body, 'input_footer').trim();
     if (val.toLowerCase() === 'default' || val.toLowerCase() === 'none' || val.toLowerCase() === 'clear') {
