@@ -3,6 +3,7 @@
 
 import { MANUAL_TRIGGER_HEADER } from './constants.js';
 import { jsonResponse, verifyDiscordRequest } from './discord.js';
+import { getConfig } from './config.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
 import { maybeSendMorningDigests } from './digest.js';
@@ -132,7 +133,12 @@ export default {
           
           const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
           const joinlogs = rawJoinLogs ? JSON.parse(rawJoinLogs) : null;
+          // The greeter reads a few top-level config fields (music channel/VC and
+          // the keyword auto-reply channel) to decide what to do in Discord, so
+          // return the stored guild config alongside the join-logs settings.
+          const config = await getConfig(env, guildId);
           return jsonResponse({
+            ...(config && typeof config === 'object' ? config : {}),
             joinlogs
           });
         } catch (err) {

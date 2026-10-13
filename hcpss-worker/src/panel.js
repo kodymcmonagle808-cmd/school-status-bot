@@ -85,7 +85,7 @@ export const PANEL_NAV_TABS = [
   { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
-  { label: 'Music Settings', value: 'config_music', emoji: '🎵', description: 'Configure music channel and controls' },
+  { label: 'Auto-Reply', value: 'config_autoreply', emoji: '💬', description: 'Keyword-triggered auto replies' },
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
 ];
 
@@ -611,6 +611,39 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       actionSelectRow([
         { label: 'Set Embed Footer Text', value: 'panel_btn_set_footer', description: 'Customize the footer shown on status embeds', emoji: { name: '✍️' } }
       ])
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+
+  if (page === 'config_autoreply') {
+    const channel = config.keyword_channel_id ? `<#${config.keyword_channel_id}>` : '(not set)';
+    const embed = {
+      title: '💬 Control Panel — Keyword Auto-Reply',
+      color: 0x9B59B6,
+      description: `### 💬 Keyword Auto-Reply\n` +
+                   `• **Watch Channel**: ${channel}\n\n` +
+                   `*When a user sends a keyword in the watch channel, the bot replies with a premade message that only stays visible briefly (ephemeral-style).*\n\n` +
+                   `*Built-in keyword: \`mod abuse\` / \`staff abuse\`.*\n` +
+                   `*Premade reply: "If you would like to report a staff member, you can open a ticket to report the user."*\n\n` +
+                   `*Pick a channel below to enable it. Clear the selection to disable.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_autoreply'),
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_keyword_channel',
+          placeholder: 'Select channel to watch for keywords',
+          min_values: 0,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      }
     ];
 
     return { embeds: [embed], components };
@@ -1587,6 +1620,9 @@ export async function applyConfigUpdate(body, env) {
     next.music_role_id = values[0];
   } else if (customId === 'cfg_music_vc') {
     next.music_vc_id = (Array.isArray(values) && values[0]) ? values[0] : null;
+  } else if (customId === 'cfg_keyword_channel') {
+    // min_values 0 lets the menu be cleared to disable the keyword auto-reply.
+    next.keyword_channel_id = (Array.isArray(values) && values[0]) ? values[0] : null;
   } else if (customId === 'cfg_status_select' && Array.isArray(values) && values[0]) {
     next.editing_status_key = values[0];
   } else if (customId === 'cfg_status_role') {

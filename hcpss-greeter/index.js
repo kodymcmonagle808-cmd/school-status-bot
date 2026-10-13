@@ -36,6 +36,11 @@ let isPlayingErrorTTS = false;
 let lastErrorTTSTime = 0;
 let emergencyMode = false;
 
+// Music is temporarily disabled in Discord (the Music Settings tab is hidden
+// from the control panel), but all playback/voice code is intentionally kept.
+// Flip this to true to re-enable the 24/7 auto-join and voice runtime.
+const MUSIC_ENABLED = false;
+
 const musicPlayer = createAudioPlayer({
   behaviors: {
     noSubscriber: NoSubscriberBehavior.Play,
@@ -501,8 +506,10 @@ client.once('ready', async () => {
     status: 'online',
   });
 
-  // Auto-connect to configured 24/7 VC on startup or deployment restart
-  try {
+  // Auto-connect to configured 24/7 VC on startup or deployment restart.
+  // Gated by MUSIC_ENABLED so the voice runtime stays dormant while music is
+  // disabled in the panel; all playback code below is preserved.
+  if (MUSIC_ENABLED) try {
     for (const [guildId, guild] of client.guilds.cache) {
       const config = await getGuildConfig(guildId);
       if (config && config.music_vc_id) {
@@ -548,8 +555,30 @@ client.on('messageCreate', async (message) => {
   }
 
 
-  // Handle music channel message deletions and verification
-  if (message.guild) {
+  // Keyword auto-reply: in the channel chosen on the control panel's Auto-Reply
+  // tab, if a user sends a keyword the bot replies with a premade "secret"
+  // message. A plain messageCreate can't send a true ephemeral, so the reply is
+  // auto-deleted after a few seconds — the closest equivalent — and the user's
+  // original message is left alone.
+  if (message.guild && !message.author.bot) {
+    const config = await getGuildConfig(message.guild.id);
+    if (config && config.keyword_channel_id && message.channel.id === config.keyword_channel_id) {
+      const text = (message.content || '').toLowerCase();
+      if (text.includes('mod abuse') || text.includes('staff abuse')) {
+        const reply = await message.channel.send(
+          'If you would like to report a staff member, you can open a ticket to report the user.'
+        ).catch(() => null);
+        if (reply) {
+          setTimeout(() => reply.delete().catch(() => {}), 8000);
+        }
+      }
+    }
+  }
+
+
+  // Handle music channel message deletions and verification.
+  // Gated by MUSIC_ENABLED so this stays dormant while music is disabled.
+  if (MUSIC_ENABLED && message.guild) {
     const config = await getGuildConfig(message.guild.id);
     if (config && config.music_channel_id && message.channel.id === config.music_channel_id) {
       // 1. Delete message after 5 seconds (except control panel embeds)
@@ -592,7 +621,9 @@ client.on('messageCreate', async (message) => {
   }
 
   // We can still log to console, but we'll also send status updates to the channel for the command
-  if (message.content.startsWith('GREET_BOT_COMMAND:')) {
+  // Gated by MUSIC_ENABLED: these are the music/voice control commands. While
+  // music is disabled the trigger messages are simply ignored (code preserved).
+  if (MUSIC_ENABLED && message.content.startsWith('GREET_BOT_COMMAND:')) {
     const content = message.content.trim();
     // Delete the trigger message right away if possible
     message.delete().catch(() => {});
