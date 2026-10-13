@@ -507,6 +507,13 @@ async function playNextSong(textChannel) {
     }
 
     musicPlayer.play(resource);
+    // Guarantee audible playback: the shared player can be left in a Paused
+    // state by an earlier pause()/stop() path, and play() alone does not unpause
+    // it — the track would load silently until someone hit Resume. Force it
+    // back to Playing so a freshly loaded track always makes sound.
+    if (musicPlayer.state.status === AudioPlayerStatus.Paused) {
+      musicPlayer.unpause();
+    }
     isPlayingMusic = true;
     console.log(`🎶 Now playing (${audioSource}): ${songTitle}`);
 
@@ -841,7 +848,10 @@ client.on('messageCreate', async (message) => {
       if (userId === 'LEAVE' || fallbackChannelId === 'LEAVE') {
         isExplicitlyDisconnected = true;
         if (currentVoiceConnection) {
-          musicPlayer.pause();
+          // stop(true) forces the player to Idle and destroys the resource, so
+          // the shared player is left in a clean state for the next join. A bare
+          // pause() would strand it in Paused and mute every future track.
+          try { musicPlayer.stop(true); } catch {}
           isPlayingMusic = false;
           currentVoiceConnection.destroy();
           currentVoiceConnection = null;
@@ -861,7 +871,8 @@ client.on('messageCreate', async (message) => {
       // If already in that VC, toggle off (disconnect)
       if (currentVoiceConnection && currentVoiceChannel && currentVoiceChannel.id === targetVc.id) {
         isExplicitlyDisconnected = true;
-        musicPlayer.pause();
+        // Force the player to Idle (see LEAVE above) so it isn't left Paused.
+        try { musicPlayer.stop(true); } catch {}
         isPlayingMusic = false;
         currentVoiceConnection.destroy();
         currentVoiceConnection = null;
@@ -979,7 +990,11 @@ client.on('messageCreate', async (message) => {
         if (musicPlayer.state.status === AudioPlayerStatus.Idle) {
           playNextSong(message.channel);
         } else {
-          musicPlayer.stop(); // Stops the current track, triggering Idle event -> playNextSong
+          // stop(true) forces an immediate Idle transition. A bare stop() waits
+          // for the resource's silence-padding frames to drain, and if the
+          // player was paused those frames never play — so Idle (and the
+          // follow-up playNextSong) would never fire and playback would die.
+          musicPlayer.stop(true); // -> Idle event -> playNextSong
         }
       }
       const m = await message.channel.send('⏭️ Skipped current track.').catch(() => null);
