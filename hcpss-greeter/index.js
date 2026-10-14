@@ -82,6 +82,15 @@ async function getInnertube() {
   return innertubeClient;
 }
 
+// Drop the cached Innertube session so the next getInnertube() builds a fresh
+// one. A long-lived session's tokens/visitor data can go stale, after which
+// every getBasicInfo/stream call fails — which looks like "it played once then
+// never again." Recreating the client clears that.
+function resetInnertube() {
+  try { if (innertubeClient && innertubeClient.session) innertubeClient.session.destroy?.(); } catch {}
+  innertubeClient = null;
+}
+
 let playlistTracks = [];
 let musicQueue = [];
 let isPlayingMusic = false;
@@ -286,12 +295,52 @@ async function searchYouTubeMusicSongs(yt, query, wantTitle = '', wantArtist = '
   }
 }
 
+// Resolve a playable audio stream for a video id with a hard timeout and a
+// protocol fallback. downloadMultiStep's adaptive path relies on BotGuard /
+// PoToken minting (jsdom-heavy); on some hosts (e.g. Render) that can hang or
+// throw, which previously surfaced as "unable to stream audio". We bound each
+// attempt with a timeout and fall back to the SABR protocol, which uses a
+// different extraction path.
+const STREAM_TIMEOUT_MS = 20000;
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
+async function getStreamForVideo(yt, videoId) {
+  const { downloadMultiStep } = require('simple-ytdl-core');
+
+  // Attempt 1: adaptive multi-step (VISIONOS needs no PoToken; others need
+  // BotGuard). This is the fast path and works without jsdom on most hosts.
+  try {
+    const stream = await withTimeout(downloadMultiStep(yt, videoId), STREAM_TIMEOUT_MS, `adaptive ${videoId}`);
+    if (stream && stream.readable !== false) return stream;
+  } catch (err) {
+    console.log(`[stream] adaptive failed for ${videoId}: ${err.message}`);
+  }
+
+  // Attempt 2: SABR protocol — a different server-side path that also mints a
+  // PoToken but streams via Server ABR. Worth trying when adaptive is blocked.
+  try {
+    const stream = await withTimeout(downloadMultiStep(yt, videoId, undefined, 'SABR'), STREAM_TIMEOUT_MS, `sabr ${videoId}`);
+    if (stream && stream.readable !== false) return stream;
+  } catch (err) {
+    console.log(`[stream] SABR failed for ${videoId}: ${err.message}`);
+  }
+
+  return null;
+}
+
 // Multi-provider full audio stream resolver.
 // NEVER falls back to Spotify 30s previews — only full-length songs, and always
 // the correct version (YouTube Music canonical tracks first, then ranked YT).
 async function getFullAudioStream(yt, trackQuery, songTitle, meta = {}) {
-  const { downloadMultiStep } = require('simple-ytdl-core');
-
   const wantTitle = meta.title || '';
   const wantArtist = meta.artist || '';
   const cleanQuery =
@@ -302,7 +351,7 @@ async function getFullAudioStream(yt, trackQuery, songTitle, meta = {}) {
   const musicSongs = await searchYouTubeMusicSongs(yt, cleanQuery, wantTitle, wantArtist);
   for (const s of musicSongs.slice(0, 5)) {
     try {
-      const stream = await downloadMultiStep(yt, s.id);
+      const stream = await getStreamForVideo(yt, s.id);
       if (stream) {
         console.log(`[YouTube Music] Canonical track: "${s.title}" by "${s.artist}" (${s.id})`);
         return { stream, source: 'YouTube Music', resolvedTitle: `${s.title}${s.artist ? ` - ${s.artist}` : ''}` };
@@ -318,7 +367,7 @@ async function getFullAudioStream(yt, trackQuery, songTitle, meta = {}) {
     const ranked = rankVideoCandidates(search.videos, wantTitle, wantArtist);
     for (const v of ranked.slice(0, 8)) {
       try {
-        const stream = await downloadMultiStep(yt, v.id);
+        const stream = await getStreamForVideo(yt, v.id);
         if (stream) {
           console.log(`[YouTube] Ranked match: "${v.title?.text}" by "${v.author?.name}" (${v.id})`);
           return { stream, source: 'YouTube', resolvedTitle: v.title?.text || songTitle };
@@ -339,7 +388,7 @@ async function getFullAudioStream(yt, trackQuery, songTitle, meta = {}) {
     const ranked2 = rankVideoCandidates(search2.videos, wantTitle, wantArtist);
     for (const v of ranked2.slice(0, 6)) {
       try {
-        const stream = await downloadMultiStep(yt, v.id);
+        const stream = await getStreamForVideo(yt, v.id);
         if (stream) {
           console.log(`[YouTube] Full stream via secondary search: "${v.title?.text}" (${v.id})`);
           return { stream, source: 'YouTube', resolvedTitle: v.title?.text || songTitle };
@@ -453,9 +502,8 @@ async function playNextSong(textChannel) {
     let audioSource = 'Unknown';
 
     if (videoId) {
-      // Direct videoId — try downloadMultiStep first
-      const { downloadMultiStep } = require('simple-ytdl-core');
-      stream = await downloadMultiStep(yt, videoId).catch(err => {
+      // Direct videoId — resolve with timeout + protocol fallback
+      stream = await getStreamForVideo(yt, videoId).catch(err => {
         console.log(`[YouTube] Direct videoId ${videoId} failed: ${err.message}`);
         return null;
       });
@@ -483,7 +531,10 @@ async function playNextSong(textChannel) {
       consecutiveSkipCount++;
       console.log(`❌ Could not stream: "${songTitle}". (${consecutiveSkipCount} in a row)`);
       if (consecutiveSkipCount >= 3) {
-        console.log('3 tracks failed in a row. Pausing for 30s before retrying 24/7 playback...');
+        console.log('3 tracks failed in a row. Resetting YouTube session and pausing 30s before retrying 24/7 playback...');
+        // A stale Innertube session is the usual cause of a sudden wall of
+        // stream failures; rebuild it so the retry starts clean.
+        resetInnertube();
         if (activeMusicTextChannel) {
           const m = await activeMusicTextChannel.send('⚠️ Playback temporarily paused: unable to stream audio. Retrying in 30 seconds...').catch(() => null);
           if (m) setTimeout(() => m.delete().catch(() => {}), 10000);
@@ -525,7 +576,8 @@ async function playNextSong(textChannel) {
     console.error(`Error playing track "${songTitle}":`, err);
     consecutiveSkipCount++;
     if (consecutiveSkipCount >= 3) {
-      console.log('3 tracks errored in a row. Pausing for 30s before retrying...');
+      console.log('3 tracks errored in a row. Resetting YouTube session and pausing 30s before retrying...');
+      resetInnertube();
       isPlayingMusic = false;
       consecutiveSkipCount = 0;
       setTimeout(() => playNextSong(activeMusicTextChannel), 30000);
