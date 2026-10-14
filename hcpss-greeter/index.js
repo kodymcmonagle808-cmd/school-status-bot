@@ -295,13 +295,16 @@ async function searchYouTubeMusicSongs(yt, query, wantTitle = '', wantArtist = '
   }
 }
 
-// Resolve a playable audio stream for a video id with a hard timeout and a
-// protocol fallback. downloadMultiStep's adaptive path relies on BotGuard /
-// PoToken minting (jsdom-heavy); on some hosts (e.g. Render) that can hang or
-// throw, which previously surfaced as "unable to stream audio". We bound each
-// attempt with a timeout and fall back to the SABR protocol, which uses a
-// different extraction path.
+// Resolve a playable audio stream for a video id, tuned for Render's 512MB
+// free tier. The default multi-step path can pull in BotGuard + jsdom, which
+// alone can use 150-300MB and OOM the box. We try the lightweight VISIONOS
+// client first (no PoToken, no jsdom — just getBasicInfo + a ranged fetch),
+// and only fall back to the heavier SABR path if that fails.
 const STREAM_TIMEOUT_MS = 20000;
+
+function memMb() {
+  try { return Math.round(process.memoryUsage().rss / 1048576); } catch { return '?'; }
+}
 
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
@@ -314,24 +317,43 @@ function withTimeout(promise, ms, label) {
 }
 
 async function getStreamForVideo(yt, videoId) {
-  const { downloadMultiStep } = require('simple-ytdl-core');
+  const { downloadMultiStep, createAdaptiveStream } = require('simple-ytdl-core');
 
-  // Attempt 1: adaptive multi-step (VISIONOS needs no PoToken; others need
-  // BotGuard). This is the fast path and works without jsdom on most hosts.
+  // Attempt 1: VISIONOS-only adaptive — no BotGuard/jsdom, low memory. This is
+  // the path most likely to survive on a 512MB host.
   try {
-    const stream = await withTimeout(downloadMultiStep(yt, videoId), STREAM_TIMEOUT_MS, `adaptive ${videoId}`);
-    if (stream && stream.readable !== false) return stream;
+    const stream = await withTimeout(
+      createAdaptiveStream(yt, videoId, 'VISIONOS', undefined, false),
+      STREAM_TIMEOUT_MS, `visionos ${videoId}`);
+    if (stream && stream.readable !== false) {
+      console.log(`[stream] VISIONOS OK for ${videoId} (rss ${memMb()}MB)`);
+      return stream;
+    }
   } catch (err) {
-    console.log(`[stream] adaptive failed for ${videoId}: ${err.message}`);
+    console.log(`[stream] VISIONOS failed for ${videoId}: ${err.message} (rss ${memMb()}MB)`);
   }
 
-  // Attempt 2: SABR protocol — a different server-side path that also mints a
-  // PoToken but streams via Server ABR. Worth trying when adaptive is blocked.
+  // Attempt 2: full adaptive multi-step (may mint a PoToken via BotGuard/jsdom).
+  try {
+    const stream = await withTimeout(downloadMultiStep(yt, videoId), STREAM_TIMEOUT_MS, `adaptive ${videoId}`);
+    if (stream && stream.readable !== false) {
+      console.log(`[stream] adaptive OK for ${videoId} (rss ${memMb()}MB)`);
+      return stream;
+    }
+  } catch (err) {
+    console.log(`[stream] adaptive failed for ${videoId}: ${err.message} (rss ${memMb()}MB)`);
+  }
+
+  // Attempt 3 (last resort): SABR — heaviest path (always loads BotGuard/jsdom).
+  // Only reached when the lighter paths both failed.
   try {
     const stream = await withTimeout(downloadMultiStep(yt, videoId, undefined, 'SABR'), STREAM_TIMEOUT_MS, `sabr ${videoId}`);
-    if (stream && stream.readable !== false) return stream;
+    if (stream && stream.readable !== false) {
+      console.log(`[stream] SABR OK for ${videoId} (rss ${memMb()}MB)`);
+      return stream;
+    }
   } catch (err) {
-    console.log(`[stream] SABR failed for ${videoId}: ${err.message}`);
+    console.log(`[stream] SABR failed for ${videoId}: ${err.message} (rss ${memMb()}MB)`);
   }
 
   return null;
