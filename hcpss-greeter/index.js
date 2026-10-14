@@ -566,7 +566,7 @@ async function playNextSong(textChannel) {
       musicPlayer.unpause();
     }
     isPlayingMusic = true;
-    console.log(`🎶 Now playing (${audioSource}): ${songTitle}`);
+    console.log(`🎶 Now playing (${audioSource}): ${songTitle} [player state after play: ${musicPlayer.state.status}]`);
 
     if (activeMusicTextChannel) {
       const m = await activeMusicTextChannel.send(`🎶 Now playing: **${songTitle}**`).catch(() => null);
@@ -602,11 +602,25 @@ musicPlayer.on(AudioPlayerStatus.Idle, () => {
 });
 
 musicPlayer.on('error', error => {
-  console.error('AudioPlayer error:', error.message);
+  // Log the whole error (message + resource context) — this is where a Render
+  // stream failure shows up. A bare error.message can hide the real cause.
+  console.error('AudioPlayer error:', error && error.message ? error.message : error);
+  if (error && error.resource) {
+    console.error('  error.resource present; playbackDuration=', error.resource.playbackDuration);
+  }
   isPlayingMusic = false;
   // Don't call playAudioErrorMessage here — it plays on the same player
   // and triggers Idle → playNextSong → fail → error → TTS loop.
   // The Idle event will fire automatically and retry.
+});
+
+// Log real playback starts so the Render logs distinguish "stream resolved and
+// audio is flowing" from "resolved but never actually played."
+musicPlayer.on(AudioPlayerStatus.Playing, () => {
+  console.log('▶️ AudioPlayer is now Playing (audio should be audible).');
+});
+musicPlayer.on(AudioPlayerStatus.Buffering, () => {
+  console.log('⏳ AudioPlayer buffering...');
 });
 
 const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
@@ -687,6 +701,32 @@ const playInVoice = async (vc, textChannel = null) => {
 
 client.once('ready', async () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
+
+  // Startup self-test: prove the pieces the music pipeline depends on actually
+  // work in THIS environment (Render vs local differ). Runs once, logs clearly,
+  // and never blocks startup. If music is silent later, these lines say whether
+  // FFmpeg, the YouTube session, or stream extraction is the broken link.
+  (async () => {
+    try {
+      const { execFile } = require('child_process');
+      const ff = require('ffmpeg-static');
+      await new Promise((resolve) => {
+        execFile(ff, ['-version'], { timeout: 5000 }, (err) => {
+          console.log(err ? `[selftest] FFmpeg NOT runnable: ${err.message}` : '[selftest] FFmpeg OK');
+          resolve();
+        });
+      });
+    } catch (e) {
+      console.log(`[selftest] FFmpeg check threw: ${e.message}`);
+    }
+    try {
+      const yt = await getInnertube();
+      const info = await yt.getBasicInfo('kIft-LUHHVA').catch(e => { throw e; });
+      console.log(`[selftest] YouTube session OK (title: ${info.basic_info && info.basic_info.title})`);
+    } catch (e) {
+      console.log(`[selftest] YouTube session FAILED: ${e.message}`);
+    }
+  })();
 
   // Set the bot's Discord presence / status
   client.user.setPresence({
