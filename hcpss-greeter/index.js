@@ -319,8 +319,7 @@ function withTimeout(promise, ms, label) {
 async function getStreamForVideo(yt, videoId) {
   const { downloadMultiStep, createAdaptiveStream } = require('simple-ytdl-core');
 
-  // Attempt 1: VISIONOS-only adaptive — no BotGuard/jsdom, low memory. This is
-  // the path most likely to survive on a 512MB host.
+  // Attempt 1: VISIONOS-only adaptive — no BotGuard/jsdom, low memory.
   try {
     const stream = await withTimeout(
       createAdaptiveStream(yt, videoId, 'VISIONOS', undefined, false),
@@ -330,7 +329,14 @@ async function getStreamForVideo(yt, videoId) {
       return stream;
     }
   } catch (err) {
-    console.log(`[stream] VISIONOS failed for ${videoId}: ${err.message} (rss ${memMb()}MB)`);
+    // "Streaming data not available" is the signature of YouTube refusing this
+    // host's IP (datacenter IPs like Render get a player response with no
+    // stream URLs). Surface it clearly instead of burying it in retries.
+    if (/streaming data not available/i.test(err.message)) {
+      console.log(`[stream] YouTube returned NO streaming data for ${videoId} — this host's IP is very likely blocked by YouTube (common on Render/datacenter IPs).`);
+    } else {
+      console.log(`[stream] VISIONOS failed for ${videoId}: ${err.message} (rss ${memMb()}MB)`);
+    }
   }
 
   // Attempt 2: full adaptive multi-step (may mint a PoToken via BotGuard/jsdom).
