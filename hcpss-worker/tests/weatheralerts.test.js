@@ -1049,6 +1049,219 @@ test('an emergency and a routine alert in one scan post as separate messages', a
   assert.deepEqual(seen['Tornado Warning'].msgs, [{ m: 'm-routine', c: 'chan-1' }]);
 });
 
+test('a routine notice pings the roles set in the control panel', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: ['role-1', 'role-2']
+    })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-1> <@&role-2>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-1', 'role-2'] });
+  assert.match(messages[0].body.embeds[0].title, /Heat Advisory/);
+});
+
+test('a routine notice posts without a mention when no roles are configured', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, undefined);
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: [] });
+});
+
+test('a routine winter alert pings winter roles, not heat roles', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: {
+        winter: ['role-winter'],
+        heat: ['role-heat'],
+        default: ['role-default']
+      }
+    })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Storm Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-winter> <@&role-default>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-winter', 'role-default'] });
+  assert.match(messages[0].body.embeds[0].title, /Winter Storm Warning/);
+});
+
+test('a routine heat alert pings heat roles, not winter roles', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: {
+        winter: ['role-winter'],
+        heat: ['role-heat'],
+        default: ['role-default']
+      }
+    })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-heat> <@&role-default>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-heat', 'role-default'] });
+  assert.match(messages[0].body.embeds[0].title, /Heat Advisory/);
+});
+
+test('a routine alert with no category roles falls back to default only', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: {
+        winter: ['role-winter'],
+        default: ['role-default']
+      }
+    })
+  });
+  // Severe Thunderstorm Warning matches neither winter nor heat → default only
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Severe Thunderstorm Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-default>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-default'] });
+});
+
+test('multiple alerts of different categories union their roles', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: {
+        winter: ['role-winter'],
+        heat: ['role-heat'],
+        default: ['role-default']
+      }
+    })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Storm Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' },
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-winter> <@&role-heat> <@&role-default>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-winter', 'role-heat', 'role-default'] });
+});
+
+test('legacy flat-array ping_role_ids still works as default category', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET — routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-1',
+      ping_role_ids: ['role-legacy']
+    })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+
+  const messages = posts.filter(p => p.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-legacy>');
+  assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-legacy'] });
+});
+
 test('/status-hook requires the shared secret and acks a valid ping', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ features: [] }), { status: 200 }));
   const waited = [];

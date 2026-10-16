@@ -454,6 +454,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_stats: 'config_stats',
     panel_to_config_override_select: 'config_override_select',
     panel_to_config_commands: 'config_commands',
+    panel_to_config_nws_pings: 'config_nws_pings',
     panel_to_dashboard: 'dashboard',
     panel_to_dashboard_logs: 'dashboard_logs'
   };
@@ -1034,11 +1035,14 @@ export function handleTestAlert(body, env, ctx, guildId) {
       }
 
       let rolesToPing = [];
-      const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+      const rawPingRoles = config.ping_role_ids;
+      const defaultRoleIds = Array.isArray(rawPingRoles)
+        ? rawPingRoles
+        : (rawPingRoles && rawPingRoles.default);
       if (roleId) {
         rolesToPing = [roleId];
       } else if (roleId === undefined && statusKey !== 'normal_operations') {
-        rolesToPing = pingRoleIds;
+        rolesToPing = Array.isArray(defaultRoleIds) ? defaultRoleIds : [];
       }
 
       const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';

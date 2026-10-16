@@ -87,7 +87,8 @@ export const PANEL_NAV_TABS = [
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
   { label: 'Auto-Reply', value: 'config_autoreply', emoji: '💬', description: 'Keyword-triggered auto replies' },
-  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' }
+  { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
+  { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' }
 ];
 
 function getNavTabForPage(page) {
@@ -1054,6 +1055,65 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     return { embeds: [embed], components };
   }
 
+  if (page === 'config_nws_pings') {
+    const pingRoles = config.ping_role_ids || {};
+    const winterRoles = Array.isArray(pingRoles.winter) ? pingRoles.winter : [];
+    const heatRoles = Array.isArray(pingRoles.heat) ? pingRoles.heat : [];
+    const defaultRoles = Array.isArray(pingRoles.default) ? pingRoles.default : [];
+
+    const winterDisplay = winterRoles.length ? winterRoles.map(r => `<@&${r}>`).join(', ') : '(none)';
+    const heatDisplay = heatRoles.length ? heatRoles.map(r => `<@&${r}>`).join(', ') : '(none)';
+    const defaultDisplay = defaultRoles.length ? defaultRoles.map(r => `<@&${r}>`).join(', ') : '(none)';
+
+    const embed = {
+      title: '⚠️ Control Panel — NWS Ping Roles',
+      color: 0xF39C12,
+      description: `### ⚠️ NWS Alert Ping Roles\\n` +
+                   `Choose which Discord roles get pinged when NWS alerts are issued.\\n\\n` +
+                   `• **Winter** (snow/ice): ${winterDisplay}\\n` +
+                   `• **Heat** (heat advisory/warning): ${heatDisplay}\\n` +
+                   `• **Default** (all other alerts): ${defaultDisplay}\\n\\n` +
+                   `*Select a role from each dropdown to set it. Leave blank for “none.” Changes save instantly.*`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_nws_pings'),
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_nws_ping_winter',
+          placeholder: `Select winter alert ping role`,
+          min_values: 0,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_nws_ping_heat',
+          placeholder: `Select heat alert ping role`,
+          min_values: 0,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_nws_ping_default',
+          placeholder: `Select default alert ping role`,
+          min_values: 0,
+          max_values: 1
+        }]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
   if (page === 'config_schedule') {
     const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
     const scheduleLines = currentSchedule
@@ -1666,6 +1726,27 @@ export async function applyConfigUpdate(body, env) {
       next.status_ping_roles[editingKey] = values[0];
     } else {
       next.status_ping_roles[editingKey] = null;
+    }
+  } else if (customId === 'cfg_nws_ping_winter') {
+    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object') next.ping_role_ids = {};
+    if (Array.isArray(values) && values[0]) {
+      next.ping_role_ids.winter = [values[0]];
+    } else {
+      next.ping_role_ids.winter = [];
+    }
+  } else if (customId === 'cfg_nws_ping_heat') {
+    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object') next.ping_role_ids = {};
+    if (Array.isArray(values) && values[0]) {
+      next.ping_role_ids.heat = [values[0]];
+    } else {
+      next.ping_role_ids.heat = [];
+    }
+  } else if (customId === 'cfg_nws_ping_default') {
+    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object') next.ping_role_ids = {};
+    if (Array.isArray(values) && values[0]) {
+      next.ping_role_ids.default = [values[0]];
+    } else {
+      next.ping_role_ids.default = [];
     }
   } else if (customId === 'cfg_schedpick_hour' && Array.isArray(values) && values[0] !== undefined) {
     const pick = next.schedule_pick || {};

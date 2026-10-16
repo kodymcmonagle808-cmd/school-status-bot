@@ -13,7 +13,7 @@
 import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { getDistrictMeta } from './districts.js';
-import { getActiveWeatherAlerts, isSchoolImpactIssuance, isEmergencyAlert, DEFAULT_NWS_ZONE } from './weather.js';
+import { getActiveWeatherAlerts, isSchoolImpactIssuance, isEmergencyAlert, DEFAULT_NWS_ZONE, WINTER_EVENT_RE, HEAT_EVENT_RE } from './weather.js';
 import { discordFetch } from './discord.js';
 import { logAction, logActionError } from './actionlog.js';
 
@@ -311,6 +311,42 @@ async function postNotice(env, channelId, payload) {
   }
 }
 
+// Alert category for ping-role routing: winter events, heat events,
+// everything else falls to default.
+function alertCategory(alert) {
+  const event = (alert && alert.event || '').toLowerCase();
+  if (WINTER_EVENT_RE.test(event)) return 'winter';
+  if (HEAT_EVENT_RE.test(event)) return 'heat';
+  return 'default';
+}
+
+// Collect the ping roles for a set of routine alerts from the control-panel
+// config. `cfg.ping_role_ids` may be a flat array (legacy format, treated as
+// the default category) or an object keyed by category ({winter, heat,
+// default}). Roles from each alert's category are unioned, with default
+// roles always included as a fallback.
+function pingRolesForAlerts(cfg, alerts) {
+  const raw = cfg && cfg.ping_role_ids;
+  if (!raw) return [];
+  const map = Array.isArray(raw) ? { default: raw } : raw;
+  if (!map || typeof map !== 'object') return [];
+
+  const roles = new Set();
+  const categories = new Set();
+  for (const a of alerts) categories.add(alertCategory(a));
+  for (const cat of categories) {
+    const catRoles = map[cat];
+    if (Array.isArray(catRoles)) {
+      for (const id of catRoles) roles.add(String(id));
+    }
+  }
+  const defaultRoles = map.default;
+  if (Array.isArray(defaultRoles)) {
+    for (const id of defaultRoles) roles.add(String(id));
+  }
+  return [...roles];
+}
+
 // Runs from the per-minute cron, or with { force: true } from the /push-data
 // and /nws-hook push endpoints (skips the minute gate; quiet hours and the
 // per-guild seen map still apply, so a repeated ping can't double-post).
@@ -427,7 +463,16 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
         const title = routine.length === 1
           ? `⚠️ ${routine[0].event} — ${county} County`
           : `⚠️ NWS Alerts Issued — ${county} County`;
+
+        // Ping the roles set in the control panel so the alert reaches the
+        // people who signed up for it. Roles are chosen per alert category
+        // (winter / heat / default); `toggle_nws_alerts` gates whether the
+        // notice posts at all; the roles themselves come from the panel.
+        const pingRoleIds = pingRolesForAlerts(cfg, routine);
+        const content = pingRoleIds.length ? pingRoleIds.map(id => `<@&${id}>`).join(' ') : '';
+
         const posted = await postNotice(env, cfg.alert_channel_id, {
+          ...(content ? { content } : {}),
           embeds: [{
             title,
             url: 'https://alerts.weather.gov',
@@ -437,7 +482,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
             timestamp: now.toISOString(),
             footer: { text: `${cfg.alert_embed_footer || 'School Status'} · via National Weather Service` }
           }],
-          allowed_mentions: { parse: [] }
+          allowed_mentions: { parse: [], roles: pingRoleIds }
         });
         if (posted === null) {
           console.error(`NWS issuance post failed for guild ${gid}`);

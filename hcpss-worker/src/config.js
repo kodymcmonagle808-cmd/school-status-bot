@@ -50,7 +50,14 @@ export function getEffectiveConfig(stored) {
   const next = { ...(stored || {}) };
   if (!next.staff_role_id) next.staff_role_id = DEFAULT_STAFF_ROLE_ID;
   if (!next.log_channel_id) next.log_channel_id = DEFAULT_LOG_CHANNEL_ID;
-  if (!Array.isArray(next.ping_role_ids)) next.ping_role_ids = [];
+  // `ping_role_ids` may be a flat array (legacy format, treated as the
+  // "default" category) or an object keyed by alert category:
+  // { winter: [...], heat: [...], default: [...] }.
+  if (Array.isArray(next.ping_role_ids)) {
+    next.ping_role_ids = { default: next.ping_role_ids };
+  } else if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object') {
+    next.ping_role_ids = {};
+  }
   if (!next.status_ping_roles) next.status_ping_roles = {};
   if (!next.status_embed_colors) next.status_embed_colors = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
