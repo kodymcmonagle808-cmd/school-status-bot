@@ -200,7 +200,7 @@ test('queryWorkerLogs asks for this service over the requested window', async (t
   assert.deepEqual(out, { ok: true, events: [], capped: false });
   assert.match(sent.url, /accounts\/acct-1\/workers\/observability\/telemetry\/query$/);
   assert.deepEqual(sent.body.timeframe, { from: NOW - 3600000, to: NOW });
-  assert.equal(sent.body.parameters.filters[0].value, 'hcpss-worker');
+  assert.equal(sent.body.parameters.filters[0].value, 'ss-worker');
 });
 
 test('queryWorkerLogs names the missing token permission instead of just failing', async (t) => {

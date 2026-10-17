@@ -21,7 +21,7 @@ breaks without it, and how to rotate it.
 1. Generate the new value at the source (Cloudflare dashboard / Discord
    Developer Portal).
 2. Update the repo secret (Settings → Secrets → Actions → pencil icon).
-3. Run a deploy (push to `main`, or Actions → Deploy HCPSS Worker → Run
+3. Run a deploy (push to `main`, or Actions → Deploy SS Worker → Run
    workflow) — the deploy uploads Discord/owner secrets to the Worker, so
    the Worker only picks up new values on deploy.
 

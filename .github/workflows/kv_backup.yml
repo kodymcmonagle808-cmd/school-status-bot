@@ -44,7 +44,7 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          cd hcpss-worker
+          cd ss-worker
           node scripts/kv_backup.mjs
           mv kv_backup.json "$GITHUB_WORKSPACE/kv_backup.json"
 

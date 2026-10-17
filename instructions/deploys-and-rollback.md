@@ -2,7 +2,7 @@
 
 ## How a deploy happens
 
-Every push to `main` runs `Deploy HCPSS Worker`
+Every push to `main` runs `Deploy SS Worker`
 (`.github/workflows/deploy_worker.yml`): lint → tests → deploy script
 (uploads secrets, registers slash commands, `wrangler deploy`). Deploys are
 **serialized** — if several land at once they queue instead of racing.

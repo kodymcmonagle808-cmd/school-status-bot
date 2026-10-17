@@ -2,20 +2,20 @@
 
 Discord bot that monitors the HCPSS (Howard County, MD) status page and related
 feeds, posting operating-status updates to Discord. Everything runs in one
-Cloudflare Worker in `hcpss-worker/` (no framework, plain ESM JS, KV storage).
+Cloudflare Worker in `ss-worker/` (no framework, plain ESM JS, KV storage).
 `hcpss-greeter/` is a separate legacy Node bot — rarely touched.
 
 ## Commands
 
 ```bash
-cd hcpss-worker
+cd ss-worker
 node --test          # full test suite
 npm run lint         # ESLint (correctness rules only, no style rules)
 node scripts/canary.mjs   # live-fetch every external source through the real parsers
 ```
 
 Deploys happen on push to `main` via `.github/workflows/deploy_worker.yml` →
-`hcpss-worker/scripts/deploy_worker.sh` (tests, secrets, **slash-command
+`ss-worker/scripts/deploy_worker.sh` (tests, secrets, **slash-command
 registration**, `wrangler deploy`).
 
 ## Architecture

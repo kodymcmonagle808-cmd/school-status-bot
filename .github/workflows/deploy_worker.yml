@@ -33,13 +33,13 @@ jobs:
 
       - name: Lint
         run: |
-          cd hcpss-worker
+          cd ss-worker
           npm ci --no-audit --no-fund
           npm run lint
 
       - name: Run worker tests
         run: |
-          cd hcpss-worker
+          cd ss-worker
           node --test
 
       - name: Run deploy script
@@ -56,8 +56,8 @@ jobs:
           OWNER_ID: ${{ secrets.OWNER_ID }}
           NWS_HOOK_SECRET: ${{ secrets.NWS_HOOK_SECRET }}
         run: |
-          chmod +x ./hcpss-worker/scripts/deploy_worker.sh
-          ./hcpss-worker/scripts/deploy_worker.sh
+          chmod +x ./ss-worker/scripts/deploy_worker.sh
+          ./ss-worker/scripts/deploy_worker.sh
 
       # Record this run's outcome in the worker_updates KV key (rolling last
       # 15) so the control panel's owner-only Worker Updates page can list

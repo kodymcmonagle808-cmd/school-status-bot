@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: npm
-    directory: /hcpss-worker
+    directory: /ss-worker
     schedule:
       interval: weekly
     # One combined PR so peer-coupled packages (eslint + @eslint/js) can't

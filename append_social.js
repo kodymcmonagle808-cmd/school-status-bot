@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-let code = fs.readFileSync('hcpss-worker/src/commands.js', 'utf8');
+let code = fs.readFileSync('ss-worker/src/commands.js', 'utf8');
 
 const codeToAppend = `
 export async function runSocialLinkCommand(body, env) {
@@ -35,7 +35,7 @@ export async function runSocialLinkCommand(body, env) {
   await env.STATUS_KV.put(\`social_hook:\${guildId}:\${token}\`, channelId);
 
   // Use PUBLIC_BASE_URL if available, otherwise generic
-  const baseUrl = env.PUBLIC_BASE_URL || 'https://hcpss-worker.kodymcmonagle808.workers.dev';
+  const baseUrl = env.PUBLIC_BASE_URL || 'https://ss-worker.kodymcmonagle808.workers.dev';
   const webhookUrl = \`\${baseUrl}/social-hook?guild_id=\${guildId}&token=\${token}\`;
 
   const instructions = \`✅ **Social Webhook Generated**
@@ -72,5 +72,5 @@ You can use this URL to automatically forward Facebook, Instagram, or Twitter po
 
 code += codeToAppend;
 
-fs.writeFileSync('hcpss-worker/src/commands.js', code, 'utf8');
+fs.writeFileSync('ss-worker/src/commands.js', code, 'utf8');
 console.log("Appended runSocialLinkCommand");

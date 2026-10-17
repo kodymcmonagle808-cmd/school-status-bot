@@ -10,12 +10,12 @@ The live `/health` endpoint is unreachable, unhealthy, or the cron heartbeat
 is older than 40 minutes (the cron has stopped firing). **This is the
 most urgent alert** — status posts are not going out.
 
-- Open <https://hcpss-worker.kodymcmonagle808.workers.dev/health> yourself.
-  - Unreachable → check the Cloudflare dashboard (Workers → hcpss-worker)
+- Open <https://ss-worker.kodymcmonagle808.workers.dev/health> yourself.
+  - Unreachable → check the Cloudflare dashboard (Workers → ss-worker)
     for errors or a paused worker; a redeploy (push to `main` or re-run the
     last deploy) usually revives it.
   - Reachable but `lastCronTickAt` is stale → Cloudflare dashboard →
-    hcpss-worker → Triggers: confirm the `* * * * *` cron exists. Redeploy
+    ss-worker → Triggers: confirm the `* * * * *` cron exists. Redeploy
     if missing.
 - The alert fires **once** and opens a GitHub issue; repeat failures stay
   quiet while the issue is open. When the check recovers it closes the issue
@@ -30,7 +30,7 @@ GitHub issue gets the full output.
 - Status page source failing = urgent (that's the core product).
 - Side feeds (weather, outages, roads, AQI, districts) = the bot keeps
   running without that context; fix the parser when you can.
-- Reproduce locally: `cd hcpss-worker && node scripts/canary.mjs`.
+- Reproduce locally: `cd ss-worker && node scripts/canary.mjs`.
 
 ## ❌ Worker deploy failed (`deploy_worker.yml`)
 
@@ -47,7 +47,7 @@ so the week isn't skipped.
 
 Report-only: opens an issue if per-guild KV keys exist for guilds no longer
 in `guild_index` (a purge missed a key). Add the missing base key to
-`guildKeys()` in `hcpss-worker/src/cleanup.js`, then purge the leftovers
+`guildKeys()` in `ss-worker/src/cleanup.js`, then purge the leftovers
 manually. Nothing is deleted automatically.
 
 ## 🩺 Watcher errors (no alert — check the panel)

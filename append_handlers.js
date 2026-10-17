@@ -62,11 +62,11 @@ const codeToAppend = `
   }
 `;
 
-let code = fs.readFileSync('hcpss-worker/src/panelcomponents.js', 'utf8');
+let code = fs.readFileSync('ss-worker/src/panelcomponents.js', 'utf8');
 
 // Insert it right before the return null; at the end of handlePanelComponent
 const marker = '  return null;\r\n}';
 code = code.replace(marker, codeToAppend + '\n' + marker);
 
-fs.writeFileSync('hcpss-worker/src/panelcomponents.js', code, 'utf8');
+fs.writeFileSync('ss-worker/src/panelcomponents.js', code, 'utf8');
 console.log("Appended properly inside handlePanelComponent");

@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-let code = fs.readFileSync('hcpss-worker/src/index.js', 'utf8');
+let code = fs.readFileSync('ss-worker/src/index.js', 'utf8');
 
 const oldSection = `        const { text, author, url: postUrl, image } = payload;
         if (!text && !image) {
@@ -88,5 +88,5 @@ const newSection = `        // Support both:
 
 code = code.replace(oldSection, newSection);
 
-fs.writeFileSync('hcpss-worker/src/index.js', code, 'utf8');
+fs.writeFileSync('ss-worker/src/index.js', code, 'utf8');
 console.log("Updated social-hook to handle Apify format");

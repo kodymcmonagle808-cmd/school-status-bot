@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-let code = fs.readFileSync('hcpss-worker/src/index.js', 'utf8');
+let code = fs.readFileSync('ss-worker/src/index.js', 'utf8');
 
 const hookLogic = `
     if (url.pathname === '/social-hook') {
@@ -68,5 +68,5 @@ const hookLogic = `
 const marker = "    if (url.pathname === '/push-data') {";
 code = code.replace(marker, hookLogic + '\n' + marker);
 
-fs.writeFileSync('hcpss-worker/src/index.js', code, 'utf8');
+fs.writeFileSync('ss-worker/src/index.js', code, 'utf8');
 console.log("Added /social-hook endpoint");

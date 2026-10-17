@@ -114,7 +114,7 @@ export default {
         }
         return jsonResponse({
           ok: true,
-          worker: 'hcpss-worker',
+          worker: 'ss-worker',
           gitSha: env.GIT_SHA || null,
           timestamp: new Date().toISOString(),
           manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN,
@@ -170,7 +170,7 @@ export default {
         }
       }
 
-      return new Response('HCPSS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
+      return new Response('SS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
     }
 
     if (request.method !== 'POST') {

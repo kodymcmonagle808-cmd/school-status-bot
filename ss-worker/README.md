@@ -67,7 +67,7 @@ Add these repository secrets under GitHub repo `Settings` > `Secrets and variabl
 - `MANUAL_TRIGGER_TOKEN` optional, but required if you want manual public POST triggers
 - `NWS_HOOK_SECRET` optional, enables the `/nws-hook` push endpoint for the external NWS poller (see below)
 
-Then run the `Deploy HCPSS Worker` workflow, or push to `main`.
+Then run the `Deploy SS Worker` workflow, or push to `main`.
 
 The workflow creates a KV namespace, patches `wrangler.toml`, uploads Worker secrets, and deploys the Worker.
 
@@ -78,7 +78,7 @@ The deploy script reuses an existing HCPSS KV namespace when one is present so t
 Set the Worker URL as your Discord Application Interactions Endpoint URL:
 
 ```text
-https://hcpss-worker.kodymcmonagle808.workers.dev
+https://ss-worker.kodymcmonagle808.workers.dev
 ```
 
 Discord Developer Portal path:
@@ -97,14 +97,14 @@ PowerShell example:
 
 ```powershell
 $headers = @{ Authorization = "Bearer YOUR_MANUAL_TRIGGER_TOKEN" }
-Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
+Invoke-WebRequest -Method POST "https://ss-worker.kodymcmonagle808.workers.dev" -Headers $headers
 ```
 
 You can also use the explicit header:
 
 ```powershell
 $headers = @{ "x-manual-trigger-token" = "YOUR_MANUAL_TRIGGER_TOKEN" }
-Invoke-WebRequest -Method POST "https://hcpss-worker.kodymcmonagle808.workers.dev" -Headers $headers
+Invoke-WebRequest -Method POST "https://ss-worker.kodymcmonagle808.workers.dev" -Headers $headers
 ```
 
 ## Push-Based Watchers (optional)
@@ -147,7 +147,7 @@ Setup steps are in the comment at the top of the script file.
 ## Health Check
 
 ```text
-GET https://hcpss-worker.kodymcmonagle808.workers.dev/health
+GET https://ss-worker.kodymcmonagle808.workers.dev/health
 ```
 
 The health check returns JSON with the Worker name, timestamp, whether the manual trigger token is configured, the number of served guilds, the current scraper failure streak, and the last status-change timestamp.
@@ -181,7 +181,7 @@ The health check returns JSON with the Worker name, timestamp, whether the manua
 ## Tests
 
 ```bash
-cd hcpss-worker
+cd ss-worker
 node --test
 ```
 

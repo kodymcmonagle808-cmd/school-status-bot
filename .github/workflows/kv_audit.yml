@@ -33,7 +33,7 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
         run: |
-          cd hcpss-worker
+          cd ss-worker
           node scripts/kv_audit.mjs 2>&1 | tee audit.log
 
       - name: Open or update findings issue
@@ -47,7 +47,7 @@ jobs:
             echo "The monthly KV orphan audit found per-guild keys for guilds no longer in guild_index (report-only — nothing was deleted). Output:"
             echo
             echo '```'
-            tail -60 hcpss-worker/audit.log 2>/dev/null || echo '(no log captured)'
+            tail -60 ss-worker/audit.log 2>/dev/null || echo '(no log captured)'
             echo '```'
             echo
             echo "If a base key name is missing from guildKeys() in cleanup.js, add it there, then purge the leftovers manually."

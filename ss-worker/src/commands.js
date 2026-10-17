@@ -1256,7 +1256,7 @@ export async function runSocialLinkCommand(body, env) {
   await env.STATUS_KV.put(`social_hook:${guildId}:${token}`, channelId);
 
   // Use PUBLIC_BASE_URL if available, otherwise generic
-  const baseUrl = env.PUBLIC_BASE_URL || 'https://hcpss-worker.kodymcmonagle808.workers.dev';
+  const baseUrl = env.PUBLIC_BASE_URL || 'https://ss-worker.kodymcmonagle808.workers.dev';
   const webhookUrl = `${baseUrl}/social-hook?guild_id=${guildId}&token=${token}`;
 
   const instructions = `✅ **Social Webhook Generated**

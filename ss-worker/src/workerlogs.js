@@ -21,7 +21,7 @@
 const OBSERVABILITY_URL_PATH = '/workers/observability/telemetry/query';
 // Matches `name` in wrangler.toml — the service tag Workers Logs files events
 // under. Overridable so a renamed/preview Worker can still read its own logs.
-const DEFAULT_SERVICE = 'hcpss-worker';
+const DEFAULT_SERVICE = 'ss-worker';
 
 export const LOGS_PATH = '/logs';
 export const LOGS_LINK_TTL_MS = 30 * 60 * 1000;

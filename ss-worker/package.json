@@ -1,5 +1,5 @@
 {
-  "name": "hcpss-worker",
+  "name": "ss-worker",
   "private": true,
   "type": "module",
   "scripts": {

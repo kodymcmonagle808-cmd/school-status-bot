@@ -651,7 +651,7 @@ musicPlayer.on(AudioPlayerStatus.Buffering, () => {
   console.log('⏳ AudioPlayer buffering...');
 });
 
-const WORKER_URL = 'https://hcpss-worker.kodymcmonagle808.workers.dev';
+const WORKER_URL = 'https://ss-worker.kodymcmonagle808.workers.dev';
 const configCache = new Map();
 const configCacheTime = new Map();
 

@@ -52,7 +52,7 @@
 //   1. Go to https://script.google.com → New project, name it "nws-alert-watcher".
 //   2. Replace the default Code.gs content with this file.
 //   3. Project Settings (gear icon) → Script Properties → add:
-//        WORKER_URL       = https://hcpss-worker.kodymcmonagle808.workers.dev
+//        WORKER_URL       = https://ss-worker.kodymcmonagle808.workers.dev
 //        NWS_HOOK_SECRET  = <the same secret you set on the Worker/GitHub>
 //      Optional, only needed for showLogs() — see that function's comment:
 //        CF_ACCOUNT_ID    = <your Cloudflare account id>
@@ -751,7 +751,7 @@ function fetchZoneBody(zone) {
 }
 
 // Reduces a zone's raw features to exactly what the Worker keeps — this is a
-// mirror of summarizeWeatherAlerts in hcpss-worker/src/weather.js: real
+// mirror of summarizeWeatherAlerts in ss-worker/src/weather.js: real
 // alerts only ('Actual' status), no cancellations, one entry per event name.
 //
 // Fingerprinting the raw feed (alert id + sent time) was a steady KV drain:
@@ -791,7 +791,7 @@ function alertFingerprintParts(features) {
   return Object.keys(byEvent).map(function (k) { return byEvent[k].part; }).sort();
 }
 
-// Hand-copy of isWeaAlert in hcpss-worker/src/weather.js — the tags NWS uses
+// Hand-copy of isWeaAlert in ss-worker/src/weather.js — the tags NWS uses
 // to mark a product for delivery to phones. tests/gaswatcher.test.js
 // cross-checks the two so they cannot drift.
 function alertParam(p, key) {
@@ -858,7 +858,7 @@ function resetFingerprints() {
 // --- Reading the Worker's logs from here ---
 //
 // Everything the Worker does is written to Cloudflare's own log store with an
-// ACT| prefix (see hcpss-worker/src/actionlog.js). Those logs cost nothing —
+// ACT| prefix (see ss-worker/src/actionlog.js). Those logs cost nothing —
 // unlike KV — and they are queryable over the Cloudflare API, which means this
 // function talks to Cloudflare directly and never touches the Worker. That is
 // the point: the Worker posts none of this to Discord (the control panel is
@@ -889,7 +889,7 @@ function showLogs(hours, onlyErrors) {
   var from = to - (Number(hours) > 0 ? Number(hours) : 2) * 3600 * 1000;
 
   var filters = [
-    { key: '$metadata.service', operation: 'eq', type: 'string', value: 'hcpss-worker' }
+    { key: '$metadata.service', operation: 'eq', type: 'string', value: 'ss-worker' }
   ];
 
   var resp = UrlFetchApp.fetch(

@@ -22,15 +22,15 @@ jobs:
 
       - name: Install dev dependencies
         run: |
-          cd hcpss-worker
+          cd ss-worker
           npm ci --no-audit --no-fund
 
       - name: Lint
         run: |
-          cd hcpss-worker
+          cd ss-worker
           npm run lint
 
       - name: Run worker tests
         run: |
-          cd hcpss-worker
+          cd ss-worker
           node --test

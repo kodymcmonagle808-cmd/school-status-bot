@@ -50,7 +50,7 @@ Restore defaults to a **dry run** — it prints what it would write without
 touching anything. Only `--write` modifies the namespace.
 
 ```bash
-cd hcpss-worker
+cd ss-worker
 # dry run first, always:
 CF_API_TOKEN=... CF_ACCOUNT_ID=... node scripts/kv_restore.mjs kv_backup.json
 # then, if the plan looks right:
