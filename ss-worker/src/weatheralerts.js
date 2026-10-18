@@ -13,7 +13,7 @@
 import { getEasternTimeStr } from './timeutil.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { getDistrictMeta } from './districts.js';
-import { getActiveWeatherAlerts, isSchoolImpactIssuance, isEmergencyAlert, DEFAULT_NWS_ZONE, WINTER_EVENT_RE, HEAT_EVENT_RE } from './weather.js';
+import { getActiveWeatherAlerts, isSchoolImpactIssuance, isEmergencyAlert, DEFAULT_NWS_ZONE, WINTER_EVENT_RE, HEAT_EVENT_RE, PING_TORNADO_RE, PING_FLOOD_RE, PING_STORM_RE } from './weather.js';
 import { discordFetch } from './discord.js';
 import { logAction, logActionError } from './actionlog.js';
 
@@ -311,20 +311,26 @@ async function postNotice(env, channelId, payload) {
   }
 }
 
-// Alert category for ping-role routing: winter events, heat events,
-// everything else falls to default.
+// Alert category for ping-role routing: tornado, flood, winter, heat,
+// storm, then minimal for minor-severity leftovers — everything else
+// falls to default. Order matters: specific hazards beat the generic
+// storm bucket, and minimal is severity-based so it runs first.
 function alertCategory(alert) {
   const event = (alert && alert.event || '').toLowerCase();
+  if ((alert && alert.severity) === 'Minor') return 'minimal';
+  if (PING_TORNADO_RE.test(event)) return 'tornado';
+  if (PING_FLOOD_RE.test(event)) return 'flood';
   if (WINTER_EVENT_RE.test(event)) return 'winter';
   if (HEAT_EVENT_RE.test(event)) return 'heat';
+  if (PING_STORM_RE.test(event)) return 'storm';
   return 'default';
 }
 
 // Collect the ping roles for a set of routine alerts from the control-panel
 // config. `cfg.ping_role_ids` may be a flat array (legacy format, treated as
-// the default category) or an object keyed by category ({winter, heat,
-// default}). Roles from each alert's category are unioned, with default
-// roles always included as a fallback.
+// the default category) or an object keyed by category (tornado, flood,
+// winter, heat, storm, minimal, default). Roles from each alert's category
+// are unioned, with default roles always included as a fallback.
 function pingRolesForAlerts(cfg, alerts) {
   const raw = cfg && cfg.ping_role_ids;
   if (!raw) return [];

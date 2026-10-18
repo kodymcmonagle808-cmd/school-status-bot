@@ -61,6 +61,7 @@ export function getEffectiveConfig(stored) {
   if (!next.status_ping_roles) next.status_ping_roles = {};
   if (!next.status_embed_colors) next.status_embed_colors = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
+  if (!next.editing_nws_ping_key) next.editing_nws_ping_key = 'default';
   if (!Array.isArray(next.check_schedule)) {
     next.check_schedule = [...DEFAULT_CHECK_SCHEDULE];
   }

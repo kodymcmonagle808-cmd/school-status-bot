@@ -46,7 +46,7 @@ for (const [label, pingRoles] of [
   ['empty config', undefined],
   ['empty object', {}],
   ['legacy flat array', ['111']],
-  ['full object', { winter: ['111'], heat: ['222'], default: ['333'] }]
+  ['full object', { tornado: ['100'], flood: ['200'], winter: ['111'], heat: ['222'], storm: ['300'], minimal: ['400'], default: ['333'] }]
 ]) {
   test(`config_nws_pings page renders valid Discord payload (${label})`, async () => {
     const kv = kvStub({

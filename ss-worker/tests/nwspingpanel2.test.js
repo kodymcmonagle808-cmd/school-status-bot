@@ -1,8 +1,9 @@
 // Validates the NWS page's place in the full panel: nav size limits,
-// per-interaction payload size, and the cfg_nws_ping_* save handlers.
+// per-interaction payload size, and the cfg_nws_ping_select /
+// cfg_nws_ping_role save handlers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PANEL_NAV_TABS, buildControlPanelPayload, applyConfigUpdate } from '../src/panel.js';
+import { PANEL_NAV_TABS, NWS_PING_CATEGORIES, buildControlPanelPayload, applyConfigUpdate } from '../src/panel.js';
 
 function kvStub(entries = {}) {
   const map = new Map(Object.entries(entries));
@@ -38,29 +39,43 @@ test('every panel interaction payload stays under Discord size limits', async ()
   }
 });
 
-test('cfg_nws_ping_* handlers save one role per category', async () => {
+test('NWS categories cover storm, flood, tornado, heat, winter, minimal, default', () => {
+  const keys = NWS_PING_CATEGORIES.map(c => c.key);
+  for (const k of ['storm', 'flood', 'tornado', 'heat', 'winter', 'minimal', 'default']) {
+    assert.ok(keys.includes(k), `missing category: ${k}`);
+  }
+});
+
+test('cfg_nws_ping handlers save one role per category via editing key', async () => {
   const kv = kvStub({ 'config:g1': JSON.stringify({}) });
   const env = envFor(kv);
   const body = (cid, vals) => ({ guild_id: 'g1', data: { custom_id: cid, values: vals } });
 
-  let next = await applyConfigUpdate(body('cfg_nws_ping_winter', ['111']), env);
-  assert.deepEqual(next.ping_role_ids.winter, ['111']);
-
-  next = await applyConfigUpdate(body('cfg_nws_ping_heat', ['222']), env);
-  assert.deepEqual(next.ping_role_ids.heat, ['222']);
-
-  next = await applyConfigUpdate(body('cfg_nws_ping_default', ['333']), env);
-  assert.deepEqual(next.ping_role_ids.default, ['333']);
+  for (const [cat, role] of [['storm', '100'], ['flood', '200'], ['tornado', '300'], ['heat', '400'], ['winter', '111'], ['minimal', '500'], ['default', '333']]) {
+    let next = await applyConfigUpdate(body('cfg_nws_ping_select', [cat]), env);
+    assert.equal(next.editing_nws_ping_key, cat);
+    next = await applyConfigUpdate(body('cfg_nws_ping_role', [role]), env);
+    assert.deepEqual(next.ping_role_ids[cat], [role]);
+  }
 
   // Clearing a role empties the category instead of leaving a stale id.
-  next = await applyConfigUpdate(body('cfg_nws_ping_winter', []), env);
+  await applyConfigUpdate(body('cfg_nws_ping_select', ['winter']), env);
+  const next = await applyConfigUpdate(body('cfg_nws_ping_role', []), env);
   assert.deepEqual(next.ping_role_ids.winter, []);
 });
 
-test('cfg_nws_ping_* handlers recover from legacy flat-array configs', async () => {
+test('cfg_nws_ping_role falls back to default on an unknown editing key', async () => {
+  const kv = kvStub({ 'config:g1': JSON.stringify({ editing_nws_ping_key: 'bogus' }) });
+  const env = envFor(kv);
+  const next = await applyConfigUpdate({ guild_id: 'g1', data: { custom_id: 'cfg_nws_ping_role', values: ['111'] } }, env);
+  assert.deepEqual(next.ping_role_ids.default, ['111']);
+});
+
+test('cfg_nws_ping handlers recover from legacy flat-array configs', async () => {
   const kv = kvStub({ 'config:g1': JSON.stringify({ ping_role_ids: ['999'] }) });
   const env = envFor(kv);
-  const next = await applyConfigUpdate({ guild_id: 'g1', data: { custom_id: 'cfg_nws_ping_winter', values: ['111'] } }, env);
+  await applyConfigUpdate({ guild_id: 'g1', data: { custom_id: 'cfg_nws_ping_select', values: ['winter'] } }, env);
+  const next = await applyConfigUpdate({ guild_id: 'g1', data: { custom_id: 'cfg_nws_ping_role', values: ['111'] } }, env);
   assert.ok(!Array.isArray(next.ping_role_ids), 'flat array must be replaced by an object');
   assert.deepEqual(next.ping_role_ids.winter, ['111']);
 });

@@ -21,6 +21,19 @@ import { logAction } from './actionlog.js';
 import { discordFetch } from './discord.js';
 import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
 
+// NWS alert categories for ping-role routing. Order matches the check
+// order in alertCategory(): specific hazards win over the generic storm
+// bucket, and minimal-severity events route to 'minimal'.
+export const NWS_PING_CATEGORIES = [
+  { key: 'tornado', label: 'Tornado', hint: 'Tornado watch/warning' },
+  { key: 'flood', label: 'Flood', hint: 'Flood/flash flood watch/warning' },
+  { key: 'winter', label: 'Winter', hint: 'Snow/ice/cold watch/warning/advisory' },
+  { key: 'heat', label: 'Heat', hint: 'Heat advisory/warning' },
+  { key: 'storm', label: 'Storm', hint: 'Thunderstorm/wind/hurricane' },
+  { key: 'minimal', label: 'Minimal', hint: 'Minor-severity advisories' },
+  { key: 'default', label: 'Default', hint: 'Everything else' }
+];
+
 const BAR_SEGMENTS = 20;
 
 // How many stored lines the Recent Logs page shows, and the ceiling their block
@@ -1058,23 +1071,27 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   if (page === 'config_nws_pings') {
     const rawPing = config.ping_role_ids;
     const pingRoles = Array.isArray(rawPing) ? { default: rawPing } : (rawPing || {});
-    const winterRoles = Array.isArray(pingRoles.winter) ? pingRoles.winter : [];
-    const heatRoles = Array.isArray(pingRoles.heat) ? pingRoles.heat : [];
-    const defaultRoles = Array.isArray(pingRoles.default) ? pingRoles.default : [];
+    const editingPingCat = NWS_PING_CATEGORIES.some(c => c.key === config.editing_nws_ping_key)
+      ? config.editing_nws_ping_key
+      : 'default';
+    const found = NWS_PING_CATEGORIES.find(c => c.key === editingPingCat);
+    const editingPingLabel = found ? found.label : 'Default';
 
-    const winterDisplay = winterRoles.length ? winterRoles.map(r => '<@&' + r + '>').join(', ') : '(none)';
-    const heatDisplay = heatRoles.length ? heatRoles.map(r => '<@&' + r + '>').join(', ') : '(none)';
-    const defaultDisplay = defaultRoles.length ? defaultRoles.map(r => '<@&' + r + '>').join(', ') : '(none)';
+    const pingLines = NWS_PING_CATEGORIES.map(c => {
+      const ids = Array.isArray(pingRoles[c.key]) ? pingRoles[c.key] : [];
+      const display = ids.length ? ids.map(r => '<@&' + r + '>').join(', ') : '(none)';
+      const marker = c.key === editingPingCat ? '-> ' : '- ';
+      return marker + '**' + c.label + '** (' + c.hint + '): ' + display;
+    }).join('\n');
 
     const embed = {
-      title: 'Control Panel — NWS Ping Roles',
+      title: 'Control Panel - NWS Ping Roles',
       color: 0xF39C12,
       description: '### NWS Alert Ping Roles\n' +
                    'Choose which Discord roles get pinged when NWS alerts are issued.\n\n' +
-                   '• **Winter** (snow/ice): ' + winterDisplay + '\n' +
-                   '• **Heat** (heat advisory/warning): ' + heatDisplay + '\n' +
-                   '• **Default** (all other alerts): ' + defaultDisplay + '\n\n' +
-                   '*Select a role from each dropdown to set it. Leave blank for none. Changes save instantly.*',
+                   '**Current Mapping:**\n' + pingLines + '\n\n' +
+                   '-> *Currently editing: **' + editingPingLabel + '***\n' +
+                   '*Pick a category, then pick its role below. Leave blank for none. Changes save instantly.*',
       timestamp: new Date().toISOString()
     };
 
@@ -1083,10 +1100,16 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       {
         type: 1,
         components: [{
-          type: 6,
-          custom_id: 'cfg_nws_ping_winter',
-          placeholder: 'Select winter alert ping role',
-          min_values: 0,
+          type: 3,
+          custom_id: 'cfg_nws_ping_select',
+          placeholder: 'Editing category: ' + editingPingLabel,
+          options: NWS_PING_CATEGORIES.map(c => ({
+            label: c.label,
+            value: c.key,
+            description: c.hint,
+            default: c.key === editingPingCat
+          })),
+          min_values: 1,
           max_values: 1
         }]
       },
@@ -1094,18 +1117,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         type: 1,
         components: [{
           type: 6,
-          custom_id: 'cfg_nws_ping_heat',
-          placeholder: 'Select heat alert ping role',
-          min_values: 0,
-          max_values: 1
-        }]
-      },
-      {
-        type: 1,
-        components: [{
-          type: 6,
-          custom_id: 'cfg_nws_ping_default',
-          placeholder: 'Select default alert ping role',
+          custom_id: 'cfg_nws_ping_role',
+          placeholder: 'Select ping role for ' + editingPingLabel,
           min_values: 0,
           max_values: 1
         }]
@@ -1114,7 +1127,6 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
     return { embeds: [embed], components };
   }
-
   if (page === 'config_schedule') {
     const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
     const scheduleLines = currentSchedule
@@ -1698,6 +1710,7 @@ export async function applyConfigUpdate(body, env) {
   const next = { ...current };
   if (!next.status_ping_roles) next.status_ping_roles = {};
   if (!next.editing_status_key) next.editing_status_key = 'normal_operations';
+  if (!next.editing_nws_ping_key) next.editing_nws_ping_key = 'default';
 
   if (customId === 'cfg_channel' && Array.isArray(values) && values[0]) {
     next.alert_channel_id = values[0];
@@ -1728,27 +1741,23 @@ export async function applyConfigUpdate(body, env) {
     } else {
       next.status_ping_roles[editingKey] = null;
     }
-  } else if (customId === 'cfg_nws_ping_winter') {
-    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object' || Array.isArray(next.ping_role_ids)) next.ping_role_ids = {};
-    if (Array.isArray(values) && values[0]) {
-      next.ping_role_ids.winter = [values[0]];
-    } else {
-      next.ping_role_ids.winter = [];
+  } else if (customId === 'cfg_nws_ping_select' && Array.isArray(values) && values[0]) {
+    if (NWS_PING_CATEGORIES.some(c => c.key === values[0])) {
+      next.editing_nws_ping_key = values[0];
     }
-  } else if (customId === 'cfg_nws_ping_heat') {
-    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object' || Array.isArray(next.ping_role_ids)) next.ping_role_ids = {};
+  } else if (customId === 'cfg_nws_ping_role') {
+    const editingPingCat = NWS_PING_CATEGORIES.some(c => c.key === next.editing_nws_ping_key)
+      ? next.editing_nws_ping_key
+      : 'default';
+    let pingMap = next.ping_role_ids;
+    if (!pingMap || typeof pingMap !== 'object' || Array.isArray(pingMap)) pingMap = {};
+    else pingMap = { ...pingMap };
     if (Array.isArray(values) && values[0]) {
-      next.ping_role_ids.heat = [values[0]];
+      pingMap[editingPingCat] = [values[0]];
     } else {
-      next.ping_role_ids.heat = [];
+      pingMap[editingPingCat] = [];
     }
-  } else if (customId === 'cfg_nws_ping_default') {
-    if (!next.ping_role_ids || typeof next.ping_role_ids !== 'object' || Array.isArray(next.ping_role_ids)) next.ping_role_ids = {};
-    if (Array.isArray(values) && values[0]) {
-      next.ping_role_ids.default = [values[0]];
-    } else {
-      next.ping_role_ids.default = [];
-    }
+    next.ping_role_ids = pingMap;
   } else if (customId === 'cfg_schedpick_hour' && Array.isArray(values) && values[0] !== undefined) {
     const pick = next.schedule_pick || {};
     pick.h = parseInt(values[0], 10);

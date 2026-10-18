@@ -16,7 +16,7 @@ test('isSchoolImpactIssuance matches winter and heat watch/warning/advisory even
   assert.ok(isSchoolImpactIssuance({ event: 'Winter Weather Advisory', severity: 'Minor' }));
   assert.ok(isSchoolImpactIssuance({ event: 'Ice Storm Warning', severity: 'Severe' }));
   assert.ok(isSchoolImpactIssuance({ event: 'Wind Chill Advisory', severity: 'Minor' }));
-  assert.ok(isSchoolImpactIssuance({ event: 'Heat Advisory', severity: 'Minor' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Heat Advisory', severity: 'Moderate' }));
   assert.ok(isSchoolImpactIssuance({ event: 'Excessive Heat Warning', severity: 'Severe' }));
 });
 
@@ -35,8 +35,18 @@ test('isSchoolImpactIssuance includes Extreme severity regardless of event name'
   assert.ok(isSchoolImpactIssuance({ event: 'Tornado Warning', severity: 'Extreme' }));
 });
 
+test('isSchoolImpactIssuance matches storm and flood watch/warning events', () => {
+  assert.ok(isSchoolImpactIssuance({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Severe Thunderstorm Watch', severity: 'Moderate' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Flash Flood Warning', severity: 'Severe' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'Flood Watch', severity: 'Moderate' }));
+  assert.ok(isSchoolImpactIssuance({ event: 'High Wind Warning', severity: 'Moderate' }));
+});
+
 test('isSchoolImpactIssuance excludes non-alert products and unrelated events', () => {
+  // Advisories at the storm/flood tiers stay quiet.
   assert.ok(!isSchoolImpactIssuance({ event: 'Flood Advisory', severity: 'Minor' }));
+  assert.ok(!isSchoolImpactIssuance({ event: 'Wind Advisory', severity: 'Minor' }));
   assert.ok(!isSchoolImpactIssuance({ event: 'Special Weather Statement', severity: 'Moderate' }));
   assert.ok(!isSchoolImpactIssuance({ event: 'Winter Outlook', severity: 'Minor' })); // no watch/warning/advisory level
   // Convective matching is scoped to watch/warning: NWS issues no advisory at
@@ -632,7 +642,7 @@ test('isEmergencyAlert leaves the routine storm products alone', () => {
   assert.ok(!isEmergencyAlert({ event: 'Severe Thunderstorm Warning', severity: 'Severe' }));
   assert.ok(!isEmergencyAlert({ event: 'Flash Flood Warning', severity: 'Severe' }));
   assert.ok(!isEmergencyAlert({ event: 'Winter Storm Warning', severity: 'Severe' }));
-  assert.ok(!isEmergencyAlert({ event: 'Heat Advisory', severity: 'Minor' }));
+  assert.ok(!isEmergencyAlert({ event: 'Heat Advisory', severity: 'Moderate' }));
   assert.ok(!isEmergencyAlert(null));
 });
 
@@ -848,7 +858,7 @@ test('the scan deletes the notices it prunes instead of orphaning them', async (
   });
   // A brand-new alert, so the scan posts and rewrites the map.
   kv.map.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -882,7 +892,7 @@ test('a scan with nothing to announce leaves expired entries for the cleanup pas
     'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' }),
     'nws_alerts_seen:g1': stale,
     weather_alerts_cache: JSON.stringify([
-      { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+      { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
     ])
   });
 
@@ -1031,7 +1041,7 @@ test('an emergency and a routine alert in one scan post as separate messages', a
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
     { event: 'Tornado Warning', severity: 'Extreme', endsMs: now.getTime() + 1_800_000, onsetMs: 0, headline: '' },
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -1065,7 +1075,7 @@ test('a routine notice pings the roles set in the control panel', async (t) => {
     })
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -1091,7 +1101,7 @@ test('a routine notice posts without a mention when no roles are configured', as
     'config:g1': JSON.stringify({ alert_channel_id: 'chan-1' })
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -1156,7 +1166,7 @@ test('a routine heat alert pings heat roles, not winter roles', async (t) => {
     })
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -1167,6 +1177,90 @@ test('a routine heat alert pings heat roles, not winter roles', async (t) => {
   assert.equal(messages[0].body.content, '<@&role-heat> <@&role-default>');
   assert.deepEqual(messages[0].body.allowed_mentions, { parse: [], roles: ['role-heat', 'role-default'] });
   assert.match(messages[0].body.embeds[0].title, /Heat Advisory/);
+});
+
+test('a routine tornado warning pings tornado roles plus default', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET - routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', ping_role_ids: { tornado: ['role-tornado'], default: ['role-default'] } })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Tornado Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+  const messages = posts.filter(m => m.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-tornado> <@&role-default>');
+});
+
+test('a routine flood warning pings flood roles, not storm roles', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET - routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', ping_role_ids: { flood: ['role-flood'], storm: ['role-storm'], default: ['role-default'] } })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Flash Flood Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+  const messages = posts.filter(m => m.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-flood> <@&role-default>');
+});
+
+test('a routine severe thunderstorm warning pings storm roles plus default', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET - routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', ping_role_ids: { storm: ['role-storm'], default: ['role-default'] } })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Severe Thunderstorm Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+  const messages = posts.filter(m => m.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-storm> <@&role-default>');
+});
+
+test('a minor-severity advisory routes to minimal, not its name match', async (t) => {
+  const now = new Date(Date.parse('2026-07-29T18:06:00Z')); // 2:06 PM ET - routine allowed
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    posts.push({ url: String(url), body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ id: 'm-routine' }), { status: 200 });
+  });
+  const kv = kvStub({
+    guild_index: JSON.stringify(['g1']),
+    'config:g1': JSON.stringify({ alert_channel_id: 'chan-1', ping_role_ids: { minimal: ['role-minimal'], winter: ['role-winter'], default: ['role-default'] } })
+  });
+  kv.map.set('weather_alerts_cache', JSON.stringify([
+    { event: 'Winter Weather Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+  ]));
+  const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
+  assert.equal(result.sent, 1);
+  const messages = posts.filter(m => m.url.includes('/channels/chan-1/messages'));
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].body.content, '<@&role-minimal> <@&role-default>');
 });
 
 test('a routine alert with no category roles falls back to default only', async (t) => {
@@ -1222,7 +1316,7 @@ test('multiple alerts of different categories union their roles', async (t) => {
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
     { event: 'Winter Storm Warning', severity: 'Severe', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' },
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);
@@ -1250,7 +1344,7 @@ test('legacy flat-array ping_role_ids still works as default category', async (t
     })
   });
   kv.map.set('weather_alerts_cache', JSON.stringify([
-    { event: 'Heat Advisory', severity: 'Minor', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
+    { event: 'Heat Advisory', severity: 'Moderate', endsMs: now.getTime() + 36_000_000, onsetMs: 0, headline: '' }
   ]));
 
   const result = await maybeSendWeatherAlertNotices(emergencyEnv(kv), now);

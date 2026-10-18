@@ -129,6 +129,12 @@ export function formatWeatherAlertLines(alerts) {
 // NWS rates Severe/Extreme.
 const STORM_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold|storm|heat/i;
 
+// Alert hazard classification for ping-role routing. PING_ prefix avoids
+// colliding with the storm-mode STORM_EVENT_RE below.
+export const PING_TORNADO_RE = /tornado/i;
+export const PING_FLOOD_RE = /flood/i;
+export const PING_STORM_RE = /severe thunderstorm|thunderstorm|hurricane|tropical storm|high wind|wind advisory|extreme wind/i;
+
 // Winter vs heat classification, used to pick seasonal emoji for the outlook.
 export const WINTER_EVENT_RE = /winter|snow|ice|blizzard|freez|sleet|wind chill|cold/i;
 export const HEAT_EVENT_RE = /heat/i;
@@ -212,7 +218,9 @@ export function hasEmergencyAlert(alerts) {
 
 // Alerts worth announcing the moment NWS issues them: the winter and heat
 // events school decisions hinge on, at watch/warning/advisory level (a
-// Winter Weather Advisory is the classic 2-hour-delay signal), the convective
+// Winter Weather Advisory is the classic 2-hour-delay signal), flood
+// watch/warnings (roads and school zones flood; advisories stay quiet),
+// storm watch/warnings (severe thunderstorm holds dismissal), the convective
 // events above at watch/warning level, plus the emergency tier.
 //
 // The emergency check leads so that tier is a strict subset of this one: an
@@ -224,6 +232,8 @@ export function isSchoolImpactIssuance(alert) {
   if (isEmergencyAlert(alert)) return true;
   const event = alert.event || '';
   if (CONVECTIVE_EVENT_RE.test(event)) return /warning|watch/i.test(event);
+  if (PING_FLOOD_RE.test(event)) return /warning|watch/i.test(event);
+  if (PING_STORM_RE.test(event)) return /warning|watch/i.test(event);
   if (!WINTER_EVENT_RE.test(event) && !HEAT_EVENT_RE.test(event)) return false;
   return /warning|watch|advisory/i.test(event);
 }
