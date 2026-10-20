@@ -447,7 +447,7 @@ payload=$(jq -n '[
   },
   {
     name: "setupjoinlogs",
-    description: "Configure join logs: channel, ping role, and role to give after info is filled.",
+    description: "Configure join logs: channel, ping role, roles to give/remove after info is filled.",
     type: 1,
     integration_types: [0],
     contexts: [0],
@@ -455,7 +455,8 @@ payload=$(jq -n '[
     options: [
       { name: "channel", description: "The channel to post join logs in.", type: 7, channel_types: [0], required: true },
       { name: "ping_role", description: "The role to ping when a user joins.", type: 8, required: true },
-      { name: "give_role", description: "The role to give the user after their info is filled.", type: 8, required: true }
+      { name: "give_role", description: "The role to give the user after their info is filled.", type: 8, required: true },
+      { name: "remove_role", description: "The role to remove from the user after their info is filled (e.g. Unverified).", type: 8, required: false }
     ]
   },
   {

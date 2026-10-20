@@ -1064,6 +1064,20 @@ export async function handleInteraction(body, env, ctx) {
           method: 'PUT',
           headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
         });
+        // Also remove the configured remove role (e.g. Unverified), if any.
+        try {
+          const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+          const removeRole = rawJoinLogs ? JSON.parse(rawJoinLogs).removeRole : null;
+          if (removeRole && removeRole !== giveRole) {
+            await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${removeRole}`, {
+              method: 'DELETE',
+              headers: {
+                Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+                'X-Audit-Log-Reason': 'Join info approved: unverified role removed'
+              }
+            }).catch(() => {});
+          }
+        } catch {}
         if (nameToSet) {
           await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}`, {
             method: 'PATCH',

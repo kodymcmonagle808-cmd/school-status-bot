@@ -43,11 +43,28 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     ctx.waitUntil((async () => {
       try {
-        // 1. Add the role
+        // 1. Add the give role
         await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${giveRole}`, {
           method: 'PUT',
           headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` }
         });
+
+        // 1b. Remove the configured remove role (e.g. Unverified), if any.
+        // Read from the joinlogs config so staff can change it without
+        // re-running setup; a missing/failed removal never blocks the rest.
+        try {
+          const rawJoinLogs = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+          const removeRole = rawJoinLogs ? JSON.parse(rawJoinLogs).removeRole : null;
+          if (removeRole && removeRole !== giveRole) {
+            await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${targetUserId}/roles/${removeRole}`, {
+              method: 'DELETE',
+              headers: {
+                Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+                'X-Audit-Log-Reason': 'Join info approved: unverified role removed'
+              }
+            }).catch(() => {});
+          }
+        } catch {}
 
         // 2. Set the nickname if a name was provided
         if (name) {

@@ -1207,6 +1207,7 @@ export async function runSetupJoinLogsCommand(body, env) {
   const channel = getCommandOption(options, 'channel');
   const pingRole = getCommandOption(options, 'ping_role');
   const giveRole = getCommandOption(options, 'give_role');
+  const removeRole = getCommandOption(options, 'remove_role') || null;
 
   if (!channel || !pingRole || !giveRole) {
     return { content: '\u274C Missing required options.', flags: 64 };
@@ -1215,11 +1216,13 @@ export async function runSetupJoinLogsCommand(body, env) {
   await env.STATUS_KV.put('joinlogs_config:' + guildId, JSON.stringify({
     channel,
     pingRole,
-    giveRole
+    giveRole,
+    removeRole
   }));
 
   return {
-    content: '\u2705 Join logs configured! When a user joins, I will post in <#' + channel + '>, ping <@&' + pingRole + '>, and give <@&' + giveRole + '> after staff fills their info.',
+    content: '\u2705 Join logs configured! When a user joins, I will post in <#' + channel + '>, ping <@&' + pingRole + '>, and give <@&' + giveRole + '>' +
+      (removeRole ? ' while removing <@&' + removeRole + '>' : '') + ' after staff fills their info.',
     flags: 64
   };
 }

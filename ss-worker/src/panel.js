@@ -101,7 +101,8 @@ export const PANEL_NAV_TABS = [
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
   { label: 'Auto-Reply', value: 'config_autoreply', emoji: '💬', description: 'Keyword-triggered auto replies' },
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
-  { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' }
+  { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' },
+  { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' }
 ];
 
 function getNavTabForPage(page) {
@@ -1127,6 +1128,79 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
 
     return { embeds: [embed], components };
   }
+  if (page === 'config_joinlogs') {
+    let joinlogs = null;
+    try {
+      const raw = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+      if (raw) joinlogs = JSON.parse(raw);
+    } catch {}
+    const jlChannel = joinlogs && joinlogs.channel ? `<#${joinlogs.channel}>` : '(not set)';
+    const jlPing = joinlogs && joinlogs.pingRole ? `<@&${joinlogs.pingRole}>` : '(not set)';
+    const jlGive = joinlogs && joinlogs.giveRole ? `<@&${joinlogs.giveRole}>` : '(not set)';
+    const jlRemove = joinlogs && joinlogs.removeRole ? `<@&${joinlogs.removeRole}>` : '(none)';
+
+    const embed = {
+      title: 'Control Panel - Join Logs',
+      color: 0x57F287,
+      description: '### Join Logs & Verification\n' +
+                   'When a user joins, the bot posts a card in the join channel and pings staff. ' +
+                   'When staff approves their info, the bot gives the member role and removes the unverified role.\n\n' +
+                   '- **Join Channel**: ' + jlChannel + '\n' +
+                   '- **Staff Ping Role**: ' + jlPing + '\n' +
+                   '- **Role to Give**: ' + jlGive + '\n' +
+                   '- **Role to Remove**: ' + jlRemove + '\n\n' +
+                   '*Pick below to change a setting - saves instantly.*',
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_joinlogs'),
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_joinlogs_channel',
+          placeholder: 'Select join logs channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_joinlogs_ping',
+          placeholder: 'Select staff ping role',
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_joinlogs_give',
+          placeholder: 'Select role to give on approve',
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_joinlogs_remove',
+          placeholder: 'Select role to remove on approve (none to clear)',
+          min_values: 0,
+          max_values: 1
+        }]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
   if (page === 'config_schedule') {
     const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
     const scheduleLines = currentSchedule
@@ -1701,7 +1775,37 @@ export function refreshPanelMessage(env, logChannelId, guildId = '') {
 }
 
 // Applies a config change from a panel select-menu interaction and saves it.
+// Saves a join-logs panel select to the joinlogs_config KV key.
+// Returns the guild config (unchanged) so the caller can render fresh.
+export async function applyJoinlogsUpdate(body, env) {
+  const guildId = body.guild_id || '';
+  const customId = body.data && body.data.custom_id;
+  const values = body.data && body.data.values;
+  let joinlogs = {};
+  try {
+    const raw = await env.STATUS_KV.get(`joinlogs_config:${guildId}`);
+    if (raw) joinlogs = JSON.parse(raw) || {};
+  } catch {}
+  if (customId === 'cfg_joinlogs_channel' && Array.isArray(values) && values[0]) {
+    joinlogs.channel = values[0];
+  } else if (customId === 'cfg_joinlogs_ping' && Array.isArray(values) && values[0]) {
+    joinlogs.pingRole = values[0];
+  } else if (customId === 'cfg_joinlogs_give' && Array.isArray(values) && values[0]) {
+    joinlogs.giveRole = values[0];
+  } else if (customId === 'cfg_joinlogs_remove') {
+    joinlogs.removeRole = (Array.isArray(values) && values[0]) ? values[0] : null;
+  }
+  await env.STATUS_KV.put(`joinlogs_config:${guildId}`, JSON.stringify(joinlogs));
+  return await getConfig(env, guildId);
+}
+
 export async function applyConfigUpdate(body, env) {
+  // Join-logs settings live in their own KV key, not guild config.
+  const _jlId = body.data && body.data.custom_id;
+  if (_jlId === 'cfg_joinlogs_channel' || _jlId === 'cfg_joinlogs_ping' ||
+      _jlId === 'cfg_joinlogs_give' || _jlId === 'cfg_joinlogs_remove') {
+    return await applyJoinlogsUpdate(body, env);
+  }
   const guildId = body.guild_id || '';
   const current = await getConfig(env, guildId);
   const customId = body.data && body.data.custom_id;
