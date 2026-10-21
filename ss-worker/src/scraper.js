@@ -272,6 +272,51 @@ export function determineStatusKey(cards) {
   return 'unknown_alert';
 }
 
+// Titles the bot knows how to classify. Anything else is either a new HCPSS
+// status wording or page drift — callers hold the post and alert staff
+// instead of publishing a status the classifier can't read.
+const KNOWN_TITLE_PATTERNS = [
+  /normal operations/i,
+  /schools closed/i,
+  /schools and offices closed/i,
+  /2 hours late/i,
+  /two hours late/i,
+  /3 hours early/i,
+  /three hours early/i,
+  /early dismissal/i,
+  /delay/i,
+  /clos/i,
+  /virtual/i,
+  /remote/i,
+  /alert/i,
+  /notice/i,
+  /emergency/i,
+  /weather/i,
+  /snow/i,
+  /hurricane/i,
+  /tornado/i
+];
+
+// Validates a fresh scrape before it becomes the status of record.
+// Returns { ok: true } or { ok: false, reason }. Pure; exported for tests.
+export function validateScrape(cards, priorCards) {
+  const list = Array.isArray(cards) ? cards : [];
+  if (!list.length) return { ok: true, empty: true };
+  for (const c of list) {
+    const title = String((c && c.title) || '');
+    if (!title) continue; // body-only cards carry no status signal
+    if (!KNOWN_TITLE_PATTERNS.some(re => re.test(title))) {
+      return { ok: false, reason: `unrecognized status title: ${title.slice(0, 80)}` };
+    }
+  }
+  // A format break usually changes the card count too — flag a sudden jump
+  // so staff look at the page, but don't block on count alone.
+  if (Array.isArray(priorCards) && priorCards.length && Math.abs(list.length - priorCards.length) > 2) {
+    return { ok: false, reason: `card count jumped ${priorCards.length} -> ${list.length}` };
+  }
+  return { ok: true };
+}
+
 const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 // Resolves the status date from the site's date text (e.g. "July 14, 2026") as a plain

@@ -2,7 +2,7 @@
 // failure alerts and recovery notices).
 
 import { getEasternTimeStr, matchesScheduleTime, formatYmdNY, formatStatusDate, stormTickSlot, middayTickSlot, conversionTickSlot } from './timeutil.js';
-import { getStatusCards } from './scraper.js';
+import { getStatusCards, validateScrape } from './scraper.js';
 import { getActiveWeatherAlerts, hasStormAlert } from './weather.js';
 import { getDistrictStatuses, getDistrictMeta, DISTRICT_STATUS_TO_KEY, DISTRICT_STATUS_LABELS } from './districts.js';
 import { trackStatusHistory, getStatusHistory } from './history.js';
@@ -114,13 +114,18 @@ async function handleScraperFailure(env, logChannelId, config, error) {
 
 async function handleScraperSuccess(env, logChannelId, config) {
   const failures = Number(await env.STATUS_KV.get('scraper_failures_count') || 0);
-  if (failures === 0) return;
+  if (failures === 0) {
+    // A clean scrape also clears a drift incident.
+    try { await env.STATUS_KV.delete('scraper_drift_alerted'); } catch {}
+    return;
+  }
 
   await env.STATUS_KV.put('scraper_failures_count', '0');
 
   const wasAlerted = await env.STATUS_KV.get('scraper_failure_alerted') === 'true';
   if (!wasAlerted) return;
   await env.STATUS_KV.delete('scraper_failure_alerted');
+  try { await env.STATUS_KV.delete('scraper_drift_alerted'); } catch {}
 
   // Staff got a failure alert, so close the loop with a recovery notice.
   if (config && config.toggle_error_alerts === false) return;
@@ -138,6 +143,35 @@ async function handleScraperSuccess(env, logChannelId, config) {
       })
     }).catch(() => {});
   }
+}
+
+// Staff alert for page format drift: the scrape parsed, but its titles match
+// nothing the classifier knows. Fires once per incident (cleared on the next
+// clean scrape) so a redesign doesn't spam the log channel every minute.
+async function handleFormatDrift(env, targetGuildIds, getCfg, reason) {
+  try {
+    if (await env.STATUS_KV.get('scraper_drift_alerted')) return;
+    await env.STATUS_KV.put('scraper_drift_alerted', '1');
+  } catch { return; }
+  const firstGuild = targetGuildIds.length ? targetGuildIds[0] : '';
+  let cfg = null;
+  try { cfg = firstGuild ? await getCfg(firstGuild) : getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID)); } catch {}
+  if (cfg && cfg.toggle_error_alerts === false) return;
+  const staffRoleId = cfg && cfg.staff_role_id;
+  const pingText = staffRoleId ? `<@&${staffRoleId}> ` : '';
+  const logChannelId = cfg && cfg.log_channel_id;
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token || !logChannelId) return;
+  await discordFetch(`https://discord.com/api/v10/channels/${logChannelId}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content: `⚠️ ${pingText}**STATUS PAGE FORMAT DRIFT!**\nThe HCPSS status page changed shape and the bot held this check instead of posting.\n` +
+               `• Reason: \`${reason}\`\n` +
+               `• No status was posted. The last known good status is still shown.`,
+      allowed_mentions: staffRoleId ? { roles: [staffRoleId] } : { parse: [] }
+    })
+  }).catch(() => {});
 }
 
 async function handleScraperSuccessOrFailure(env, scrapeFailed, error, targetGuildIds) {
@@ -350,6 +384,27 @@ export async function doCheckAndPost(env, options = {}) {
   const scrapeFailed = !!fetched.error;
   const latency = Date.now() - start;
 
+  // 1b. Validate a FRESH scrape before it becomes the status of record. A
+  // stale fallback is already-known-good, so it skips validation. An
+  // unrecognized title means HCPSS changed their wording or the page drifted:
+  // hold the post, alert staff once per incident, and treat this run as a
+  // scrape failure so the failure streak keeps working.
+  let driftAlert = null;
+  if (!isStale && cards && !scrapeFailed) {
+    let priorCards = null;
+    try {
+      const priorRaw = await env.STATUS_KV.get('last_good_scrape');
+      if (priorRaw) priorCards = JSON.parse(priorRaw).cards;
+    } catch {}
+    const validation = validateScrape(cards, priorCards);
+    if (!validation.ok) {
+      driftAlert = validation.reason;
+      await handleFormatDrift(env, targetGuildIds, getCfg, driftAlert);
+      await handleScraperSuccessOrFailure(env, true, new Error(driftAlert), targetGuildIds);
+      return { ok: false, isError: true, error: driftAlert, message: `Format drift detected: ${driftAlert}` };
+    }
+  }
+
   // Increment check counts in KV
   try {
     let stats = {};
@@ -471,7 +526,14 @@ export async function doCheckAndPost(env, options = {}) {
       results.push({ guildId, ok: true, skipped: true, reason: 'No alert channel configured' });
       continue;
     }
-    const pingRoleIds = Array.isArray(config.ping_role_ids) ? config.ping_role_ids : [];
+    // ping_role_ids is an object keyed by NWS category since the ping-roles
+    // expansion; legacy flat arrays migrate to { default: [...] } in
+    // getEffectiveConfig (which getCfg already applied). The status-post
+    // fallback here is the default category only.
+    const pingMap = config.ping_role_ids && typeof config.ping_role_ids === 'object' && !Array.isArray(config.ping_role_ids)
+      ? config.ping_role_ids
+      : {};
+    const pingRoleIds = Array.isArray(pingMap.default) ? pingMap.default : [];
 
     // Get the status payload for THIS guild (incorporates any active override for this guild)
     const builtStatus = await buildStatusPayload(env, {
