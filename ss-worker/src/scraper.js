@@ -153,6 +153,12 @@ export function extractCards(html) {
           if (pClean.toLowerCase().includes('view hcpss calendar')) {
             continue;
           }
+          // Drop separator-only paragraphs (a lone "-" HCPSS leaves at the end
+          // of the card). They are page furniture, not status copy, and used
+          // to show up as a stray dash under the status text in Discord.
+          if (isNoiseParagraph(pClean)) {
+            continue;
+          }
           bodyParts.push(pClean);
         }
         const bodyText = bodyParts.join('\n\n');
@@ -183,6 +189,34 @@ export function extractCards(html) {
   return cards;
 }
 
+// HCPSS's status card sometimes ends with a stray separator paragraph — a
+// lone "-" (or "–"/"—") sitting on its own line, right after the "View HCPSS
+// Calendar" link. It carries no information, but the scraper used to copy it
+// verbatim into the card body, so the Discord embed showed a random dash
+// under the status text.
+//
+// A paragraph made up of nothing but separator characters is noise, not
+// status copy. Exported for tests.
+const SEPARATOR_ONLY_RE = /^[-–—_=•·*]+$/;
+
+// True when a paragraph is empty or contains only separator punctuation.
+export function isNoiseParagraph(text) {
+  const s = String(text || '').trim();
+  if (!s) return true;
+  return SEPARATOR_ONLY_RE.test(s);
+}
+
+// Strips noise paragraphs out of an already-assembled body. The scraper
+// filters them at parse time, but the cached `last_good_scrape` cards in KV
+// were written before this fix and still carry the dash — this cleans them
+// up on the way into the embed.
+export function cleanBody(body) {
+  const s = String(body || '');
+  if (!s.trim()) return '';
+  const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(p => p && !isNoiseParagraph(p));
+  return parts.join('\n\n');
+}
+
 export function assembleDescription(cards) {
   if (!cards.length) {
     return '## **Normal Operations**\n\nStaff and students report in accordance with the HCPSS calendar.';
@@ -190,7 +224,8 @@ export function assembleDescription(cards) {
   return cards.map(c => {
     let md = '';
     if (c.title) md += `## **${c.title}**\n\n`;
-    if (c.body) md += `${c.body}\n`;
+    const body = cleanBody(c.body);
+    if (body) md += `${body}\n`;
     return md;
   }).join('\n___\n\n');
 }

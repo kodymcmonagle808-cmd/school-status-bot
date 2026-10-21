@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCards, determineStatusKey, assembleDescription, statusDateInfo, getStatusCards, resetScrapeMemCache } from '../src/scraper.js';
+import { extractCards, determineStatusKey, assembleDescription, statusDateInfo, getStatusCards, resetScrapeMemCache, isNoiseParagraph, cleanBody } from '../src/scraper.js';
 
 const NEW_FORMAT_HTML = `
 <html><body>
@@ -9,6 +9,22 @@ const NEW_FORMAT_HTML = `
     <h2><span class="status-date">July 14, 2026</span><span>Schools Closed</span></h2>
     <p>All Howard County public schools are closed today.</p>
     <p>View HCPSS Calendar</p>
+  </div>
+</section>
+</body></html>`;
+
+// The live status page ends its card with a stray separator paragraph — a
+// lone "-" on its own line, after the "View HCPSS Calendar" link. It is page
+// furniture, and the scraper used to copy it straight into the Discord embed.
+const STRAY_DASH_HTML = `
+<html><body>
+<section id="status-block" class="primary-status-block">
+  <div style="border-left: 4px solid green;">
+    <h2><span class="status-date">October 21, 2026</span>
+    <span>Normal Operations</span></h2>
+    <p>Staff and students report in accordance with the HCPSS calendar. Within normal operations, due to weather conditions, outdoor activities may be brought inside, including lunch, recess, PE class, and/or after-school and community-use programs.</p>
+    <p style="text-align:right;"><a href="https://www.hcpss.org/calendar/"><i class="fa fa-calendar"></i> View HCPSS Calendar</a></p>
+    <p>-</p>
   </div>
 </section>
 </body></html>`;
@@ -55,6 +71,52 @@ test('determineStatusKey maps cards to status keys', () => {
 
 test('assembleDescription defaults to Normal Operations when no cards', () => {
   assert.match(assembleDescription([]), /Normal Operations/);
+});
+
+test('extractCards drops the stray separator paragraph HCPSS leaves on the card', () => {
+  const cards = extractCards(STRAY_DASH_HTML);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].title, 'Normal Operations');
+  assert.match(cards[0].body, /report in accordance with the HCPSS calendar/);
+  assert.doesNotMatch(cards[0].body, /^\s*-\s*$/m, 'the lone dash must not reach the card body');
+});
+
+test('assembleDescription renders the status without the stray dash', () => {
+  const desc = assembleDescription(extractCards(STRAY_DASH_HTML));
+  assert.match(desc, /Normal Operations/);
+  assert.match(desc, /report in accordance with the HCPSS calendar/);
+  assert.doesNotMatch(desc, /^\s*-\s*$/m, 'the embed description must not show a lone dash');
+});
+
+test('assembleDescription strips the dash out of cards cached before the fix', () => {
+  // The `last_good_scrape` cards in KV were written before this fix and still
+  // carry the dash, so the description has to clean them on the way out.
+  const desc = assembleDescription([{
+    date: 'October 21, 2026',
+    title: 'Normal Operations',
+    body: 'Staff and students report in accordance with the HCPSS calendar.\n\n-'
+  }]);
+  assert.match(desc, /report in accordance with the HCPSS calendar/);
+  assert.doesNotMatch(desc, /^\s*-\s*$/m, 'the cached dash must not reach the embed');
+});
+
+test('isNoiseParagraph only rejects separator punctuation and blanks', () => {
+  assert.equal(isNoiseParagraph('-'), true);
+  assert.equal(isNoiseParagraph('  -  '), true);
+  assert.equal(isNoiseParagraph('–'), true);
+  assert.equal(isNoiseParagraph('—'), true);
+  assert.equal(isNoiseParagraph('___'), true);
+  assert.equal(isNoiseParagraph(''), true);
+  assert.equal(isNoiseParagraph('   '), true);
+  assert.equal(isNoiseParagraph('Staff and students report in.'), false);
+  assert.equal(isNoiseParagraph('Schools closed - see website'), false);
+});
+
+test('cleanBody drops separator paragraphs and keeps the real copy', () => {
+  const cleaned = cleanBody('Real status copy.\n\n-\n\nMore real status copy.');
+  assert.equal(cleaned, 'Real status copy.\n\nMore real status copy.');
+  assert.equal(cleanBody('-'), '');
+  assert.equal(cleanBody(''), '');
 });
 
 test('statusDateInfo parses site date text as a plain calendar day', () => {

@@ -3,7 +3,7 @@
 // status cards (via the 60-second scrape cache, so page traffic can't hammer
 // the HCPSS site), active weather alerts (cache-only), and recent history.
 
-import { getStatusCards, determineStatusKey, HCPSS_URL } from './scraper.js';
+import { getStatusCards, determineStatusKey, cleanBody, HCPSS_URL } from './scraper.js';
 import { getCachedWeatherAlerts } from './weather.js';
 import { getStatusHistory } from './history.js';
 import { formatCheckedAt } from './timeutil.js';
@@ -28,12 +28,15 @@ export function renderStatusPage({ cards, stale, staleAt, error, alerts, history
 
   let statusHtml;
   if (cards && cards.length) {
-    statusHtml = cards.map(c => `
+    statusHtml = cards.map(c => {
+      const body = cleanBody(c.body);
+      return `
       <article class="card">
         ${c.date ? `<div class="date">${escapeHtml(c.date)}</div>` : ''}
         <h2>${escapeHtml(c.title)}</h2>
-        ${c.body ? `<p>${escapeHtml(c.body)}</p>` : ''}
-      </article>`).join('\n');
+        ${body ? `<p>${escapeHtml(body)}</p>` : ''}
+      </article>`;
+    }).join('\n');
   } else if (cards) {
     statusHtml = '<article class="card"><h2>Normal Operations</h2><p>No alerts on the HCPSS status page.</p></article>';
   } else {

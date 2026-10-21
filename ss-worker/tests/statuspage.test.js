@@ -35,3 +35,13 @@ test('renderStatusPage treats an empty card list as normal operations', () => {
   const html = renderStatusPage({ cards: [], alerts: [], history: [] });
   assert.match(html, /Normal Operations/);
 });
+
+test('renderStatusPage drops the stray separator paragraph from the card body', () => {
+  const html = renderStatusPage({
+    cards: [{ date: 'October 21, 2026', title: 'Normal Operations', body: 'Staff and students report in accordance with the HCPSS calendar.\n\n-' }],
+    alerts: [],
+    history: []
+  });
+  assert.match(html, /report in accordance with the HCPSS calendar/);
+  assert.doesNotMatch(html, />\s*-\s*</, 'the lone dash must not reach the card body');
+});
