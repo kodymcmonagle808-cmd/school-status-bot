@@ -233,6 +233,13 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "requestannouncement",
+    description: "Submit an announcement request (summary + optional story link) to staff.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
     name: "refresh-panel",
     description: "Refresh the control panel embed in the log channel.",
     type: 1,

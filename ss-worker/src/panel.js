@@ -102,7 +102,8 @@ export const PANEL_NAV_TABS = [
   { label: 'Auto-Reply', value: 'config_autoreply', emoji: '💬', description: 'Keyword-triggered auto replies' },
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
   { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' },
-  { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' }
+  { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' },
+  { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' }
 ];
 
 function getNavTabForPage(page) {
@@ -1201,6 +1202,40 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     return { embeds: [embed], components };
   }
 
+  if (page === 'config_announcementrequests') {
+    const reqChannel = config.announcement_request_channel_id
+      ? `<#${config.announcement_request_channel_id}>`
+      : '(not set)';
+
+    const embed = {
+      title: 'Control Panel - Announcement Requests',
+      color: 0xF1C40F,
+      description: '### Announcement Requests\n' +
+                   'Members can submit announcement requests via `/requestannouncement`. ' +
+                   'Each request is posted to the channel below so staff can review and act on it.\n\n' +
+                   '- **Request Channel**: ' + reqChannel + '\n\n' +
+                   '*Pick a channel below to set where requests are posted - saves instantly.*',
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_announcementrequests'),
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_announcement_request_channel',
+          placeholder: 'Select announcement request channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      }
+    ];
+
+    return { embeds: [embed], components };
+  }
+
   if (page === 'config_schedule') {
     const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
     const scheduleLines = currentSchedule
@@ -1908,6 +1943,8 @@ export async function applyConfigUpdate(body, env) {
     }
   } else if (customId === 'cfg_override_status_select' && Array.isArray(values) && values[0]) {
     next.editing_override_status_key = values[0];
+  } else if (customId === 'cfg_announcement_request_channel' && Array.isArray(values)) {
+    next.announcement_request_channel_id = values[0] || null;
   }
 
   await setConfig(env, guildId, next);

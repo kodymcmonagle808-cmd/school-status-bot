@@ -129,6 +129,7 @@ export function runHelpCommand() {
         '• `/stats` — closure days, delays, and scraper statistics\n' +
         '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
         '• `/myschool` — register your school to get DMed when a notice mentions it\n' +
+        '• `/requestannouncement` — submit an announcement request (summary + optional story link) to staff\\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
         '**Buttons on status posts:**\n' +
         '• **Check again** — re-check privately · **🔔 Notify Me** — same as `/notify`\n' +

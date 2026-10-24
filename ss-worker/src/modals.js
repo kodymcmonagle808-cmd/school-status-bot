@@ -278,6 +278,64 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     });
   }
 
+  // Handle announcement-request modal: posts the request to the staff-configured
+  // announcement-request channel (open to all users).
+  if (body.data && body.data.custom_id === 'modal_requestannouncement') {
+    const summary = getModalInputValue(body, 'input_request_summary').trim();
+    const link = getModalInputValue(body, 'input_request_link').trim();
+
+    if (!summary) {
+      return interactionResponse({
+        content: '❌ A summary is required.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const stored = await getConfig(env, guildId);
+    const channelId = stored.announcement_request_channel_id;
+
+    if (!channelId) {
+      return interactionResponse({
+        content: '❌ Announcement requests are not set up in this server yet. Ask a moderator to configure the request channel in the control panel.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    const invokerId = getInvokerId(body);
+    const embed = {
+      title: '📝 Announcement Request',
+      description: summary + (link ? `\n\n**Link:** <${link}>` : ''),
+      color: 0xF1C40F,
+      footer: { text: `Requested by <@${invokerId || 'unknown user'}> · School Status` },
+      timestamp: new Date().toISOString()
+    };
+
+    const postRes = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ embeds: [embed] })
+    });
+
+    if (!postRes.ok) {
+      const errText = await postRes.text();
+      console.error('Request announcement post failed:', errText);
+      return interactionResponse({
+        content: `❌ Failed to post announcement request (Discord error ${postRes.status}).`,
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    logAction(`📝 Announcement request submitted${invokerId ? ` by <@${invokerId}>` : ''} to <#${channelId}>.`, { guildId });
+
+    return interactionResponse({
+      content: '✅ Your announcement request has been submitted to the staff channel!',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (body.data && body.data.custom_id === 'modal_music_song') {
     const link = getModalInputValue(body, 'input_music_link').trim();
     const invokerId = getInvokerId(body);

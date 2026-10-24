@@ -456,6 +456,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_commands: 'config_commands',
     panel_to_config_joinlogs: 'config_joinlogs',
     panel_to_config_nws_pings: 'config_nws_pings',
+    panel_to_config_announcementrequests: 'config_announcementrequests',
     panel_to_dashboard: 'dashboard',
     panel_to_dashboard_logs: 'dashboard_logs'
   };

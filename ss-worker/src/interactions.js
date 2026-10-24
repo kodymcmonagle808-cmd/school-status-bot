@@ -7,6 +7,7 @@ import {
   POST_STATUS_COMMAND,
   OVERRIDE_COMMAND,
   ANNOUNCE_COMMAND,
+  REQUEST_ANNOUNCEMENT_COMMAND,
   ALL_STATUS_LABELS
 } from './constants.js';
 import {
@@ -139,6 +140,42 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'mapmyclass') {
       env.ctx = ctx; // Hack to pass ctx to handler without changing signature
       return await handleMapMyClass(body, env);
+    }
+
+    if (name === REQUEST_ANNOUNCEMENT_COMMAND) {
+      return jsonResponse({
+        type: 9,
+        data: {
+          title: '📝 Request an Announcement',
+          custom_id: 'modal_requestannouncement',
+          components: [
+            {
+              type: 1,
+              components: [{
+                type: 4,
+                custom_id: 'input_request_summary',
+                style: 2,
+                label: 'Summary',
+                placeholder: 'Brief summary of the announcement...',
+                max_length: 1000,
+                required: true
+              }]
+            },
+            {
+              type: 1,
+              components: [{
+                type: 4,
+                custom_id: 'input_request_link',
+                style: 1,
+                label: 'Link to story (optional)',
+                placeholder: 'https://example.com/story',
+                max_length: 512,
+                required: false
+              }]
+            }
+          ]
+        }
+      });
     }
 
     if (name === 'ownerpanel' || name === 'ownerpannel') {
