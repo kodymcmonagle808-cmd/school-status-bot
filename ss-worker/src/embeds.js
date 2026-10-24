@@ -198,6 +198,17 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
   const dateInfo = statusDateInfo(cards[0] && cards[0].date, checkedAt);
   const primaryDate = dateInfo.display;
 
+  // The real current date in Eastern time — used for A/B day rotation and for
+  // detecting when the HCPSS status page has gone stale (not updated today).
+  const realTodayYmd = formatYmdNY(checkedAt);
+
+  // Status is outdated when the website's date is behind today's date.
+  // We only warn when behind, never when ahead (future-dated page).
+  let outdatedWarning = null;
+  if (dateInfo.ymd && dateInfo.ymd < realTodayYmd) {
+    outdatedWarning = `⚠️ **Status is outdated** — HCPSS shows ${dateInfo.display} but today is ${formatStatusDate(checkedAt)}.`;
+  }
+
   // The embed always mirrors the website exactly; calendar events are only
   // shown via /calendar and the control panel, never in the status embed.
   let desc = assembleDescription(cards);
@@ -221,7 +232,7 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
   const abDayEnabled = !config || config.toggle_ab_day !== false;
   if (abDayEnabled && embeds[0] && env && env.STATUS_KV) {
     try {
-      const todayYmd = dateInfo.ymd || formatYmdNY(checkedAt);
+      const todayYmd = realTodayYmd;
       const history = await getStatusHistory(env);
       const closureDates = closureDatesFromHistory(history);
       // On a closure day (including today's announced closure), the A/B day
@@ -232,6 +243,11 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
         addField(embeds[0], '📅 Day Rotation', abLine);
       }
     } catch {}
+  }
+
+  // Outdated status warning — only when the website's date is behind today.
+  if (outdatedWarning && embeds[0]) {
+    addField(embeds[0], '⚠️ Outdated Status', outdatedWarning);
   }
 
   // Add active NWS weather alerts for Howard County as context on the first embed.
