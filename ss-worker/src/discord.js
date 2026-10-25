@@ -204,3 +204,37 @@ export function getInvokerId(body) {
   return (body && body.member && body.member.user && body.member.user.id) ||
     (body && body.user && body.user.id) || null;
 }
+
+// Sends a direct message to the bot owner (OWNER_ID). Used for code errors,
+// deploy failures, and other critical alerts that should not go to a
+// server's control panel channel. Never throws.
+export async function dmOwner(env, content) {
+  const ownerId = String(env.OWNER_ID || '').trim();
+  if (!ownerId || !env.DISCORD_BOT_TOKEN) return false;
+
+  try {
+    const chResp = await discordFetch('https://discord.com/api/v10/users/@me/channels', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ recipient_id: ownerId })
+    });
+    if (!chResp.ok) return false;
+    const dmChannel = await chResp.json();
+
+    await discordFetch(`https://discord.com/api/v10/channels/${dmChannel.id}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ content: String(content).slice(0, 2000) })
+    });
+    return true;
+  } catch (e) {
+    console.error('dmOwner failed:', e);
+    return false;
+  }
+}

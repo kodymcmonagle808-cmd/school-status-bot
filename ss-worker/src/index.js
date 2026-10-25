@@ -2,7 +2,7 @@
 // manual trigger) and the cron-driven scheduled check.
 
 import { MANUAL_TRIGGER_HEADER } from './constants.js';
-import { jsonResponse, verifyDiscordRequest } from './discord.js';
+import { jsonResponse, verifyDiscordRequest, dmOwner } from './discord.js';
 import { getConfig } from './config.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
@@ -67,6 +67,7 @@ export default {
           return await statusPageResponse(env);
         } catch (e) {
           console.error('Status page failed:', e);
+          await dmOwner(env, `🚨 **Status page error:** ${e && e.message ? e.message : e}`);
           return new Response('Status page unavailable.', { status: 500 });
         }
       }
@@ -474,6 +475,7 @@ export default {
       }
       return new Response('Scraper check failed: ' + result.error, { status: 500 });
     } catch (err) {
+      await dmOwner(env, `🚨 **Manual trigger error:** ${err && err.message ? err.message : err}`);
       return new Response('Error: ' + err.message, { status: 500 });
     }
   },
@@ -523,6 +525,11 @@ export default {
           console.error(`${name} run failed`, e);
           logActionError(`Watcher "${name}" threw: ${e && e.message ? e.message : e}`);
           await recordWatcherError(env, name, e);
+          // Code errors go to the owner via DM, not to a server's control panel channel.
+          await dmOwner(
+            env,
+            `🚨 **Watcher code error — \`${name}\` threw:**\n\`\`\`\n${(e && e.message) || String(e)}\n\`\`\``
+          );
         }
       }
     })());
