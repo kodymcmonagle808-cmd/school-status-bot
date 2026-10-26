@@ -6,7 +6,8 @@ import {
   jsonResponse,
   interactionResponse,
   getModalInputValue,
-  getInvokerId
+  getInvokerId,
+  dmUser
 } from './discord.js';
 import {
   getConfig,
@@ -316,7 +317,26 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
         Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ embeds: [embed] })
+      body: JSON.stringify({
+        embeds: [embed],
+        components: [{
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 2,
+              label: '✅ Approve',
+              custom_id: `annreq_approve_${invokerId}`
+            },
+            {
+              type: 2,
+              style: 4,
+              label: '❌ Deny',
+              custom_id: `annreq_deny_${invokerId}`
+            }
+          ]
+        }]
+      })
     });
 
     if (!postRes.ok) {
@@ -332,6 +352,67 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     return interactionResponse({
       content: '✅ Your announcement request has been submitted to the staff channel!',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  // Handle denial-reason modal: staff denied a request and supplied a reason.
+  if (body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('modal_annreq_deny_')) {
+    const targetUserId = body.data.custom_id.replace('modal_annreq_deny_', '');
+    const reason = getModalInputValue(body, 'input_deny_reason').trim();
+
+    if (!reason) {
+      return interactionResponse({
+        content: '❌ A reason is required when denying a request.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    // Update the original message to show it was denied (remove buttons).
+    const originalMessage = body.message;
+    const updatedEmbed = {
+      ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {}),
+      footer: {
+        ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0].footer : {}),
+        text: `Denied — reason: ${reason}`
+      }
+    };
+
+    try {
+      await fetch(`https://discord.com/api/v10/channels/${originalMessage.channel_id}/messages/${originalMessage.id}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          embeds: [updatedEmbed],
+          components: []
+        })
+      });
+    } catch { /* best effort */ }
+
+    // DM the requesting user with the denial + reason.
+    if (ctx) {
+      ctx.waitUntil(async () => {
+        try {
+          await dmUser(env, targetUserId, `❌ **Your announcement request was not approved.**\n\n**Reason:** ${reason}`);
+          logAction(`📝 Announcement request denied by <@${getInvokerId(body)}> for user <@${targetUserId}>: ${reason}`, { guildId });
+        } catch (e) {
+          console.error('Failed to DM denial reason:', e);
+        }
+      });
+    } else {
+      try {
+        await dmUser(env, targetUserId, `❌ **Your announcement request was not approved.**\n\n**Reason:** ${reason}`);
+        logAction(`📝 Announcement request denied by <@${getInvokerId(body)}> for user <@${targetUserId}>: ${reason}`, { guildId });
+      } catch (e) {
+        console.error('Failed to DM denial reason:', e);
+      }
+    }
+
+    return interactionResponse({
+      content: '❌ Request denied. The requesting user has been DM\'d with the reason.',
       flags: EPHEMERAL_FLAG
     });
   }

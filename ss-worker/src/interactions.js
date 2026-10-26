@@ -16,7 +16,8 @@ import {
   deferredInteractionResponse,
   updateInteractionOriginal,
   memberIsAdmin,
-  getInvokerId
+  getInvokerId,
+  dmUser
 } from './discord.js';
 import { toggleSubscriber } from './subscriptions.js';
 import { getConfig, getEffectiveConfig, canUseCommands, canConfigure } from './config.js';
@@ -51,6 +52,7 @@ import {
   runSetupJoinLogsCommand
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
+import { logAction } from './actionlog.js';
 import {
   handleSetupCommand,
   setupAlertChannelStep,
@@ -516,6 +518,73 @@ export async function handleInteraction(body, env, ctx) {
       }
     })());
     return jsonResponse({ type: 6 });
+  }
+
+  // Announcement request approve/deny buttons.
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('annreq_approve_')) {
+    const targetUserId = body.data.custom_id.replace('annreq_approve_', '');
+    const staffId = getInvokerId(body);
+
+    // Update the original message: mark approved, remove buttons.
+    const originalMessage = body.message;
+    const updatedEmbed = {
+      ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {}),
+      footer: {
+        ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0].footer : {}),
+        text: `Approved by <@${staffId}> · School Status`
+      }
+    };
+
+    ctx.waitUntil(async () => {
+      try {
+        await fetch(`https://discord.com/api/v10/channels/${originalMessage.channel_id}/messages/${originalMessage.id}`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            embeds: [updatedEmbed],
+            components: []
+          })
+        });
+        await dmUser(env, targetUserId, '✅ **Your announcement request was approved.**');
+        logAction(`📝 Announcement request approved by <@${staffId}> for user <@${targetUserId}>.`, { guildId: body.guild_id || '' });
+      } catch (e) {
+        console.error('Failed to approve announcement request:', e);
+      }
+    });
+
+    return jsonResponse({
+      type: 7,
+      data: {
+        embeds: [updatedEmbed],
+        components: []
+      }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('annreq_deny_')) {
+    const targetUserId = body.data.custom_id.replace('annreq_deny_', '');
+    return jsonResponse({
+      type: 9,
+      data: {
+        title: '❌ Deny Announcement Request',
+        custom_id: `modal_annreq_deny_${targetUserId}`,
+        components: [{
+          type: 1,
+          components: [{
+            type: 4,
+            custom_id: 'input_deny_reason',
+            style: 2,
+            label: 'Reason for denial',
+            placeholder: 'Why is this request not approved?',
+            max_length: 1000,
+            required: true
+          }]
+        }]
+      }
+    });
   }
 
   if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_') && body.data.custom_id !== 'panel_trigger_test_alert') {

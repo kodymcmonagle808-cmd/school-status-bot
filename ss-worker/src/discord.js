@@ -205,12 +205,10 @@ export function getInvokerId(body) {
     (body && body.user && body.user.id) || null;
 }
 
-// Sends a direct message to the bot owner (OWNER_ID). Used for code errors,
-// deploy failures, and other critical alerts that should not go to a
-// server's control panel channel. Never throws.
-export async function dmOwner(env, content) {
-  const ownerId = String(env.OWNER_ID || '').trim();
-  if (!ownerId || !env.DISCORD_BOT_TOKEN) return false;
+// Sends a direct message to any Discord user. Opens a DM channel if one does
+// not already exist. Never throws — failures are logged to console only.
+export async function dmUser(env, userId, content) {
+  if (!userId || !env.DISCORD_BOT_TOKEN) return false;
 
   try {
     const chResp = await discordFetch('https://discord.com/api/v10/users/@me/channels', {
@@ -219,7 +217,7 @@ export async function dmOwner(env, content) {
         Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ recipient_id: ownerId })
+      body: JSON.stringify({ recipient_id: String(userId) })
     });
     if (!chResp.ok) return false;
     const dmChannel = await chResp.json();
@@ -234,7 +232,16 @@ export async function dmOwner(env, content) {
     });
     return true;
   } catch (e) {
-    console.error('dmOwner failed:', e);
+    console.error(`dmUser to ${userId} failed:`, e);
     return false;
   }
+}
+
+// Sends a direct message to the bot owner (OWNER_ID). Used for code errors,
+// deploy failures, and other critical alerts that should not go to a
+// server's control panel channel. Never throws.
+export async function dmOwner(env, content) {
+  const ownerId = String(env.OWNER_ID || '').trim();
+  if (!ownerId) return false;
+  return dmUser(env, ownerId, content);
 }
