@@ -304,10 +304,27 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     const invokerId = getInvokerId(body);
     const embed = {
-      title: '📝 Announcement Request',
-      description: summary + (link ? `\n\n**Link:** <${link}>` : ''),
+      title: '📢 Announcement Request',
       color: 0xF1C40F,
-      footer: { text: `Requested by <@${invokerId || 'unknown user'}> · School Status` },
+      fields: [
+        {
+          name: '📋 Summary',
+          value: summary,
+          inline: false
+        },
+        ...(link ? [{ name: '🔗 Link to Story', value: `<${link}>`, inline: false }] : []),
+        {
+          name: '👤 Requested by',
+          value: `<@${invokerId || 'unknown user'}>`,
+          inline: true
+        },
+        {
+          name: '📊 Status',
+          value: 'Pending Review',
+          inline: true
+        }
+      ],
+      footer: { text: 'School Status · Announcement Request System' },
       timestamp: new Date().toISOString()
     };
 
@@ -370,10 +387,17 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
 
     // Update the original message to show it was denied (remove buttons).
     const originalMessage = body.message;
+    const originalEmbed = originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {};
+    // Update the Status field to Denied
+    const updatedFields = (Array.isArray(originalEmbed.fields) ? originalEmbed.fields : []).map(f =>
+      f.name === '📊 Status' ? { name: '📊 Status', value: 'Denied ❌', inline: true } : f
+    );
     const updatedEmbed = {
-      ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {}),
+      ...originalEmbed,
+      color: 0xE74C3C,
+      fields: updatedFields,
       footer: {
-        ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0].footer : {}),
+        ...(originalEmbed.footer || {}),
         text: `Denied — reason: ${reason}`
       }
     };

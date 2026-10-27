@@ -527,10 +527,17 @@ export async function handleInteraction(body, env, ctx) {
 
     // Update the original message: mark approved, remove buttons.
     const originalMessage = body.message;
+    const originalEmbed = originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {};
+    // Update the Status field to Approved
+    const updatedFields = (Array.isArray(originalEmbed.fields) ? originalEmbed.fields : []).map(f =>
+      f.name === '📊 Status' ? { name: '📊 Status', value: 'Approved ✅', inline: true } : f
+    );
     const updatedEmbed = {
-      ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0] : {}),
+      ...originalEmbed,
+      color: 0x2ECC71,
+      fields: updatedFields,
       footer: {
-        ...(originalMessage.embeds && originalMessage.embeds[0] ? originalMessage.embeds[0].footer : {}),
+        ...(originalEmbed.footer || {}),
         text: `Approved by <@${staffId}> · School Status`
       }
     };

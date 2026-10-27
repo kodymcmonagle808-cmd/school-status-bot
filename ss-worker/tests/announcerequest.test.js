@@ -81,8 +81,16 @@ test('requestannouncement posts to configured channel with approve/deny buttons'
   assert.equal(posts[0].body.components[0].components[1].custom_id, 'annreq_deny_user-123');
   const embed = posts[0].body.embeds[0];
   assert.match(embed.title, /Announcement Request/);
-  assert.match(embed.description, /Test summary/);
-  assert.ok(embed.description.includes('https://example.com/story'));
+  // Check fields instead of description
+  const summaryField = embed.fields.find(f => f.name === '📋 Summary');
+  assert.ok(summaryField, 'missing Summary field');
+  assert.match(summaryField.value, /Test summary/);
+  const linkField = embed.fields.find(f => f.name === '🔗 Link to Story');
+  assert.ok(linkField, 'missing Link field');
+  assert.ok(linkField.value.includes('https://example.com/story'));
+  const statusField = embed.fields.find(f => f.name === '📊 Status');
+  assert.ok(statusField, 'missing Status field');
+  assert.equal(statusField.value, 'Pending Review');
 });
 
 test('requestannouncement omits link line when link is blank', async (t) => {
@@ -92,7 +100,12 @@ test('requestannouncement omits link line when link is blank', async (t) => {
   const env = { STATUS_KV: kv, DISCORD_BOT_TOKEN: 'token' };
   await handleModalSubmit(modalBody('Summary only', ''), env, null, 'g1');
   const embed = posts[0].body.embeds[0];
-  assert.equal(embed.description, 'Summary only');
+  const summaryField = embed.fields.find(f => f.name === '📋 Summary');
+  assert.ok(summaryField, 'missing Summary field');
+  assert.equal(summaryField.value, 'Summary only');
+  // No link field when link is blank
+  const linkField = embed.fields.find(f => f.name === '🔗 Link to Story');
+  assert.ok(!linkField, 'link field should not be present when blank');
 });
 
 test('requestannouncement deny modal DMs user with reason', async (t) => {
@@ -111,7 +124,16 @@ test('requestannouncement deny modal DMs user with reason', async (t) => {
     message: {
       id: 'm1',
       channel_id: 'chan-req',
-      embeds: [{ title: '📝 Announcement Request', description: 'Test summary' }]
+      embeds: [{
+        title: '📢 Announcement Request',
+        color: 0xF1C40F,
+        fields: [
+          { name: '📋 Summary', value: 'Test summary', inline: false },
+          { name: '👤 Requested by', value: '<@user-123>', inline: true },
+          { name: '📊 Status', value: 'Pending Review', inline: true }
+        ],
+        footer: { text: 'School Status · Announcement Request System' }
+      }]
     },
     member: { user: { id: 'staff-456' } }
   };
