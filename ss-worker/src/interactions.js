@@ -535,25 +535,25 @@ export async function handleInteraction(body, env, ctx) {
       }
     };
 
-    ctx.waitUntil(async () => {
-      try {
-        await fetch(`https://discord.com/api/v10/channels/${originalMessage.channel_id}/messages/${originalMessage.id}`, {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            embeds: [updatedEmbed],
-            components: []
-          })
-        });
-        await dmUser(env, targetUserId, '✅ **Your announcement request was approved.**');
-        logAction(`📝 Announcement request approved by <@${staffId}> for user <@${targetUserId}>.`, { guildId: body.guild_id || '' });
-      } catch (e) {
-        console.error('Failed to approve announcement request:', e);
-      }
-    });
+    try {
+      // Update the message in the staff channel
+      await fetch(`https://discord.com/api/v10/channels/${originalMessage.channel_id}/messages/${originalMessage.id}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          embeds: [updatedEmbed],
+          components: []
+        })
+      });
+      // DM the requesting user (synchronous so it completes before we respond)
+      await dmUser(env, targetUserId, '✅ **Your announcement request was approved.**');
+      logAction(`📝 Announcement request approved by <@${staffId}> for user <@${targetUserId}>.`, { guildId: body.guild_id || '' });
+    } catch (e) {
+      console.error('Failed to approve announcement request:', e);
+    }
 
     return jsonResponse({
       type: 7,

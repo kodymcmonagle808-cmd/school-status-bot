@@ -392,23 +392,12 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
       });
     } catch { /* best effort */ }
 
-    // DM the requesting user with the denial + reason.
-    if (ctx) {
-      ctx.waitUntil(async () => {
-        try {
-          await dmUser(env, targetUserId, `❌ **Your announcement request was not approved.**\n\n**Reason:** ${reason}`);
-          logAction(`📝 Announcement request denied by <@${getInvokerId(body)}> for user <@${targetUserId}>: ${reason}`, { guildId });
-        } catch (e) {
-          console.error('Failed to DM denial reason:', e);
-        }
-      });
-    } else {
-      try {
-        await dmUser(env, targetUserId, `❌ **Your announcement request was not approved.**\n\n**Reason:** ${reason}`);
-        logAction(`📝 Announcement request denied by <@${getInvokerId(body)}> for user <@${targetUserId}>: ${reason}`, { guildId });
-      } catch (e) {
-        console.error('Failed to DM denial reason:', e);
-      }
+    // DM the requesting user with the denial + reason (synchronous so it completes before we respond).
+    try {
+      await dmUser(env, targetUserId, `❌ **Your announcement request was not approved.**\n\n**Reason:** ${reason}`);
+      logAction(`📝 Announcement request denied by <@${getInvokerId(body)}> for user <@${targetUserId}>: ${reason}`, { guildId });
+    } catch (e) {
+      console.error('Failed to DM denial reason:', e);
     }
 
     return interactionResponse({
