@@ -7,8 +7,6 @@ name: Wrangler bump reminder
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 14 1 1,4,7,10 *' # 1st of Jan/Apr/Jul/Oct
 
 permissions:
   contents: read

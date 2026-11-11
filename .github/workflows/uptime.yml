@@ -66,8 +66,6 @@ name: Worker uptime check
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/20 * * * *'
 
 permissions:
   contents: read
