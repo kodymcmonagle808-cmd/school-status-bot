@@ -49,6 +49,10 @@ PUBLIC_BASE_URL = "https://ss-worker.kodymcmonagle808.workers.dev"
 binding = "STATUS_KV"
 id = "f0ecd441d95a4cbca41035b619a94705"
 
+[[r2_buckets]]
+binding = "BACKUPS_BUCKET"
+bucket_name = "ss-backups"
+
 # Cron fires every minute; the worker matches each guild's configured check
 # times (Eastern, any minute of the day) and dedupes so each slot runs once.
 [triggers]

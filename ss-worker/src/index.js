@@ -32,6 +32,7 @@ import { statusPageResponse } from './statuspage.js';
 import { LOGS_PATH, logsPageResponse } from './workerlogs.js';
 import { recordWatcherError } from './watcherhealth.js';
 import { isHeartbeatMinute } from './timeutil.js';
+import { maybeRunKvBackup, runKvBackup } from './backup.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -169,6 +170,20 @@ export default {
         } catch (err) {
           return new Response('Error fetching temp_dj', { status: 500 });
         }
+      }
+
+      if (url.pathname === '/api/backup/latest') {
+        const manualTriggerError = validateManualTrigger(request, env);
+        if (manualTriggerError) return manualTriggerError;
+        if (!env.BACKUPS_BUCKET) return new Response('R2 BACKUPS_BUCKET not configured', { status: 503 });
+        const obj = await env.BACKUPS_BUCKET.get('kv_backup_latest.json');
+        if (!obj) return new Response('No backup found', { status: 404 });
+        return new Response(obj.body, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Disposition': 'attachment; filename="kv_backup_latest.json"'
+          }
+        });
       }
 
       return new Response('SS Worker: POST signed Discord interactions here, or POST with a manual trigger token to publish a check.', { status: 200 });
@@ -468,6 +483,16 @@ export default {
     const manualTriggerError = validateManualTrigger(request, env);
     if (manualTriggerError) return manualTriggerError;
 
+    if (url.pathname === '/api/backup') {
+      try {
+        const result = await runKvBackup(env);
+        return jsonResponse(result);
+      } catch (err) {
+        console.error('Manual backup failed:', err);
+        return jsonResponse({ ok: false, error: err.message }, 500);
+      }
+    }
+
     try {
       const result = await doCheckAndPost(env, { source: 'manual' });
       if (!result.isError) {
@@ -515,7 +540,8 @@ export default {
         ['recap', () => maybeSendYearRecap(env)],
         ['cleanup', () => maybeCleanupDepartedGuilds(env)],
         ['serverwatch', () => maybeWatchServerMembership(env)],
-        ['sourcehealth', () => maybeSweepSourceHealth(env)]
+        ['sourcehealth', () => maybeSweepSourceHealth(env)],
+        ['backup', () => maybeRunKvBackup(env)]
       ];
 
       for (const [name, run] of watchers) {
