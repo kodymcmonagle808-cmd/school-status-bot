@@ -120,6 +120,7 @@ export default {
           gitSha: env.GIT_SHA || null,
           timestamp: new Date().toISOString(),
           manualTriggerConfigured: !!env.MANUAL_TRIGGER_TOKEN,
+          r2BackupsConfigured: !!env.BACKUPS_BUCKET,
           guilds,
           scraperFailureStreak,
           lastStatusChangeAt,
