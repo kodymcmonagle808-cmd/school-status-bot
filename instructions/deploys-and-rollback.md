@@ -44,6 +44,6 @@ hiccup), re-run it: open the failed run → **Re-run failed jobs**.
 
 ## Bumping wrangler
 
-The wrangler CLI is pinned (currently `4.112.0`) in `deploy_worker.yml` and
+The wrangler CLI is pinned (currently `4.146.0`) in `deploy_worker.yml` and
 `rollback.yml` so a bad release can't break deploys at random. To bump:
 change the version in both files, push, and confirm the deploy goes green.
