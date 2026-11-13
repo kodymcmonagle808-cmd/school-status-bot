@@ -8,6 +8,7 @@
 // Automatically prunes historical backups older than 90 days.
 
 import { logAction } from './actionlog.js';
+import { postMessageToChannel } from './discord.js';
 
 export const BACKUP_DATE_KEY = 'last_kv_backup_date';
 
@@ -118,6 +119,15 @@ export async function maybeRunKvBackup(env) {
   } catch (err) {
     console.error('Scheduled KV backup to R2 failed:', err);
     logAction(`Scheduled KV backup to R2 failed: ${err && err.message ? err.message : err}`, { level: 'error' });
+    try {
+      const channelId = env.DISCORD_LOG_CHANNEL_ID || '1524911607942221965';
+      await postMessageToChannel(env, {
+        __channelId: channelId,
+        content: `❌ **KV backup failed** — R2 export did not run: ${err && err.message ? err.message : err}`
+      });
+    } catch (e) {
+      console.error('Failed to post backup failure to Discord:', e);
+    }
     return null;
   }
 }
