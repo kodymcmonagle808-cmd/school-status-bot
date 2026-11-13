@@ -748,7 +748,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     // the dashboard's "Active Override" line updates without a log write here.
     ctx.waitUntil(doCheckAndPost(env, { source: 'override-set', invokerId, guildId }));
 
-    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_manual_status');
     delete config.editing_override_status_key;
     updated = true;
   }

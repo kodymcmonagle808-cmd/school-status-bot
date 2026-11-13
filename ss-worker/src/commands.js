@@ -7,7 +7,7 @@ import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel
 import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY } from './districts.js';
 import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
-import { getConfig, getEffectiveConfig, setOverride, clearOverride } from './config.js';
+import { getConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride } from './config.js';
 import { refreshPanelMessage } from './panel.js';
 import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
@@ -860,71 +860,104 @@ export async function runPostStatusCommand(body, env) {
   });
 }
 
-export async function runOverrideCommand(body, env) {
+export async function runManualStatusCommand(body, env) {
   const options = body && body.data && body.data.options;
   const invokerId = getInvokerId(body);
   const guildId = body.guild_id || '';
 
   const sub = Array.isArray(options) && options[0] && options[0].type === 1 ? options[0] : null;
   const subName = sub && sub.name ? String(sub.name) : '';
-  const subOptions = sub && Array.isArray(sub.options) ? sub.options : [];
+  const subOptions = sub && Array.isArray(sub.options) ? sub.options : (Array.isArray(options) ? options : []);
 
   if (subName === 'clear') {
     await clearOverride(env, guildId);
     const result = await doCheckAndPost(env, { source: 'override-clear', invokerId, guildId });
     const message = result && result.ok
-      ? 'Override cleared. Posted the current live HCPSS status.'
-      : `Override cleared, but could not post live status: ${result.error || result.status || 'unknown error'}`;
+      ? '✅ **Manual status cleared.** Returned to live district scraper mode and updated the alert channel.'
+      : `✅ **Manual status cleared.** Returned to live scraper mode. (Alert channel update: ${result && (result.error || result.status) ? (result.error || result.status) : 'ok'})`;
     await updateInteractionOriginal(env, body.token, { content: message, embeds: [] });
     return;
   }
 
-  if (subName !== 'set') {
-    await updateInteractionOriginal(env, body.token, { content: 'Invalid override command.', embeds: [] });
+  if (subName === 'view' || subName === 'status' || (!subName && subOptions.length === 0)) {
+    const active = await getActiveOverride(env, guildId);
+    if (!active) {
+      await updateInteractionOriginal(env, body.token, {
+        content: '🟢 **Live Scraper Mode Active**\nNo manual school status is currently set. The bot is automatically posting live updates from the district website.',
+        embeds: []
+      });
+      return;
+    }
+    const hours = Math.max(0, Math.ceil((active.until - Date.now()) / (1000 * 60 * 60)));
+    const days = Math.ceil(hours / 24);
+    const label = active.status_label || ALL_STATUS_LABELS[active.status_key] || active.status_key;
+    await updateInteractionOriginal(env, body.token, {
+      content: `⚠️ **Active Manual School Status**\n` +
+               `• **Operation**: \`${label}\`\n` +
+               `• **Notes**: *${active.details || 'None provided'}*\n` +
+               `• **Headline**: *${active.title || 'None'}*\n` +
+               `• **Time Remaining**: \`${days} day(s)\` (~${hours} hours)\n` +
+               (active.created_by ? `• **Set By**: <@${active.created_by}>\n\n` : '\n') +
+               `*Use \`/manualstatus clear\` to return to live scraper mode.*`,
+      embeds: []
+    });
     return;
   }
 
+  if (subName !== 'set' && subName !== '') {
+    await updateInteractionOriginal(env, body.token, { content: '❌ Invalid command. Use `/manualstatus set`, `/manualstatus clear`, or `/manualstatus view`.', embeds: [] });
+    return;
+  }
+
+  const statusRaw = getCommandOption(subOptions, 'operation') || getCommandOption(subOptions, 'status');
+  const notesRaw = getCommandOption(subOptions, 'notes') || getCommandOption(subOptions, 'details');
   const daysRaw = getCommandOption(subOptions, 'days');
-  const statusRaw = getCommandOption(subOptions, 'status');
-  const titleRaw = getCommandOption(subOptions, 'title');
-  const detailsRaw = getCommandOption(subOptions, 'details');
+  const titleRaw = getCommandOption(subOptions, 'headline') || getCommandOption(subOptions, 'title');
 
-  const daysParsed = Number.isFinite(Number(daysRaw)) ? Math.trunc(Number(daysRaw)) : 1;
-  const days = Math.max(1, Math.min(30, daysParsed));
   const statusKey = statusRaw ? String(statusRaw) : '';
-
   const statusLabel = STATUS_LABELS[statusKey];
   if (!statusLabel) {
-    await updateInteractionOriginal(env, body.token, { content: 'Invalid status selection.', embeds: [] });
+    await updateInteractionOriginal(env, body.token, {
+      content: '❌ Invalid operation selection. Choose from: Normal Operations, Schools Closed, Schools and Offices Closed, Schools Open 2 Hours Late, or Schools Close 3 Hours Early.',
+      embeds: []
+    });
     return;
   }
 
+  const notes = (notesRaw ? String(notesRaw) : '').trim();
   const title = (titleRaw ? String(titleRaw) : '').trim();
-  const details = (detailsRaw ? String(detailsRaw) : '').trim();
+  const daysParsed = Number.isFinite(Number(daysRaw)) ? Math.trunc(Number(daysRaw)) : 1;
+  const days = Math.max(1, Math.min(30, daysParsed));
 
   const now = Date.now();
   const until = now + days * 24 * 60 * 60 * 1000;
+
   await setOverride(env, guildId, {
     status_key: statusKey,
     status_label: statusLabel,
     title: title || null,
-    details: details || null,
+    details: notes || null,
     created_at: now,
     created_by: invokerId || null,
     until
   });
 
-  const cfg = getEffectiveConfig(await getConfig(env, guildId));
-  logAction(`Override set (status: ${statusLabel}, days: ${days}${invokerId ? `, by: <@${invokerId}>` : ''}).`, { guildId });
-  // Unlike `/override clear`, this path posts no status check, so the panel's
-  // "Active Override" line only becomes true if we re-render it here.
-  await refreshPanelMessage(env, cfg.log_channel_id, guildId);
+  logAction(`🏫 Manual school status set: **${statusLabel}**${notes ? ` ("${notes}")` : ''} for **${days} day(s)**${invokerId ? ` by <@${invokerId}>` : ''}.`, { guildId });
+
+  // Post the new status immediately to the alert channel and update the control panel
+  await doCheckAndPost(env, { source: 'override-set', invokerId, guildId });
 
   await updateInteractionOriginal(env, body.token, {
-    content: `Override enabled for ${days} day(s). All status updates will use it until it expires or is cleared.`,
+    content: `🏫 **Manual School Status Activated!**\n` +
+             `• **Operation**: \`${statusLabel}\`\n` +
+             `• **Notes**: *${notes || 'None'}*\n` +
+             `• **Duration**: \`${days} day(s)\`\n\n` +
+             `The alert channel has been updated with this status. Use \`/manualstatus clear\` to return to live scraper mode.`,
     embeds: []
   });
 }
+
+export const runOverrideCommand = runManualStatusCommand;
 
 export async function handlePanelSpeed(body, env) {
   const start = Date.now();

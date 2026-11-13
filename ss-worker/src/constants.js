@@ -9,6 +9,7 @@ export const MANUAL_TRIGGER_HEADER = 'x-manual-trigger-token';
 
 export const POST_STATUS_COMMAND = 'post-status';
 export const OVERRIDE_COMMAND = 'override';
+export const MANUAL_STATUS_COMMAND = 'manualstatus';
 export const ANNOUNCE_COMMAND = 'announce';
 export const REQUEST_ANNOUNCEMENT_COMMAND = 'requestannouncement';
 

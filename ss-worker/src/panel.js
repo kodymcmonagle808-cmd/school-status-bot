@@ -90,6 +90,7 @@ function barFromFilled(filled, segments = BAR_SEGMENTS) {
 
 export const PANEL_NAV_TABS = [
   { label: 'Dashboard', value: 'dashboard', emoji: '🏠', description: 'System status overview and quick actions' },
+  { label: 'Manual School Status', value: 'config_manual_status', emoji: '🏫', description: 'Set school operations and notes' },
   { label: 'Recent Logs', value: 'dashboard_logs', emoji: '📋', description: 'Recent bot activity logs' },
   { label: 'Bot Health', value: 'dashboard_bot_status', emoji: '📡', description: 'Ping, uptime, and health metric bars' },
   { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, and embed footer' },
@@ -107,7 +108,7 @@ export const PANEL_NAV_TABS = [
 ];
 
 function getNavTabForPage(page) {
-  if (page === 'config_override_select') return 'config_stats';
+  if (page === 'config_override_select' || page === 'config_manual_status') return 'config_manual_status';
   if (page === 'config_schedule_add') return 'config_schedule';
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
@@ -1473,7 +1474,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     } else {
       overrideInfo = `✅ **No Active Override**\n*The bot is currently running in Live Scraper Mode, showing the actual status posted on the HCPSS website.*`;
       components.push(actionSelectRow([
-        { label: 'Set Status Override', value: 'panel_to_config_override_select', description: 'Force a specific status for 1-30 days', emoji: { name: '🛠️' } }
+        { label: 'Set Manual School Status', value: 'panel_to_config_manual_status', description: 'Force a specific status & notes for 1-30 days', emoji: { name: '🏫' } }
       ]));
     }
 
@@ -1490,6 +1491,85 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `${overrideInfo}`,
       timestamp: new Date().toISOString()
     };
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_manual_status') {
+    const activeOverride = await getActiveOverride(env, guildId);
+    const editingKey = config.editing_override_status_key || (activeOverride ? activeOverride.status_key : 'normal_operations');
+    const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
+
+    let currentStatusInfo = '';
+    const actionOptions = [];
+
+    if (activeOverride) {
+      const durationHours = Math.max(0, Math.ceil((activeOverride.until - Date.now()) / (1000 * 60 * 60)));
+      const days = Math.ceil(durationHours / 24);
+      const forcedLabel = ALL_STATUS_LABELS[activeOverride.status_key] || activeOverride.status_label || editingLabel;
+      currentStatusInfo = `### ⚠️ **Manual School Status is ACTIVE**\n` +
+                          `• **Operation**: \`${forcedLabel}\`\n` +
+                          `• **Notes / Details**: *${activeOverride.details || 'None provided.'}*\n` +
+                          `• **Custom Headline**: *${activeOverride.title || 'None.'}*\n` +
+                          `• **Time Remaining**: \`${days} day(s)\` (~${durationHours} hours)\n` +
+                          (activeOverride.created_by ? `• **Set By**: <@${activeOverride.created_by}>\n` : '');
+
+      actionOptions.push({
+        label: 'Disable Manual Status',
+        value: 'panel_btn_clear_override',
+        description: 'Return to live scraper mode immediately',
+        emoji: { name: '🛑' }
+      });
+    } else {
+      currentStatusInfo = `### 🟢 **Live Scraper Mode Active**\n` +
+                          `*No manual status is currently active. The bot is automatically scraping and posting the live status from the district website.*`;
+    }
+
+    actionOptions.push({
+      label: 'Set Notes & Apply Manual Status...',
+      value: 'panel_btn_override_details',
+      description: `Enter notes and duration for "${editingLabel}"`,
+      emoji: { name: '✍️' }
+    });
+
+    actionOptions.push({
+      label: 'Publish Status Embed to Alert Channel',
+      value: 'panel_btn_force_post',
+      description: 'Post the current status to the alert channel now',
+      emoji: { name: '🔄' }
+    });
+
+    const embed = {
+      title: '🏫 Control Panel — Manual School Status',
+      color: activeOverride ? 0xF1C40F : 0x3498DB,
+      description: `Manually set your school district's operating status and announcement notes (e.g. for snow days, emergency closures, or delays).\n\n` +
+                   `${currentStatusInfo}\n\n` +
+                   `### 🛠️ Set Operation & Notes\n` +
+                   `1. Select the **Operation** from the dropdown below.\n` +
+                   `2. Choose **Set Notes & Apply Manual Status** from the actions menu to enter your notes (e.g. *"We don't have school today due to snow"*).\n\n` +
+                   `👉 *Selected operation to configure: **${editingLabel}***`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_manual_status'),
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_override_status_select',
+          placeholder: `Selected Operation: ${editingLabel}`,
+          options: Object.entries(STATUS_LABELS).map(([key, label]) => ({
+            label,
+            value: key,
+            default: key === editingKey
+          })),
+          min_values: 1,
+          max_values: 1
+        }]
+      },
+      actionSelectRow(actionOptions, '⚡ Actions...')
+    ];
 
     return { embeds: [embed], components };
   }

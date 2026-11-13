@@ -152,6 +152,67 @@ payload=$(jq -n '[
     ]
   },
   {
+    name: "manualstatus",
+    description: "Set or clear manual school operating status and announcement notes.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      {
+        name: "set",
+        description: "Set manual school status, announcement notes, and duration.",
+        type: 1,
+        options: [
+          {
+            name: "operation",
+            description: "Operating status (e.g. Schools Closed, Delayed).",
+            type: 3,
+            required: true,
+            choices: [
+              { name: "Normal Operations", value: "normal_operations" },
+              { name: "Schools Closed", value: "schools_closed" },
+              { name: "Schools and Offices Closed", value: "schools_and_offices_closed" },
+              { name: "Schools Open 2 Hours Late", value: "schools_open_2_hours_late" },
+              { name: "Schools Close 3 Hours Early", value: "schools_close_3_hours_early" }
+            ]
+          },
+          {
+            name: "notes",
+            description: "Announcement notes or explanation (e.g. We don't have school today due to snow).",
+            type: 3,
+            required: true,
+            max_length: 1000
+          },
+          {
+            name: "days",
+            description: "Duration in days (1-30, default 1).",
+            type: 4,
+            required: false,
+            min_value: 1,
+            max_value: 30
+          },
+          {
+            name: "headline",
+            description: "Optional custom title/headline (e.g. Emergency Weather Closure).",
+            type: 3,
+            required: false,
+            max_length: 100
+          }
+        ]
+      },
+      {
+        name: "clear",
+        description: "Clear manual status and return to live website scraper mode.",
+        type: 1
+      },
+      {
+        name: "view",
+        description: "View the currently active manual status and notes.",
+        type: 1
+      }
+    ]
+  },
+  {
     name: "calendar",
     description: "Show scheduled closures or events in the next 7 days.",
     type: 1,

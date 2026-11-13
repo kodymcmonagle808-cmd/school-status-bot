@@ -6,6 +6,7 @@ import {
   EPHEMERAL_FLAG,
   POST_STATUS_COMMAND,
   OVERRIDE_COMMAND,
+  MANUAL_STATUS_COMMAND,
   ANNOUNCE_COMMAND,
   REQUEST_ANNOUNCEMENT_COMMAND,
   ALL_STATUS_LABELS
@@ -43,7 +44,7 @@ import {
   runMySchoolCommand,
   runHealthCommand,
   runPostStatusCommand,
-  runOverrideCommand,
+  runManualStatusCommand,
   runAddRoleDmCommand,
   runDankStaffSetupCommand,
   runDankMemerCommand,
@@ -364,8 +365,8 @@ export async function handleInteraction(body, env, ctx) {
     return deferredInteractionResponse();
   }
 
-  if (body.type === 2 && body.data && body.data.name === OVERRIDE_COMMAND) {
-    ctx.waitUntil(runOverrideCommand(body, env));
+  if (body.type === 2 && body.data && (body.data.name === OVERRIDE_COMMAND || body.data.name === MANUAL_STATUS_COMMAND || body.data.name === 'manualstatus')) {
+    ctx.waitUntil(runManualStatusCommand(body, env));
     return deferredInteractionResponse();
   }
 

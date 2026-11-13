@@ -70,6 +70,7 @@ export const OWNER_GENERAL_COMMANDS = [
 
 export const OWNER_ADMIN_COMMANDS = [
   { value: 'post-status', label: '/post-status', description: 'Post latest status now' },
+  { value: 'manualstatus', label: '/manualstatus', description: 'Set/clear manual school status & notes' },
   { value: 'override', label: '/override', description: 'Set/clear status override' },
   { value: 'events', label: '/events', description: 'Dynamic calendar events' },
   { value: 'announce', label: '/announce', description: 'Post announcement embed' },
@@ -452,7 +453,8 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_toggles: 'config_toggles',
     panel_to_config_calendar: 'config_calendar',
     panel_to_config_stats: 'config_stats',
-    panel_to_config_override_select: 'config_override_select',
+    panel_to_config_manual_status: 'config_manual_status',
+    panel_to_config_override_select: 'config_manual_status',
     panel_to_config_commands: 'config_commands',
     panel_to_config_joinlogs: 'config_joinlogs',
     panel_to_config_nws_pings: 'config_nws_pings',
@@ -483,7 +485,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     await clearOverride(env, guildId);
     const invokerId = getInvokerId(body);
     ctx.waitUntil(doCheckAndPost(env, { source: 'override-clear', invokerId, guildId }));
-    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_stats');
+    await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_manual_status');
     const payload = await buildControlPanelPayload(env, guildId);
     return jsonResponse({ type: 7, data: payload });
   }
@@ -636,9 +638,21 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return jsonResponse({
       type: 9,
       data: {
-        title: `Set Override: ${statusLabel.split(' ')[0]}`,
+        title: `🏫 Manual Status: ${statusLabel}`.slice(0, 45),
         custom_id: 'modal_set_override',
         components: [
+          {
+            type: 1,
+            components: [{
+              type: 4,
+              custom_id: 'input_override_details',
+              style: 2,
+              label: 'Notes / Announcement',
+              placeholder: 'e.g. We do not have school today due to icy road conditions.',
+              required: true,
+              max_length: 1000
+            }]
+          },
           {
             type: 1,
             components: [{
@@ -647,6 +661,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
               style: 1,
               label: 'Duration in Days (1-30)',
               placeholder: '1',
+              value: '1',
               min_length: 1,
               max_length: 2,
               required: true
@@ -658,22 +673,10 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
               type: 4,
               custom_id: 'input_override_title',
               style: 1,
-              label: 'Embed Title Override (Optional)',
-              placeholder: `HCPSS Status (Override) - ${statusLabel}`,
+              label: 'Headline / Custom Title (Optional)',
+              placeholder: `e.g. Emergency Weather Closure`,
               required: false,
-              max_length: 256
-            }]
-          },
-          {
-            type: 1,
-            components: [{
-              type: 4,
-              custom_id: 'input_override_details',
-              style: 2,
-              label: 'Details/Reason (Optional)',
-              placeholder: 'Inclement weather conditions...',
-              required: false,
-              max_length: 1000
+              max_length: 100
             }]
           }
         ]
