@@ -161,8 +161,33 @@ async function fetchMaleTTS(text) {
   return null;
 }
 
+function cleanTextForTTS(text) {
+  if (!text) return '';
+  let s = String(text);
+
+  // Normalize phonetic pronunciations for acronyms and abbreviations
+  s = s.replace(/\bHCPSS\b/gi, 'H C P S S');
+  s = s.replace(/\bNWS\b/gi, 'National Weather Service');
+  s = s.replace(/\bVCs\b/gi, 'voice channels');
+  s = s.replace(/\bVC\b/gi, 'voice channel');
+  s = s.replace(/\b(\d+)\s*mph\b/gi, '$1 miles per hour');
+  s = s.replace(/\b(\d+)\s*hrs?\b/gi, '$1 hours');
+  s = s.replace(/\b(\d+)\s*mins?\b/gi, '$1 minutes');
+  s = s.replace(/[°º]/g, ' degrees ');
+  s = s.replace(/\bflr\.?\b/gi, 'floor');
+  s = s.replace(/(\d+)\s*([ap]\.?m\.?)\b/gi, '$1 $2');
+  s = s.replace(/\bBGE\b/gi, 'B G E');
+  s = s.replace(/\bGov\.?\b/gi, 'Governor');
+  s = s.replace(/\bDr\.?\b/gi, 'Doctor');
+  s = s.replace(/\bdept\.?\b/gi, 'department');
+
+  // Strip extraneous symbols
+  s = s.replace(/[^a-zA-Z0-9 ,.?!'()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s;
+}
+
 function formatSeriousSpeech(text, iteration) {
-  const clean = String(text || '').trim();
+  let clean = String(text || '').trim();
   const isWeather = /weather|warning|advisory|watch|tornado|flood|storm|thunderstorm|blizzard|hurricane|nws/i.test(clean);
 
   // Strip prefix labels and test markers
@@ -170,12 +195,16 @@ function formatSeriousSpeech(text, iteration) {
     .replace(/\s*-\s*test\s*announcement/gi, '')
     .replace(/\(test\s*announcement\)/gi, '')
     .replace(/\[test\s*alert\]/gi, '')
-    .replace(/^HCPSS\s*Status\s*Update\s*:?/i, '')
-    .replace(/^National\s*Weather\s*Service\s*(Alert|Notice)?\s*:?/i, '')
+    .replace(/^HCPSS\s*(Emergency\s*)?(Weather\s*Alert|Status\s*Update)?\s*:?/i, '')
+    .replace(/^National\s*Weather\s*Service\s*(Emergency\s*Alert|Weather\s*Alert|Alert|Notice)?\s*:?/i, '')
+    .replace(/^(Emergency\s*Alert|Weather\s*Alert)\s*:?/i, '')
     .replace(/[()]/g, '')
+    .replace(/^[.,;:\s]+/, '')
+    .replace(/[.,;:\s]+$/, '')
     .trim();
 
-  mainMessage = mainMessage.replace(/[.,;:]+$/, '').trim();
+  // Apply phonetic pronunciations on mainMessage
+  mainMessage = cleanTextForTTS(mainMessage);
 
   if (isWeather) {
     if (iteration === 0) {
@@ -192,14 +221,14 @@ function formatSeriousSpeech(text, iteration) {
     } else if (iteration === 1) {
       return `Repeat. ${mainMessage}.`;
     } else {
-      return `Final notice. ${mainMessage}. For full details, please check H-C-P-S-S dot org.`;
+      return `Final notice. ${mainMessage}. For full details, please check H C P S S dot org.`;
     }
   }
 }
 
 async function announceInActiveVoiceChannels(guild, text) {
   if (!guild) return;
-  const cleanText = String(text || 'HCPSS Status Update').replace(/[^a-zA-Z0-9 ,.?!'()\-]/g, ' ').slice(0, 150);
+  const cleanText = String(text || 'HCPSS Status Update').replace(/[^a-zA-Z0-9 ,.?!'()\-]/g, ' ').slice(0, 600);
   console.log(`🎙️ Voice announcement request received: "${cleanText}" for guild "${guild.name}"`);
 
   try {
@@ -253,6 +282,17 @@ async function announceInActiveVoiceChannels(guild, text) {
 
     console.log(`🎙️ Found ${activeVcs.length} active voice channel(s) to announce in.`);
 
+    // Pre-fetch all 3 serious announcements in parallel upfront to eliminate network lag during playback!
+    const spokenTexts = [
+      formatSeriousSpeech(cleanText, 0),
+      formatSeriousSpeech(cleanText, 1),
+      formatSeriousSpeech(cleanText, 2)
+    ];
+    console.log(`🎙️ Pre-fetching 3 TTS audio streams in parallel...`);
+    const audioBuffers = await Promise.all(
+      spokenTexts.map(t => fetchMaleTTS(t))
+    );
+
     for (const vc of activeVcs) {
       try {
         console.log(`🎙️ Joining "${vc.name}" (${vc.id}) to announce...`);
@@ -287,7 +327,7 @@ async function announceInActiveVoiceChannels(guild, text) {
             player.play(beepResource);
             await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
             await entersState(player, AudioPlayerStatus.Idle, 15000).catch(() => {});
-            await new Promise(resolve => setTimeout(resolve, 800)); // Dramatic pause after beeps
+            await new Promise(resolve => setTimeout(resolve, 400)); // Short, crisp pause after beeps
           } catch (beepErr) {
             console.error(`EAS beep playback error: ${beepErr.message}`);
           }
@@ -295,10 +335,10 @@ async function announceInActiveVoiceChannels(guild, text) {
 
         // 2. Speak the 3 serious announcements using authoritative male voice with boosted volume
         for (let i = 0; i < 3; i++) {
-          const spokenText = formatSeriousSpeech(cleanText, i);
+          const spokenText = spokenTexts[i];
           console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3) [Male Voice]: "${spokenText}"`);
 
-          const audioBuf = await fetchMaleTTS(spokenText);
+          const audioBuf = audioBuffers[i];
           let resource = null;
           if (audioBuf) {
             resource = createAudioResource(Readable.from(audioBuf), {
@@ -323,7 +363,8 @@ async function announceInActiveVoiceChannels(guild, text) {
           await entersState(player, AudioPlayerStatus.Playing, 8000).catch(() => {});
           await entersState(player, AudioPlayerStatus.Idle, 35000).catch(() => {});
           if (i < 2) {
-            await new Promise(resolve => setTimeout(resolve, 1200));
+            // Crisp, short pause between repetitions (350ms) with zero network latency
+            await new Promise(resolve => setTimeout(resolve, 350));
           }
         }
 
