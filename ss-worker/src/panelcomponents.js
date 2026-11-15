@@ -416,6 +416,15 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return interactionResponse({ content: '❌ Unknown action.', flags: EPHEMERAL_FLAG });
   }
 
+  if (customId === 'panel_debug_select') {
+    const action = Array.isArray(body.data.values) && body.data.values[0];
+    if (typeof action === 'string' && action.startsWith('panel_') && action !== 'panel_debug_select') {
+      const forwarded = { ...body, data: { ...body.data, custom_id: action, values: [] } };
+      return await handlePanelComponent(forwarded, env, ctx, guildId);
+    }
+    return interactionResponse({ content: '❌ Unknown debug action.', flags: EPHEMERAL_FLAG });
+  }
+
   // Direct-button variants of the quick actions (kept for older panel messages)
   if (customId === 'panel_speed') {
     ctx.waitUntil(handlePanelSpeed(body, env));
@@ -905,13 +914,13 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   if (customId === 'panel_btn_debug_test_voice') {
     ctx.waitUntil((async () => {
       try {
-        await dispatchVoiceAnnouncement(env, guildId, "HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)");
+        await dispatchVoiceAnnouncement(env, guildId, "HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)", true);
       } catch (e) {
         console.error('Failed to dispatch test voice announcement:', e);
       }
     })());
     return interactionResponse({
-      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times, then disconnect.',
+      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times, then disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
       flags: EPHEMERAL_FLAG
     });
   }
@@ -1004,10 +1013,10 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         }
 
         const testEmbed = {
-          title: '🏫 HCPSS Status (Simulated Test Alert)',
-          description: '🧪 **[TEST / DEBUG SIMULATION]**\n\n**Schools Open 2 Hours Late**\nAll Howard County public schools will open two hours late today. Morning pre-K and half-day classes are cancelled.',
+          title: '🏫 HCPSS Status (Simulated Test Alert - No Pings)',
+          description: '🧪 **[SIMULATED STATUS TEST — ZERO PINGS]**\n\n**Schools Open 2 Hours Late**\nAll Howard County public schools will open two hours late today. Morning pre-K and half-day classes are cancelled.\n\n*(Role pings have been suppressed so no server members are disturbed.)*',
           color: 0xF1C40F,
-          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation` },
+          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation (No Pings)` },
           timestamp: new Date().toISOString()
         };
 
@@ -1017,7 +1026,11 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
             Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ embeds: [testEmbed] })
+          body: JSON.stringify({
+            content: '',
+            embeds: [testEmbed],
+            allowed_mentions: { parse: [] }
+          })
         });
 
         if (!postResp.ok) {
@@ -1025,7 +1038,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         }
 
         await updateInteractionOriginal(env, body.token, {
-          content: `✅ **Simulated Status Alert Sent!**\n\nPosted a simulated status embed to <#${alertChannelId}> so you can check layout and permissions.`,
+          content: `✅ **Simulated Status Alert Sent (Zero Pings)!**\n\nPosted a simulated status embed to <#${alertChannelId}> with role pings completely suppressed.`,
           flags: EPHEMERAL_FLAG
         });
       } catch (err) {
@@ -1053,10 +1066,10 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         }
 
         const testEmbed = {
-          title: '⚠️ Winter Storm Warning — Howard County (Simulated Test)',
-          description: '🧪 **[TEST / DEBUG SIMULATION]**\n\n**National Weather Service has issued a Winter Storm Warning** for Howard County, MD.\nHeavy snow expected. Total snow accumulations of 4 to 8 inches.\n\n*This is a test notification generated from the staff control panel.*',
+          title: '⚠️ Winter Storm Warning — Howard County (Simulated Test - No Pings)',
+          description: '🧪 **[SIMULATED WEATHER ALERT — ZERO PINGS]**\n\n**National Weather Service has issued a Winter Storm Warning** for Howard County, MD.\nHeavy snow expected. Total snow accumulations of 4 to 8 inches.\n\n*(Role pings have been suppressed so no server members are disturbed.)*',
           color: 0x3498DB,
-          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation` },
+          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation (No Pings)` },
           timestamp: new Date().toISOString()
         };
 
@@ -1066,7 +1079,11 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
             Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ embeds: [testEmbed] })
+          body: JSON.stringify({
+            content: '',
+            embeds: [testEmbed],
+            allowed_mentions: { parse: [] }
+          })
         });
 
         if (!postResp.ok) {
@@ -1074,7 +1091,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
         }
 
         await updateInteractionOriginal(env, body.token, {
-          content: `✅ **Simulated Weather Alert Sent!**\n\nPosted simulated NWS alert embed to <#${alertChannelId}>.`,
+          content: `✅ **Simulated Weather Alert Sent (Zero Pings)!**\n\nPosted simulated NWS alert embed to <#${alertChannelId}> with role pings completely suppressed.`,
           flags: EPHEMERAL_FLAG
         });
       } catch (err) {
@@ -1295,7 +1312,7 @@ export function handleTestAlert(body, env, ctx, guildId) {
         rolesToPing = Array.isArray(defaultRoleIds) ? defaultRoleIds : [];
       }
 
-      const content = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(' ') : '';
+      const wouldPingStr = rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(', ') : '*(none)*';
       const customFooter = config.alert_embed_footer || 'School Status';
       const color = config.status_embed_colors && typeof config.status_embed_colors[statusKey] === 'number'
         ? config.status_embed_colors[statusKey]
@@ -1303,8 +1320,8 @@ export function handleTestAlert(body, env, ctx, guildId) {
 
       const thumbnailUrl = getStatusThumbnail(statusKey);
       const embeds = splitEmbeds(
-        `HCPSS Status for Today (Test)`,
-        cards[0].body,
+        `HCPSS Status for Today (Test - No Pings)`,
+        cards[0].body + `\n\n*(Role pings suppressed for test simulation — live alert would ping: ${wouldPingStr})*`,
         HCPSS_URL,
         color,
         customFooter,
@@ -1319,9 +1336,9 @@ export function handleTestAlert(body, env, ctx, guildId) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          content,
+          content: '',
           embeds,
-          allowed_mentions: rolesToPing.length ? { roles: rolesToPing } : { parse: [] }
+          allowed_mentions: { parse: [] }
         })
       });
 
@@ -1330,13 +1347,14 @@ export function handleTestAlert(body, env, ctx, guildId) {
         throw new Error(`Discord API error posting test message: ${postResp.status} ${errTxt}`);
       }
 
-      logAction(`🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}>.`, { guildId });
+      logAction(`🧪 Scraper test alert for '${statusKey}' triggered by <@${invokerId}>. Sent to <#${alertChannelId}> (pings suppressed).`, { guildId });
 
       await updateInteractionOriginal(env, body.token, {
-        content: `✅ **Diagnostic Test Successful!**\n\n` +
+        content: `✅ **Diagnostic Test Successful (Zero Pings Sent)!**\n\n` +
                  `• Status Simulated: **${ALL_STATUS_LABELS[selectedStatusKey] || selectedStatusKey}**\n` +
                  `• Alert Channel: <#${alertChannelId}>\n` +
-                 `• Role Pings: ${rolesToPing.length ? rolesToPing.map(id => `<@&${id}>`).join(', ') : '*(none)*'}\n\n` +
+                 `• Role Pings: *(suppressed for test simulation — zero pings sent)*\n` +
+                 `• Live Alert Would Ping: ${wouldPingStr}\n\n` +
                  `Check <#${alertChannelId}> to see the rendered test embed card.`,
         components: []
       });

@@ -11,20 +11,21 @@ import { logAction, logActionError } from './actionlog.js';
  * @param {object} env - Cloudflare worker environment
  * @param {string} guildId - Discord Guild ID
  * @param {string} messageText - The announcement text to speak
+ * @param {boolean} [force=false] - If true, dispatches regardless of toggle setting (for staff testing)
  * @returns {Promise<boolean>} - True if the command was dispatched
  */
-export async function dispatchVoiceAnnouncement(env, guildId, messageText) {
+export async function dispatchVoiceAnnouncement(env, guildId, messageText, force = false) {
   if (!env || !env.DISCORD_BOT_TOKEN) return false;
   try {
     const config = await getConfig(env, guildId);
-    if (config.toggle_voice_announcements === false) {
+    if (!force && config.toggle_voice_announcements !== true) {
       logAction(`🎙️ Voice announcements are disabled in settings; skipping: "${messageText}"`, { guildId });
       return false;
     }
 
     // Identify target text channel to route the bridge command through.
-    // hcpss-greeter monitors the music channel, log channel, and primary alert channel.
-    const targetChannelId = config.music_channel_id || config.log_channel_id || config.channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+    // hcpss-greeter monitors the music channel, alert channel, log channel, or guild fallback.
+    const targetChannelId = config.music_channel_id || config.voice_channel_id || config.log_channel_id || config.alert_channel_id || config.channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
     if (!targetChannelId) {
       logAction(`🎙️ No channel configured to route voice bridge command for guild ${guildId}`, { guildId });
       return false;

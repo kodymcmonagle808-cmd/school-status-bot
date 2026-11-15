@@ -79,20 +79,57 @@ async function announceInActiveVoiceChannels(guild, text) {
 
   try {
     await guild.channels.fetch().catch(() => {});
-    const activeVcs = guild.channels.cache.filter(c =>
-      c.isVoiceBased && c.isVoiceBased() &&
-      c.members && c.members.filter(m => !m.user.bot).size > 0
-    );
+    await guild.members.fetch({ time: 5000 }).catch(() => {});
 
-    if (!activeVcs || activeVcs.size === 0) {
+    // Collect active voice channels with human listeners
+    const targetChannelIds = new Set();
+    if (guild.voiceStates && guild.voiceStates.cache) {
+      for (const vs of guild.voiceStates.cache.values()) {
+        if (vs.channelId && (!vs.member || !vs.member.user?.bot)) {
+          targetChannelIds.add(vs.channelId);
+        }
+      }
+    }
+
+    const activeVcs = [];
+    for (const channelId of targetChannelIds) {
+      const ch = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+      if (ch && (ch.isVoiceBased ? ch.isVoiceBased() : ch.type === 2 || ch.type === 13)) {
+        activeVcs.push(ch);
+      }
+    }
+
+    // Fallback: check cached voice channels directly if voiceStates didn't yield channels
+    if (activeVcs.length === 0) {
+      for (const ch of guild.channels.cache.values()) {
+        const isVc = ch.isVoiceBased ? ch.isVoiceBased() : ch.type === 2;
+        if (isVc && ch.members && ch.members.filter(m => !m.user.bot).size > 0) {
+          activeVcs.push(ch);
+        }
+      }
+    }
+
+    // Diagnostic fallback: if this is a test and no one is in VC, pick any VC so staff can verify bot joins & speaks
+    if (activeVcs.length === 0) {
+      const isTest = /test/i.test(cleanText);
+      if (isTest) {
+        const anyVc = guild.channels.cache.find(c => (c.isVoiceBased ? c.isVoiceBased() : c.type === 2));
+        if (anyVc) {
+          console.log(`🎙️ [Diagnostic Test] No members currently in voice; targeting "${anyVc.name}" (${anyVc.id}) for demonstration.`);
+          activeVcs.push(anyVc);
+        }
+      }
+    }
+
+    if (activeVcs.length === 0) {
       console.log(`🎙️ No active voice channels with human listeners found in "${guild.name}". Skipping voice play.`);
       return;
     }
 
-    console.log(`🎙️ Found ${activeVcs.size} active voice channel(s) with listeners.`);
+    console.log(`🎙️ Found ${activeVcs.length} active voice channel(s) to announce in.`);
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(cleanText)}`;
 
-    for (const vc of activeVcs.values()) {
+    for (const vc of activeVcs) {
       try {
         console.log(`🎙️ Joining "${vc.name}" (${vc.id}) to announce...`);
         const connection = joinVoiceChannel({
@@ -112,10 +149,30 @@ async function announceInActiveVoiceChannels(guild, text) {
         // Speak 3 times as requested
         for (let i = 0; i < 3; i++) {
           console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3): "${cleanText}"`);
-          const resource = createAudioResource(ttsUrl, {
-            inputType: StreamType.Arbitrary,
-            inlineVolume: false
-          });
+          let resource = null;
+          try {
+            const ttsResp = await fetch(ttsUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            });
+            if (ttsResp.ok) {
+              const stream = Readable.fromWeb(ttsResp.body);
+              resource = createAudioResource(stream, {
+                inputType: StreamType.Arbitrary,
+                inlineVolume: false
+              });
+            }
+          } catch (fetchErr) {
+            console.error(`TTS fetch error: ${fetchErr.message}`);
+          }
+
+          if (!resource) {
+            // Fallback to direct URL if stream conversion had issue
+            resource = createAudioResource(ttsUrl, {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: false
+            });
+          }
+
           player.play(resource);
           await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
           await entersState(player, AudioPlayerStatus.Idle, 15000).catch(() => {});

@@ -132,6 +132,33 @@ function actionSelectRow(options, placeholder = '⚡ Actions...', disabled = fal
   };
 }
 
+export const DEBUG_DROPDOWN_OPTIONS = [
+  { label: 'Test Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active voice channels', emoji: { name: '🎙️' } },
+  { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and KV feeds', emoji: { name: '⚡' } },
+  { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
+  { label: 'Simulate Status Alert (No Pings)', value: 'panel_btn_debug_simulate_status', description: 'Post test status embed (zero pings sent)', emoji: { name: '📣' } },
+  { label: 'Simulate Weather Alert (No Pings)', value: 'panel_btn_debug_simulate_weather', description: 'Post test NWS alert embed (zero pings sent)', emoji: { name: '⚠️' } },
+  { label: 'Purge Caches (Owner Only)', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
+  { label: 'View Raw Config (Owner Only)', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
+  { label: 'View KV Analytics (Owner Only)', value: 'panel_owner_view_kv_stats', description: 'Inspect Cloudflare KV daily operation budget', emoji: { name: '📊' } },
+  { label: 'Open System Logs (Owner Only)', value: 'panel_logs', description: 'Mint signed link to Cloudflare Observability logs', emoji: { name: '📜' } }
+];
+
+export function debugSelectRow(options = DEBUG_DROPDOWN_OPTIONS, placeholder = '🛠️ Debug & Diagnostics...', disabled = false) {
+  return {
+    type: 1,
+    components: [{
+      type: 3,
+      custom_id: 'panel_debug_select',
+      placeholder,
+      options,
+      min_values: 1,
+      max_values: 1,
+      ...(disabled ? { disabled: true } : {})
+    }]
+  };
+}
+
 function getNavBarRow(activeTab) {
   const activeValue = getNavTabForPage(activeTab);
 
@@ -782,6 +809,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const emergencyAlerts = config.toggle_emergency_alerts !== false;
     const emergencyPing = config.toggle_emergency_ping !== false;
     const sessionGate = config.toggle_session_gate !== false;
+    const voiceAnnounce = config.toggle_voice_announcements === true;
     const abDay = config.toggle_ab_day !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
@@ -812,7 +840,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
                    `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — a big yellow take-shelter post for the alerts NWS pushes to phones (tornado warning, destructive winds), any hour\n` +
                    `• ${emergencyPing ? '🟢' : '🔴'} **Emergency @everyone Ping** — let those emergency alerts ping @everyone (needs the bot to have *Mention Everyone*)\n` +
-                   `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n\n` +
+                   `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n` +
+                   `• ${voiceAnnounce ? '🟢' : '🔴'} **Voice Announcements** — join active voice channels and announce status & weather updates 3x\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
                    `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
@@ -972,6 +1001,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: 'Hold storm alerts on weekends, breaks, and holidays',
         emoji: { name: '📆' },
         default: sessionGate
+      },
+      {
+        label: 'Voice Channel Announcements',
+        value: 'toggle_voice_announcements',
+        description: 'Speak status & weather updates 3x in active voice channels',
+        emoji: { name: '🎙️' },
+        default: voiceAnnounce
       }
     ];
 
@@ -1795,19 +1831,20 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
       { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Wipe the panel list (the web log is unaffected)', emoji: { name: '🗑️' } }
     ], '⚡ Quick Actions...'),
+    debugSelectRow(DEBUG_DROPDOWN_OPTIONS, '🛠️ Debug & Diagnostics...'),
     {
       type: 1,
       components: [{
         type: 3,
         custom_id: 'panel_trigger_test_alert',
-        placeholder: '🧪 Simulate Status Alert...',
+        placeholder: '🧪 Simulate Status Alert (No Pings)...',
         options: [
-          { label: 'Normal Operations', value: 'normal_operations', description: 'Simulate a Normal Operations status update' },
-          { label: 'Schools Closed', value: 'schools_closed', description: 'Simulate a Schools Closed status update' },
-          { label: 'Schools & Offices Closed', value: 'schools_and_offices_closed', description: 'Simulate a Schools & Offices Closed status update' },
-          { label: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late', description: 'Simulate a 2-Hour Delay status update' },
-          { label: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early', description: 'Simulate a 3-Hour Early Close status update' },
-          { label: 'Other/Unknown Alert', value: 'unknown_alert', description: 'Simulate an Unknown Scraper Alert' }
+          { label: 'Normal Operations', value: 'normal_operations', description: 'Simulate a Normal Operations status update (no pings)' },
+          { label: 'Schools Closed', value: 'schools_closed', description: 'Simulate a Schools Closed status update (no pings)' },
+          { label: 'Schools & Offices Closed', value: 'schools_and_offices_closed', description: 'Simulate a Schools & Offices Closed status update (no pings)' },
+          { label: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late', description: 'Simulate a 2-Hour Delay status update (no pings)' },
+          { label: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early', description: 'Simulate a 3-Hour Early Close status update (no pings)' },
+          { label: 'Other/Unknown Alert', value: 'unknown_alert', description: 'Simulate an Unknown Scraper Alert (no pings)' }
         ],
         min_values: 1,
         max_values: 1
@@ -2068,6 +2105,7 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_emergency_alerts = selected.includes('toggle_emergency_alerts');
     next.toggle_emergency_ping = selected.includes('toggle_emergency_ping');
     next.toggle_session_gate = selected.includes('toggle_session_gate');
+    next.toggle_voice_announcements = selected.includes('toggle_voice_announcements');
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];

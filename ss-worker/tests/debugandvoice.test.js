@@ -200,3 +200,155 @@ test('debug actions: staff can test voice, non-owner is blocked from owner actio
 
   globalThis.fetch = origFetch;
 });
+
+test('panel_debug_select dropdown dispatches selected action', async () => {
+  const kv = mockKv({
+    'config:g1': JSON.stringify({ music_channel_id: 'chan-123' })
+  });
+  const env = {
+    STATUS_KV: kv,
+    DISCORD_BOT_TOKEN: 'fake-token',
+    OWNER_ID: 'owner-123'
+  };
+  const ctx = { waitUntil: (p) => {} };
+
+  let voicePosted = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.body && opts.body.includes('GREET_BOT_COMMAND: ANNOUNCE_VOICE')) {
+      voicePosted = true;
+    }
+    return { ok: true, json: async () => ({ id: '1' }), text: async () => '' };
+  };
+
+  const selectBody = {
+    guild_id: 'g1',
+    token: 'tok-staff',
+    member: { user: { id: 'staff-user' }, permissions: '8' },
+    data: {
+      custom_id: 'panel_debug_select',
+      values: ['panel_btn_debug_test_voice']
+    }
+  };
+
+  const resp = await handlePanelComponent(selectBody, env, ctx, 'g1');
+  const json = await resp.json();
+  assert.match(json.data.content, /Voice Diagnostic Dispatched/);
+  assert.ok(voicePosted);
+
+  globalThis.fetch = origFetch;
+});
+
+test('Simulated status alert sends zero pings (empty content and empty allowed_mentions)', async () => {
+  const kv = mockKv({
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-alert',
+      ping_role_ids: ['role-everyone', 'role-staff'],
+      alert_embed_footer: 'HCPSS Status'
+    })
+  });
+  const env = {
+    STATUS_KV: kv,
+    DISCORD_BOT_TOKEN: 'fake-token'
+  };
+
+  let postedPayload = null;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.includes('/channels/chan-alert/messages')) {
+      postedPayload = JSON.parse(opts.body);
+    }
+    return { ok: true, json: async () => ({ id: 'msg-alert-1' }), text: async () => '' };
+  };
+
+  const { handleTestAlert } = await import('../src/panelcomponents.js');
+  const body = {
+    guild_id: 'g1',
+    token: 'tok-test',
+    member: { user: { id: 'staff-1' }, permissions: '8' },
+    data: {
+      values: ['schools_closed']
+    }
+  };
+
+  let bgPromise = null;
+  const ctx = {
+    waitUntil: (p) => { bgPromise = p; }
+  };
+
+  const resp = handleTestAlert(body, env, ctx, 'g1');
+  const json = await resp.json();
+  assert.equal(json.type, 5); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+
+  if (bgPromise) await bgPromise;
+
+  assert.ok(postedPayload, 'Message must be posted to alert channel');
+  assert.equal(postedPayload.content, '', 'Content MUST be empty so no roles or users are pinged');
+  assert.deepEqual(postedPayload.allowed_mentions, { parse: [] }, 'allowed_mentions parse must be empty array');
+  assert.match(postedPayload.embeds[0].title, /HCPSS Status for Today \(Test - No Pings\)/);
+
+  globalThis.fetch = origFetch;
+});
+
+test('Simulated weather alert sends zero pings (empty content and empty allowed_mentions)', async () => {
+  const kv = mockKv({
+    'config:g1': JSON.stringify({
+      alert_channel_id: 'chan-weather',
+      ping_role_ids: ['role-everyone']
+    })
+  });
+  const env = {
+    STATUS_KV: kv,
+    DISCORD_BOT_TOKEN: 'fake-token'
+  };
+
+  let postedPayload = null;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url.includes('/channels/chan-weather/messages')) {
+      postedPayload = JSON.parse(opts.body);
+    }
+    return { ok: true, json: async () => ({ id: 'msg-weather-1' }), text: async () => '' };
+  };
+
+  const body = {
+    guild_id: 'g1',
+    token: 'tok-weather-test',
+    member: { user: { id: 'staff-1' }, permissions: '8' },
+    data: {
+      custom_id: 'panel_btn_debug_simulate_weather'
+    }
+  };
+
+  let bgPromise = null;
+  const ctx = {
+    waitUntil: (p) => { bgPromise = p; }
+  };
+
+  const resp = await handlePanelComponent(body, env, ctx, 'g1');
+  const json = await resp.json();
+  assert.equal(json.type, 5);
+
+  if (bgPromise) await bgPromise;
+
+  assert.ok(postedPayload, 'Message must be posted to weather channel');
+  assert.equal(postedPayload.content, '', 'Content MUST be empty');
+  assert.deepEqual(postedPayload.allowed_mentions, { parse: [] });
+  assert.match(postedPayload.embeds[0].title, /Winter Storm Warning.*Simulated Test - No Pings/);
+
+  globalThis.fetch = origFetch;
+});
+
+test('Dashboard renders both Quick Actions and Debug & Diagnostics dropdown rows', async () => {
+  const kv = mockKv();
+  const env = { STATUS_KV: kv };
+
+  const payload = await buildControlPanelPayload(env, 'g1', null, 'dashboard');
+  const customIds = payload.components
+    .flatMap(row => row.components || [])
+    .map(c => c.custom_id);
+
+  assert.ok(customIds.includes('panel_action_select'), 'Must have Quick Actions dropdown');
+  assert.ok(customIds.includes('panel_debug_select'), 'Must have Debug & Diagnostics dropdown');
+  assert.ok(customIds.includes('panel_trigger_test_alert'), 'Must have Simulate Status Alert dropdown');
+});
