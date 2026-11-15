@@ -270,12 +270,12 @@ async function announceInActiveVoiceChannels(guild, text) {
         });
         connection.subscribe(player);
 
-        const isSevereWeather = /weather|warning|advisory|watch|tornado|flood|storm|thunderstorm|blizzard|hurricane|nws/i.test(cleanText);
+        const isEmergency = /emergency|tornado|take shelter|extreme wind|hurricane|civil danger|flash flood emergency|life[- ]threatening/i.test(cleanText);
 
-        // 1. Play EAS Emergency Attention Beeps ONLY for severe weather alerts!
-        if (isSevereWeather) {
+        // 1. Play EAS Emergency Attention Beeps ONLY for emergency alerts!
+        if (isEmergency) {
           try {
-            console.log(`🚨 [${vc.name}] Playing severe weather EAS attention beeps...`);
+            console.log(`🚨 [${vc.name}] Playing EAS emergency attention beeps...`);
             const beepWav = generateEASBeeps();
             const beepResource = createAudioResource(Readable.from(beepWav), {
               inputType: StreamType.Arbitrary,

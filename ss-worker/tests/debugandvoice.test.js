@@ -145,7 +145,7 @@ test('debug actions: staff can test voice, non-owner is blocked from owner actio
 
   const voiceResp = await handlePanelComponent(staffVoiceBody, env, ctx, 'g1');
   const voiceJson = await voiceResp.json();
-  assert.match(voiceJson.data.content, /Voice Diagnostic Dispatched/);
+  assert.match(voiceJson.data.content, /Status Voice Announcement Dispatched|Voice Diagnostic Dispatched/);
   assert.ok(voicePosted);
 
   // 2. Non-owner tries owner-only cache purge
@@ -234,7 +234,7 @@ test('panel_debug_select dropdown dispatches selected action', async () => {
 
   const resp = await handlePanelComponent(selectBody, env, ctx, 'g1');
   const json = await resp.json();
-  assert.match(json.data.content, /Voice Diagnostic Dispatched/);
+  assert.match(json.data.content, /Status Voice Announcement Dispatched|Voice Diagnostic Dispatched/);
   assert.ok(voicePosted);
 
   globalThis.fetch = origFetch;
@@ -384,9 +384,9 @@ test('staff can test weather voice alert with EAS notice', async () => {
 
   const resp = await handlePanelComponent(staffWeatherVoiceBody, env, ctx, 'g1');
   const json = await resp.json();
-  assert.match(json.data.content, /Weather Voice Alert Dispatched/);
+  assert.match(json.data.content, /Emergency Voice Alert Dispatched/);
   assert.ok(voicePosted);
-  assert.match(postedContent, /Winter Storm Warning/);
+  assert.match(postedContent, /Tornado Warning/);
 
   globalThis.fetch = origFetch;
 });

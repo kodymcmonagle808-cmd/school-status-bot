@@ -920,7 +920,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       }
     })());
     return interactionResponse({
-      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, play the EAS attention beeps, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times in an authoritative voice, then disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
+      content: '🎙️ **Status Voice Announcement Dispatched!**\n\nThe bot will join active voice channels with listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times in an authoritative male voice (no alarm beeps for status updates), and disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
       flags: EPHEMERAL_FLAG
     });
   }
@@ -928,13 +928,13 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
   if (customId === 'panel_btn_debug_test_weather_voice') {
     ctx.waitUntil((async () => {
       try {
-        await dispatchVoiceAnnouncement(env, guildId, "National Weather Service Alert. Winter Storm Warning in effect for Howard County. Heavy snow accumulations of 4 to 8 inches expected.", true);
+        await dispatchVoiceAnnouncement(env, guildId, "National Weather Service Emergency Alert. Tornado Warning in effect for Howard County. Take shelter immediately in an interior room on the lowest floor.", true);
       } catch (e) {
         console.error('Failed to dispatch test weather voice announcement:', e);
       }
     })());
     return interactionResponse({
-      content: '🌪️ **Weather Voice Alert Dispatched!**\n\nThe bot has triggered the NWS weather voice announcement.\nIt will join active voice channels with listeners, play the EAS emergency alert beeps, announce the NWS warning 3 times in an authoritative emergency voice, and disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
+      content: '🌪️ **Emergency Voice Alert Dispatched!**\n\nThe bot has triggered an emergency voice announcement.\nBecause this is an Emergency Alert (Tornado Warning), it will sound the long EAS emergency warning beeps, announce the emergency warning 3 times in an authoritative male voice, and disconnect.\n\n*(Note: Routine weather notices and school status updates skip the beeps.)*',
       flags: EPHEMERAL_FLAG
     });
   }

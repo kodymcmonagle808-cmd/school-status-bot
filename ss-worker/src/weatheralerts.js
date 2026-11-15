@@ -463,7 +463,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           // kind of wrong, and the alert history lives in the logs regardless.
           if (recordNotice(updatedSeen, emergency, posted, cfg.alert_channel_id)) seenDirty = true;
           logAction(`🚨 EMERGENCY alert (${events}) posted to <#${cfg.alert_channel_id}>${cfg.toggle_emergency_ping !== false ? ' with @everyone' : ''}.`, { guildId: gid });
-          await dispatchVoiceAnnouncement(env, gid, `HCPSS Weather Alert (${events})`);
+          await dispatchVoiceAnnouncement(env, gid, `HCPSS Emergency Weather Alert (${events})`);
         }
       }
 

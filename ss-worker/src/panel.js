@@ -133,8 +133,8 @@ function actionSelectRow(options, placeholder = '⚡ Actions...', disabled = fal
 }
 
 export const DEBUG_DROPDOWN_OPTIONS = [
-  { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status with EAS beeps 3x in active VCs', emoji: { name: '🎙️' } },
-  { label: 'Test Weather Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS weather alert with EAS beeps 3x in active VCs', emoji: { name: '🌪️' } },
+  { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active VCs (no beeps)', emoji: { name: '🎙️' } },
+  { label: 'Test Emergency Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS Tornado Warning with EAS emergency beeps 3x', emoji: { name: '🌪️' } },
   { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and KV feeds', emoji: { name: '⚡' } },
   { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
   { label: 'Simulate Status Alert (No Pings)', value: 'panel_btn_debug_simulate_status', description: 'Post test status embed (zero pings sent)', emoji: { name: '📣' } },
@@ -1643,8 +1643,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const actionOptions = [
-      { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status with EAS beeps 3x in active VCs', emoji: { name: '🎙️' } },
-      { label: 'Test Weather Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS weather alert with EAS beeps 3x in active VCs', emoji: { name: '🌪️' } },
+      { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active VCs (no beeps)', emoji: { name: '🎙️' } },
+      { label: 'Test Emergency Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS Tornado Warning with EAS emergency beeps 3x', emoji: { name: '🌪️' } },
       { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and BGE feeds', emoji: { name: '⚡' } },
       { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
       { label: 'Simulate Status Alert', value: 'panel_btn_debug_simulate_status', description: 'Post a watermarked test status embed', emoji: { name: '📣' } },
