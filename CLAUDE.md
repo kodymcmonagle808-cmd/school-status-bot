@@ -3,7 +3,7 @@
 Discord bot that monitors the HCPSS (Howard County, MD) status page and related
 feeds, posting operating-status updates to Discord. Everything runs in one
 Cloudflare Worker in `ss-worker/` (no framework, plain ESM JS, KV storage).
-`hcpss-greeter/` is a separate legacy Node bot — rarely touched.
+`ss-greeter/` is a separate Node bot for Discord Gateway and voice announcements.
 
 ## Commands
 

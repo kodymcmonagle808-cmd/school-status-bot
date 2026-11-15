@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title HCPSS Greeter Voice Bot
+title SS Greeter Voice Bot
 cd /d "%~dp0"
 
 echo ========================================================
-echo   HCPSS Greeter Voice Bot Launcher
+echo   SS Greeter Voice Bot Launcher
 echo ========================================================
 echo.
 

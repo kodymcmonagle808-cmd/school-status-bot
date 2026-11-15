@@ -920,7 +920,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       }
     })());
     return interactionResponse({
-      content: '🎙️ **Status Voice Announcement Dispatched!**\n\nThe bot will join active voice channels with listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times in an authoritative male voice (no alarm beeps for status updates), and disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
+      content: '🎙️ **Status Voice Announcement Dispatched!**\n\nThe bot will join active voice channels with listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times in an authoritative male voice (no alarm beeps for status updates), and disconnect.\n\n*(Note: Ensure `ss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
       flags: EPHEMERAL_FLAG
     });
   }

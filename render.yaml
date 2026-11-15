@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: hcpss-greeter-voice
+    name: ss-greeter
     runtime: node
     plan: free
-    rootDir: hcpss-greeter
+    rootDir: ss-greeter
     buildCommand: npm install
     startCommand: npm start
     envVars:

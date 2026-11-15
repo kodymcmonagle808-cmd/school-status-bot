@@ -1,5 +1,5 @@
 // Voice Announcement Dispatcher
-// Dispatches voice announcement commands to the long-running Discord gateway bot (hcpss-greeter)
+// Dispatches voice announcement commands to the long-running Discord gateway bot (ss-greeter)
 // via the internal GREET_BOT_COMMAND bridge protocol.
 
 import { getConfig } from './config.js';
@@ -24,7 +24,7 @@ export async function dispatchVoiceAnnouncement(env, guildId, messageText, force
     }
 
     // Identify target text channel to route the bridge command through.
-    // hcpss-greeter monitors the music channel, alert channel, log channel, or guild fallback.
+    // ss-greeter monitors the music channel, alert channel, log channel, or guild fallback.
     const targetChannelId = config.music_channel_id || config.voice_channel_id || config.log_channel_id || config.alert_channel_id || config.channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
     if (!targetChannelId) {
       logAction(`🎙️ No channel configured to route voice bridge command for guild ${guildId}`, { guildId });
