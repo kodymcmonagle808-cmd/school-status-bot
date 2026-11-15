@@ -72,6 +72,70 @@ async function playAudioErrorMessage(text) {
   }
 }
 
+async function announceInActiveVoiceChannels(guild, text) {
+  if (!guild) return;
+  const cleanText = String(text || 'HCPSS Status Update').replace(/[^a-zA-Z0-9 ,.?!'()\-]/g, ' ').slice(0, 150);
+  console.log(`🎙️ Voice announcement request received: "${cleanText}" for guild "${guild.name}"`);
+
+  try {
+    await guild.channels.fetch().catch(() => {});
+    const activeVcs = guild.channels.cache.filter(c =>
+      c.isVoiceBased && c.isVoiceBased() &&
+      c.members && c.members.filter(m => !m.user.bot).size > 0
+    );
+
+    if (!activeVcs || activeVcs.size === 0) {
+      console.log(`🎙️ No active voice channels with human listeners found in "${guild.name}". Skipping voice play.`);
+      return;
+    }
+
+    console.log(`🎙️ Found ${activeVcs.size} active voice channel(s) with listeners.`);
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(cleanText)}`;
+
+    for (const vc of activeVcs.values()) {
+      try {
+        console.log(`🎙️ Joining "${vc.name}" (${vc.id}) to announce...`);
+        const connection = joinVoiceChannel({
+          channelId: vc.id,
+          guildId: vc.guild.id,
+          adapterCreator: vc.guild.voiceAdapterCreator,
+          selfDeaf: true,
+          selfMute: false,
+        });
+
+        await entersState(connection, VoiceConnectionStatus.Ready, 10000);
+        const player = createAudioPlayer({
+          behaviors: { noSubscriber: NoSubscriberBehavior.Play }
+        });
+        connection.subscribe(player);
+
+        // Speak 3 times as requested
+        for (let i = 0; i < 3; i++) {
+          console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3): "${cleanText}"`);
+          const resource = createAudioResource(ttsUrl, {
+            inputType: StreamType.Arbitrary,
+            inlineVolume: false
+          });
+          player.play(resource);
+          await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
+          await entersState(player, AudioPlayerStatus.Idle, 15000).catch(() => {});
+          if (i < 2) {
+            await new Promise(resolve => setTimeout(resolve, 800));
+          }
+        }
+
+        connection.destroy();
+        console.log(`🔌 Finished announcement and disconnected from "${vc.name}".`);
+      } catch (err) {
+        console.error(`Failed announcement in VC "${vc.name}":`, err.message);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  } catch (err) {
+    console.error('Error during active VC announcement sweep:', err);
+  }
+}
+
 let innertubeClient = null;
 async function getInnertube() {
   if (!innertubeClient) {
@@ -940,6 +1004,12 @@ client.on('messageCreate', async (message) => {
     const guild = message.guild || client.guilds.cache.first();
     if (!guild) {
       console.log('No guild available to execute GREET_BOT_COMMAND');
+      return;
+    }
+
+    if (content.startsWith('GREET_BOT_COMMAND: ANNOUNCE_VOICE')) {
+      const text = content.replace(/^GREET_BOT_COMMAND:\s*ANNOUNCE_VOICE\s*/i, '').trim();
+      await announceInActiveVoiceChannels(guild, text);
       return;
     }
 

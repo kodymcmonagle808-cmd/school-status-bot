@@ -20,6 +20,7 @@ import { buildControlPanelPayload } from './panel.js';
 import { logAction } from './actionlog.js';
 import { doCheckAndPost } from './check.js';
 import { putCalendarEvent, deleteCalendarEvent } from './calendar.js';
+import { dispatchVoiceAnnouncement } from './voice.js';
 
 export async function handleModalSubmit(body, env, ctx, guildId) {
   if (body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('join_modal_')) {
@@ -747,6 +748,7 @@ export async function handleModalSubmit(body, env, ctx, guildId) {
     // The check this kicks off posts the override and re-renders the panel, so
     // the dashboard's "Active Override" line updates without a log write here.
     ctx.waitUntil(doCheckAndPost(env, { source: 'override-set', invokerId, guildId }));
+    ctx.waitUntil(dispatchVoiceAnnouncement(env, guildId, `HCPSS Status Update (${statusLabel})`));
 
     await env.STATUS_KV.put(`panel_page:${guildId}`, 'config_manual_status');
     delete config.editing_override_status_key;

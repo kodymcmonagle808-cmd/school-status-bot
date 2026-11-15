@@ -26,6 +26,7 @@ import { getGreetedUserIds } from './greeter.js';
 import { TERMS_MD, PRIVACY_MD } from './legal.js';
 import { buildLogsUrl } from './workerlogs.js';
 import { logAction } from './actionlog.js';
+import { dispatchVoiceAnnouncement } from './voice.js';
 
 export async function runCalendarCommand(env, guildId = '') {
   const checkedAt = new Date();
@@ -946,6 +947,7 @@ export async function runManualStatusCommand(body, env) {
 
   // Post the new status immediately to the alert channel and update the control panel
   await doCheckAndPost(env, { source: 'override-set', invokerId, guildId });
+  await dispatchVoiceAnnouncement(env, guildId, `HCPSS Status Update (${statusLabel})`);
 
   await updateInteractionOriginal(env, body.token, {
     content: `🏫 **Manual School Status Activated!**\n` +

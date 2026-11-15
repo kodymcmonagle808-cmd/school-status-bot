@@ -27,6 +27,8 @@ import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildW
 import { logAction } from './actionlog.js';
 import { isGuildBlocked, setGuildBlocked } from './blocklist.js';
 import { doCheckAndPost } from './check.js';
+import { dispatchVoiceAnnouncement } from './voice.js';
+import { runKvBackup } from './backup.js';
 import {
   runHistoryCommand,
   runLogsCommand,
@@ -459,6 +461,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_joinlogs: 'config_joinlogs',
     panel_to_config_nws_pings: 'config_nws_pings',
     panel_to_config_announcementrequests: 'config_announcementrequests',
+    panel_to_config_debug: 'config_debug',
     panel_to_dashboard: 'dashboard',
     panel_to_dashboard_logs: 'dashboard_logs'
   };
@@ -899,6 +902,248 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return deferredInteractionResponse();
   }
 
+  if (customId === 'panel_btn_debug_test_voice') {
+    ctx.waitUntil((async () => {
+      try {
+        await dispatchVoiceAnnouncement(env, guildId, "HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)");
+      } catch (e) {
+        console.error('Failed to dispatch test voice announcement:', e);
+      }
+    })());
+    return interactionResponse({
+      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times, then disconnect.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_btn_debug_canary') {
+    ctx.waitUntil((async () => {
+      try {
+        const startH = Date.now();
+        let hcpssStatus = 'OK';
+        try {
+          const res = await fetch(HCPSS_URL, { headers: { 'User-Agent': 'school-status-bot' } });
+          hcpssStatus = `${res.status} ${res.statusText} (${Date.now() - startH}ms)`;
+        } catch (e) {
+          hcpssStatus = `Failed (${e.message})`;
+        }
+
+        const startN = Date.now();
+        let nwsStatus = 'OK';
+        try {
+          const res = await fetch('https://api.weather.gov/alerts/active/zone/MDC027', {
+            headers: { 'User-Agent': 'school-status-bot (github.com/kodymcmonagle808-cmd/school-status-bot)' }
+          });
+          const alerts = res.ok ? ((await res.json()).features?.length || 0) : 0;
+          nwsStatus = `${res.status} OK (${Date.now() - startN}ms, ${alerts} active alerts)`;
+        } catch (e) {
+          nwsStatus = `Failed (${e.message})`;
+        }
+
+        const startK = Date.now();
+        let kvStatus = 'OK';
+        try {
+          await env.STATUS_KV.get(`setup_done:${guildId}`);
+          kvStatus = `OK (${Date.now() - startK}ms)`;
+        } catch (e) {
+          kvStatus = `Failed (${e.message})`;
+        }
+
+        await updateInteractionOriginal(env, body.token, {
+          content: `⚡ **Live Health Canary Results**:\n` +
+                   `• **HCPSS Status Webpage**: \`${hcpssStatus}\`\n` +
+                   `• **National Weather Service API**: \`${nwsStatus}\`\n` +
+                   `• **Cloudflare KV Read**: \`${kvStatus}\`\n\n` +
+                   `*All primary telemetry and alert sources are responsive.*`,
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (err) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Health canary check encountered an error: ${err.message}`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_backup') {
+    ctx.waitUntil((async () => {
+      try {
+        const res = await runKvBackup(env, new Date());
+        await updateInteractionOriginal(env, body.token, {
+          content: `✅ **Cloudflare R2 Backup Completed!**\n\n` +
+                   `• **Backup File**: \`${res.filename}\`\n` +
+                   `• **Keys Exported**: \`${res.keyCount}\`\n` +
+                   `• **Destination Bucket**: \`${env.BACKUPS_BUCKET || 'ss-backups'}\`\n` +
+                   `• **Storage Provider**: Cloudflare R2 (S3-compatible, zero egress fees)`,
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (e) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `⚠️ **R2 Backup Test Failed**:\n${e.message}\nEnsure \`BACKUPS_BUCKET\` is bound to \`ss-backups\` in Cloudflare Workers settings.`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_simulate_status') {
+    ctx.waitUntil((async () => {
+      try {
+        const stored = await getConfig(env, guildId);
+        const config = getEffectiveConfig(stored);
+        const alertChannelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+        if (!alertChannelId) {
+          await updateInteractionOriginal(env, body.token, {
+            content: '❌ Test status simulation failed: Alert channel is not configured. Please set it in **Settings**.',
+            flags: EPHEMERAL_FLAG
+          });
+          return;
+        }
+
+        const testEmbed = {
+          title: '🏫 HCPSS Status (Simulated Test Alert)',
+          description: '🧪 **[TEST / DEBUG SIMULATION]**\n\n**Schools Open 2 Hours Late**\nAll Howard County public schools will open two hours late today. Morning pre-K and half-day classes are cancelled.',
+          color: 0xF1C40F,
+          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation` },
+          timestamp: new Date().toISOString()
+        };
+
+        const postResp = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ embeds: [testEmbed] })
+        });
+
+        if (!postResp.ok) {
+          throw new Error(`Discord API error: ${postResp.status}`);
+        }
+
+        await updateInteractionOriginal(env, body.token, {
+          content: `✅ **Simulated Status Alert Sent!**\n\nPosted a simulated status embed to <#${alertChannelId}> so you can check layout and permissions.`,
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (err) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Simulation error: ${err.message}`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_simulate_weather') {
+    ctx.waitUntil((async () => {
+      try {
+        const stored = await getConfig(env, guildId);
+        const config = getEffectiveConfig(stored);
+        const alertChannelId = config.alert_channel_id || (guildId === env.DISCORD_GUILD_ID ? env.DISCORD_CHANNEL_ID : null);
+        if (!alertChannelId) {
+          await updateInteractionOriginal(env, body.token, {
+            content: '❌ Test weather alert failed: Alert channel is not configured.',
+            flags: EPHEMERAL_FLAG
+          });
+          return;
+        }
+
+        const testEmbed = {
+          title: '⚠️ Winter Storm Warning — Howard County (Simulated Test)',
+          description: '🧪 **[TEST / DEBUG SIMULATION]**\n\n**National Weather Service has issued a Winter Storm Warning** for Howard County, MD.\nHeavy snow expected. Total snow accumulations of 4 to 8 inches.\n\n*This is a test notification generated from the staff control panel.*',
+          color: 0x3498DB,
+          footer: { text: `${config.alert_embed_footer || 'School Status'} • Test Simulation` },
+          timestamp: new Date().toISOString()
+        };
+
+        const postResp = await fetch(`https://discord.com/api/v10/channels/${alertChannelId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ embeds: [testEmbed] })
+        });
+
+        if (!postResp.ok) {
+          throw new Error(`Discord API error: ${postResp.status}`);
+        }
+
+        await updateInteractionOriginal(env, body.token, {
+          content: `✅ **Simulated Weather Alert Sent!**\n\nPosted simulated NWS alert embed to <#${alertChannelId}>.`,
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (err) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Weather simulation error: ${err.message}`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_purge_cache') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({
+        content: '🔒 **Owner Only**: Cache purging is restricted to the bot owner.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    ctx.waitUntil((async () => {
+      try {
+        await env.STATUS_KV.delete('weather_alerts_cache');
+        await env.STATUS_KV.delete('outages_cache');
+        await env.STATUS_KV.delete('bge_outages_cache');
+        await env.STATUS_KV.delete('scraper_cache');
+        await updateInteractionOriginal(env, body.token, {
+          content: '🧹 **Caches Purged Successfully!**\n\nCleared transient weather, outages, and scraper cache keys in KV. The next scan will re-fetch live data directly.',
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (e) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Cache purge error: ${e.message}`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_raw_config') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({
+        content: '🔒 **Owner Only**: Viewing raw configuration is restricted to the bot owner.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
+
+    ctx.waitUntil((async () => {
+      try {
+        const stored = await getConfig(env, guildId);
+        const safeConfig = { ...stored };
+        const jsonStr = JSON.stringify(safeConfig, null, 2);
+        const clamped = jsonStr.length > 1900 ? jsonStr.slice(0, 1900) + '\n... (truncated)' : jsonStr;
+        await updateInteractionOriginal(env, body.token, {
+          content: `📄 **Raw Server Configuration (\`${guildId}\`)**:\n\`\`\`json\n${clamped}\n\`\`\``,
+          flags: EPHEMERAL_FLAG
+        });
+      } catch (e) {
+        await updateInteractionOriginal(env, body.token, {
+          content: `❌ Error reading raw config: ${e.message}`,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    })());
+    return deferredInteractionResponse();
+  }
 
   if (customId === 'panel_owner_refresh') {
     const ownerId = String(env.OWNER_ID || '').trim();

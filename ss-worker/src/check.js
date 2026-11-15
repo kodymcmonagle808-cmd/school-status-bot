@@ -14,6 +14,8 @@ import { postLog } from './panel.js';
 import { logAction } from './actionlog.js';
 import { getBlockedGuilds } from './blocklist.js';
 import { noSchoolReason } from './session.js';
+import { dispatchVoiceAnnouncement } from './voice.js';
+import { ALL_STATUS_LABELS } from './constants.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
 
@@ -620,8 +622,11 @@ export async function doCheckAndPost(env, options = {}) {
         guildId
       );
 
-      // DM subscribers only when this guild's source status actually changed.
+      // DM subscribers and announce in active voice channels when status actually changed.
       if (guildSourceChanged && !builtStatus.isOverride) {
+        const statusLabel = ALL_STATUS_LABELS[statusKey] || statusKey;
+        await dispatchVoiceAnnouncement(env, guildId, `HCPSS Status Update (${statusLabel})`);
+
         const dmCount = await notifySubscribers(env, guildId, builtStatus.payload.embeds);
         if (dmCount > 0) {
           // A detail of the post logged just above, not its own panel entry.

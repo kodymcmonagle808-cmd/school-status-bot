@@ -16,6 +16,7 @@ import { getDistrictMeta } from './districts.js';
 import { getActiveWeatherAlerts, isSchoolImpactIssuance, isEmergencyAlert, DEFAULT_NWS_ZONE, WINTER_EVENT_RE, HEAT_EVENT_RE, PING_TORNADO_RE, PING_FLOOD_RE, PING_STORM_RE } from './weather.js';
 import { discordFetch } from './discord.js';
 import { logAction, logActionError } from './actionlog.js';
+import { dispatchVoiceAnnouncement } from './voice.js';
 
 const SEEN_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -462,6 +463,7 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           // kind of wrong, and the alert history lives in the logs regardless.
           if (recordNotice(updatedSeen, emergency, posted, cfg.alert_channel_id)) seenDirty = true;
           logAction(`🚨 EMERGENCY alert (${events}) posted to <#${cfg.alert_channel_id}>${cfg.toggle_emergency_ping !== false ? ' with @everyone' : ''}.`, { guildId: gid });
+          await dispatchVoiceAnnouncement(env, gid, `HCPSS Weather Alert (${events})`);
         }
       }
 
@@ -499,7 +501,9 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
           // real post (a handful per storm) — it cannot replace the
           // mark-before-post write above without reopening the double-post hole.
           if (recordNotice(updatedSeen, routine, posted, cfg.alert_channel_id)) seenDirty = true;
-          logAction(`⚠️ NWS issuance notice (${routine.map(a => a.event).join(', ')}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
+          const routineEvents = routine.map(a => a.event).join(', ');
+          logAction(`⚠️ NWS issuance notice (${routineEvents}) posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
+          await dispatchVoiceAnnouncement(env, gid, `HCPSS Weather Alert (${routineEvents})`);
         }
       }
 

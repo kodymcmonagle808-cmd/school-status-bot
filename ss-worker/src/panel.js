@@ -104,12 +104,14 @@ export const PANEL_NAV_TABS = [
   { label: 'Command List', value: 'config_commands', emoji: '📜', description: 'List of available slash commands' },
   { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' },
   { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' },
-  { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' }
+  { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' },
+  { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, voice tests, and system tests' }
 ];
 
 function getNavTabForPage(page) {
   if (page === 'config_override_select' || page === 'config_manual_status') return 'config_manual_status';
   if (page === 'config_schedule_add') return 'config_schedule';
+  if (page === 'config_debug') return 'config_debug';
   return PANEL_NAV_TABS.some(t => t.value === page) ? page : 'dashboard';
 }
 
@@ -1569,6 +1571,55 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         }]
       },
       actionSelectRow(actionOptions, '⚡ Actions...')
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_debug') {
+    const r2Status = env.BACKUPS_BUCKET ? '✅ Configured (`ss-backups`)' : '⚠️ Not Configured';
+    const voiceStatus = config.toggle_voice_announcements !== false ? '✅ Enabled' : '⏸️ Disabled';
+    const bridgeChan = config.music_channel_id ? `<#${config.music_channel_id}>` : (config.log_channel_id ? `<#${config.log_channel_id}>` : (config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)'));
+    const ownerMention = env.OWNER_ID ? `<@${env.OWNER_ID}>` : '*(unset)*';
+
+    const embed = {
+      title: '🛠️ Control Panel — Debug & Diagnostics',
+      color: 0x5865F2,
+      description: `### 🛠️ Bot Diagnostics & Test Suite\n` +
+                   `Run real-time diagnostics, health checks, simulated alerts, and voice tests across the server.\n\n` +
+                   `• **Voice Announcements**: ${voiceStatus} (Bridge: ${bridgeChan})\n` +
+                   `• **Cloudflare R2 Backups**: ${r2Status}\n` +
+                   `• **Primary District Source**: \`${config.primary_district || 'hcpss'}\`\n` +
+                   `• **Bot Owner**: ${ownerMention}\n\n` +
+                   `### 🧪 Staff Diagnostics\n` +
+                   `• **Test Voice Announcement**: Joins active voice channels, announces \`HCPSS Status Update\` 3 times, then disconnects.\n` +
+                   `• **Run Health Canary**: Measures live latency to HCPSS status, NWS weather API, and BGE outage feeds.\n` +
+                   `• **Test Cloudflare R2 Backup**: Immediately snapshots KV data to the R2 backup bucket.\n` +
+                   `• **Simulate Status / Weather Alerts**: Delivers test watermarked embeds to verify channel delivery.\n\n` +
+                   `### 🔒 Owner-Only Sensitive Diagnostics\n` +
+                   `*Protected commands reserved exclusively for the bot owner:*\n` +
+                   `• **Purge System Caches**: Clears transient weather and outage caches in KV.\n` +
+                   `• **View Raw Server Config**: Inspects complete unmasked configuration stored in KV.\n` +
+                   `• **KV Analytics Budget**: Cloudflare KV daily reads/writes usage meter.\n` +
+                   `• **System Logs Link**: Generates a signed private link to Cloudflare Observability logs.`,
+      timestamp: new Date().toISOString()
+    };
+
+    const actionOptions = [
+      { label: 'Test Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active voice channels', emoji: { name: '🎙️' } },
+      { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and BGE feeds', emoji: { name: '⚡' } },
+      { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
+      { label: 'Simulate Status Alert', value: 'panel_btn_debug_simulate_status', description: 'Post a watermarked test status embed', emoji: { name: '📣' } },
+      { label: 'Simulate Weather Alert', value: 'panel_btn_debug_simulate_weather', description: 'Post a watermarked test NWS weather warning', emoji: { name: '⚠️' } },
+      { label: 'Purge Caches (Owner Only)', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
+      { label: 'View Raw Config (Owner Only)', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
+      { label: 'View KV Analytics (Owner Only)', value: 'panel_owner_view_kv_stats', description: 'Inspect Cloudflare KV daily operation budget', emoji: { name: '📊' } },
+      { label: 'Open System Logs (Owner Only)', value: 'panel_logs', description: 'Mint signed link to Cloudflare Observability logs', emoji: { name: '📜' } }
+    ];
+
+    const components = [
+      getNavBarRow('config_debug'),
+      actionSelectRow(actionOptions, '🛠️ Select a diagnostic test...')
     ];
 
     return { embeds: [embed], components };
