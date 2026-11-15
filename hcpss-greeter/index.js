@@ -74,10 +74,11 @@ async function playAudioErrorMessage(text) {
 
 function generateEASBeeps() {
   const sampleRate = 48000;
+  // Authentic long EAS attention blasts ("beeepp beeeppp")
   const bursts = [
-    { tone: 0.22, pause: 0.12 },
-    { tone: 0.22, pause: 0.12 },
-    { tone: 0.35, pause: 0.30 }
+    { tone: 0.90, pause: 0.30 },
+    { tone: 0.90, pause: 0.30 },
+    { tone: 1.30, pause: 0.50 }
   ];
   const burstsSamples = bursts.map(b => ({
     toneSamples: Math.floor(sampleRate * b.tone),
@@ -107,10 +108,11 @@ function generateEASBeeps() {
   for (const burst of burstsSamples) {
     for (let i = 0; i < burst.toneSamples; i++) {
       const t = i / sampleRate;
-      const s = 0.35 * Math.sin(2 * Math.PI * freq1 * t) + 0.35 * Math.sin(2 * Math.PI * freq2 * t);
+      // High-amplitude dual tone for louder, punchier EAS warning sound
+      const s = 0.48 * Math.sin(2 * Math.PI * freq1 * t) + 0.48 * Math.sin(2 * Math.PI * freq2 * t);
       let gain = 1.0;
-      if (i < 100) gain = i / 100;
-      else if (i > burst.toneSamples - 100) gain = (burst.toneSamples - i) / 100;
+      if (i < 150) gain = i / 150;
+      else if (i > burst.toneSamples - 150) gain = (burst.toneSamples - i) / 150;
       const sample = Math.max(-32767, Math.min(32767, Math.floor(s * gain * 32767)));
       buffer.writeInt16LE(sample, offset);
       offset += 2;
@@ -124,9 +126,44 @@ function generateEASBeeps() {
   return buffer;
 }
 
+async function fetchMaleTTS(text) {
+  try {
+    const res = await fetch('https://tiktok-tts.weilnet.workers.dev/api/generation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: 'en_us_006' }),
+      signal: AbortSignal.timeout(7000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.data) {
+        return Buffer.from(data.data, 'base64');
+      }
+    }
+  } catch (err) {
+    console.error(`Male TTS primary fetch error (${err.message}), falling back to secondary voice...`);
+  }
+
+  // Fallback: Google TTS
+  try {
+    const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&ttsspeed=0.88&q=${encodeURIComponent(text)}`;
+    const fallbackResp = await fetch(fallbackUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      signal: AbortSignal.timeout(7000)
+    });
+    if (fallbackResp.ok) {
+      return Buffer.from(await fallbackResp.arrayBuffer());
+    }
+  } catch (fallbackErr) {
+    console.error(`Fallback TTS error: ${fallbackErr.message}`);
+  }
+
+  return null;
+}
+
 function formatSeriousSpeech(text, iteration) {
   const clean = String(text || '').trim();
-  const isWeather = /weather|warning|advisory|watch|tornado|flood|storm/i.test(clean);
+  const isWeather = /weather|warning|advisory|watch|tornado|flood|storm|thunderstorm|blizzard|hurricane|nws/i.test(clean);
 
   // Strip prefix labels and test markers
   let mainMessage = clean
@@ -233,49 +270,53 @@ async function announceInActiveVoiceChannels(guild, text) {
         });
         connection.subscribe(player);
 
-        // 1. Play EAS Emergency Attention Beeps first!
-        try {
-          console.log(`🚨 [${vc.name}] Playing EAS emergency attention beeps...`);
-          const beepWav = generateEASBeeps();
-          const beepResource = createAudioResource(Readable.from(beepWav), {
-            inputType: StreamType.Arbitrary,
-            inlineVolume: false
-          });
-          player.play(beepResource);
-          await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
-          await entersState(player, AudioPlayerStatus.Idle, 10000).catch(() => {});
-          await new Promise(resolve => setTimeout(resolve, 600)); // Dramatic pause after beeps
-        } catch (beepErr) {
-          console.error(`EAS beep playback error: ${beepErr.message}`);
+        const isSevereWeather = /weather|warning|advisory|watch|tornado|flood|storm|thunderstorm|blizzard|hurricane|nws/i.test(cleanText);
+
+        // 1. Play EAS Emergency Attention Beeps ONLY for severe weather alerts!
+        if (isSevereWeather) {
+          try {
+            console.log(`🚨 [${vc.name}] Playing severe weather EAS attention beeps...`);
+            const beepWav = generateEASBeeps();
+            const beepResource = createAudioResource(Readable.from(beepWav), {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: true
+            });
+            if (beepResource.volume) {
+              beepResource.volume.setVolume(1.6);
+            }
+            player.play(beepResource);
+            await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
+            await entersState(player, AudioPlayerStatus.Idle, 15000).catch(() => {});
+            await new Promise(resolve => setTimeout(resolve, 800)); // Dramatic pause after beeps
+          } catch (beepErr) {
+            console.error(`EAS beep playback error: ${beepErr.message}`);
+          }
         }
 
-        // 2. Speak the 3 serious announcements
+        // 2. Speak the 3 serious announcements using authoritative male voice with boosted volume
         for (let i = 0; i < 3; i++) {
           const spokenText = formatSeriousSpeech(cleanText, i);
-          console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3): "${spokenText}"`);
+          console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3) [Male Voice]: "${spokenText}"`);
 
-          const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&ttsspeed=0.88&q=${encodeURIComponent(spokenText)}`;
+          const audioBuf = await fetchMaleTTS(spokenText);
           let resource = null;
-          try {
-            const ttsResp = await fetch(ttsUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+          if (audioBuf) {
+            resource = createAudioResource(Readable.from(audioBuf), {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: true
             });
-            if (ttsResp.ok) {
-              const stream = Readable.fromWeb(ttsResp.body);
-              resource = createAudioResource(stream, {
-                inputType: StreamType.Arbitrary,
-                inlineVolume: false
-              });
-            }
-          } catch (fetchErr) {
-            console.error(`TTS fetch error: ${fetchErr.message}`);
           }
 
           if (!resource) {
+            const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&ttsspeed=0.88&q=${encodeURIComponent(spokenText)}`;
             resource = createAudioResource(ttsUrl, {
               inputType: StreamType.Arbitrary,
-              inlineVolume: false
+              inlineVolume: true
             });
+          }
+
+          if (resource && resource.volume) {
+            resource.volume.setVolume(1.75); // 75% louder playback
           }
 
           player.play(resource);
