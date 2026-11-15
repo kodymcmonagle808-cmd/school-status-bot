@@ -1049,6 +1049,20 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // Voice announcement commands are always processed, independent of the music player
+  if (message.content.startsWith('GREET_BOT_COMMAND: ANNOUNCE_VOICE')) {
+    const content = message.content.trim();
+    message.delete().catch(() => {});
+    const guild = message.guild || client.guilds.cache.first();
+    if (!guild) {
+      console.log('No guild available to execute GREET_BOT_COMMAND: ANNOUNCE_VOICE');
+      return;
+    }
+    const text = content.replace(/^GREET_BOT_COMMAND:\s*ANNOUNCE_VOICE\s*/i, '').trim();
+    await announceInActiveVoiceChannels(guild, text);
+    return;
+  }
+
   // We can still log to console, but we'll also send status updates to the channel for the command
   // Gated by MUSIC_ENABLED: these are the music/voice control commands. While
   // music is disabled the trigger messages are simply ignored (code preserved).

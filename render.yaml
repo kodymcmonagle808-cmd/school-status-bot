@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: hcpss-greeter-voice
+    runtime: node
+    plan: free
+    rootDir: hcpss-greeter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
