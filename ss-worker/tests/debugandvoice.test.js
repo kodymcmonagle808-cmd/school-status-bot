@@ -107,6 +107,7 @@ test('control panel renders Debug & Diagnostics page with staff and owner sectio
   assert.ok(actionRow);
   const options = actionRow.components[0].options;
   assert.ok(options.some(o => o.value === 'panel_btn_debug_test_voice'));
+  assert.ok(options.some(o => o.value === 'panel_btn_debug_test_weather_voice'));
   assert.ok(options.some(o => o.value === 'panel_btn_debug_canary'));
   assert.ok(options.some(o => o.value === 'panel_btn_debug_backup'));
   assert.ok(options.some(o => o.value === 'panel_btn_debug_purge_cache'));
@@ -351,4 +352,41 @@ test('Dashboard renders both Quick Actions and Debug & Diagnostics dropdown rows
   assert.ok(customIds.includes('panel_action_select'), 'Must have Quick Actions dropdown');
   assert.ok(customIds.includes('panel_debug_select'), 'Must have Debug & Diagnostics dropdown');
   assert.ok(customIds.includes('panel_trigger_test_alert'), 'Must have Simulate Status Alert dropdown');
+});
+
+test('staff can test weather voice alert with EAS notice', async () => {
+  const kv = mockKv({
+    'config:g1': JSON.stringify({ music_channel_id: 'chan-123' })
+  });
+  const env = {
+    STATUS_KV: kv,
+    DISCORD_BOT_TOKEN: 'fake-token'
+  };
+  const ctx = { waitUntil: (p) => {} };
+
+  let voicePosted = false;
+  let postedContent = '';
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts && opts.body && opts.body.includes('GREET_BOT_COMMAND: ANNOUNCE_VOICE')) {
+      voicePosted = true;
+      postedContent = JSON.parse(opts.body).content;
+    }
+    return { ok: true, json: async () => ({ id: '1' }), text: async () => '' };
+  };
+
+  const staffWeatherVoiceBody = {
+    guild_id: 'g1',
+    token: 'tok-staff',
+    member: { user: { id: 'staff-user' }, permissions: '8' },
+    data: { custom_id: 'panel_btn_debug_test_weather_voice' }
+  };
+
+  const resp = await handlePanelComponent(staffWeatherVoiceBody, env, ctx, 'g1');
+  const json = await resp.json();
+  assert.match(json.data.content, /Weather Voice Alert Dispatched/);
+  assert.ok(voicePosted);
+  assert.match(postedContent, /Winter Storm Warning/);
+
+  globalThis.fetch = origFetch;
 });

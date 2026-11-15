@@ -72,6 +72,94 @@ async function playAudioErrorMessage(text) {
   }
 }
 
+function generateEASBeeps() {
+  const sampleRate = 48000;
+  const bursts = [
+    { tone: 0.22, pause: 0.12 },
+    { tone: 0.22, pause: 0.12 },
+    { tone: 0.35, pause: 0.30 }
+  ];
+  const burstsSamples = bursts.map(b => ({
+    toneSamples: Math.floor(sampleRate * b.tone),
+    pauseSamples: Math.floor(sampleRate * b.pause)
+  }));
+  const totalSamples = burstsSamples.reduce((acc, b) => acc + b.toneSamples + b.pauseSamples, 0);
+  const buffer = Buffer.alloc(44 + totalSamples * 2);
+
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + totalSamples * 2, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(totalSamples * 2, 40);
+
+  const freq1 = 853;
+  const freq2 = 960;
+  let offset = 44;
+
+  for (const burst of burstsSamples) {
+    for (let i = 0; i < burst.toneSamples; i++) {
+      const t = i / sampleRate;
+      const s = 0.35 * Math.sin(2 * Math.PI * freq1 * t) + 0.35 * Math.sin(2 * Math.PI * freq2 * t);
+      let gain = 1.0;
+      if (i < 100) gain = i / 100;
+      else if (i > burst.toneSamples - 100) gain = (burst.toneSamples - i) / 100;
+      const sample = Math.max(-32767, Math.min(32767, Math.floor(s * gain * 32767)));
+      buffer.writeInt16LE(sample, offset);
+      offset += 2;
+    }
+    for (let i = 0; i < burst.pauseSamples; i++) {
+      buffer.writeInt16LE(0, offset);
+      offset += 2;
+    }
+  }
+
+  return buffer;
+}
+
+function formatSeriousSpeech(text, iteration) {
+  const clean = String(text || '').trim();
+  const isWeather = /weather|warning|advisory|watch|tornado|flood|storm/i.test(clean);
+
+  // Strip prefix labels and test markers
+  let mainMessage = clean
+    .replace(/\s*-\s*test\s*announcement/gi, '')
+    .replace(/\(test\s*announcement\)/gi, '')
+    .replace(/\[test\s*alert\]/gi, '')
+    .replace(/^HCPSS\s*Status\s*Update\s*:?/i, '')
+    .replace(/^National\s*Weather\s*Service\s*(Alert|Notice)?\s*:?/i, '')
+    .replace(/[()]/g, '')
+    .trim();
+
+  mainMessage = mainMessage.replace(/[.,;:]+$/, '').trim();
+
+  if (isWeather) {
+    if (iteration === 0) {
+      return `Attention. Attention. This is an urgent weather bulletin from the National Weather Service. ${mainMessage}.`;
+    } else if (iteration === 1) {
+      return `Repeat. ${mainMessage}. Please take all necessary safety precautions.`;
+    } else {
+      return `Final notice. ${mainMessage}. This concludes this emergency bulletin.`;
+    }
+  } else {
+    // School status update
+    if (iteration === 0) {
+      return `Attention. This is an official operating status bulletin from the Howard County Public School System. ${mainMessage}.`;
+    } else if (iteration === 1) {
+      return `Repeat. ${mainMessage}.`;
+    } else {
+      return `Final notice. ${mainMessage}. For full details, please check H-C-P-S-S dot org.`;
+    }
+  }
+}
+
 async function announceInActiveVoiceChannels(guild, text) {
   if (!guild) return;
   const cleanText = String(text || 'HCPSS Status Update').replace(/[^a-zA-Z0-9 ,.?!'()\-]/g, ' ').slice(0, 150);
@@ -127,7 +215,6 @@ async function announceInActiveVoiceChannels(guild, text) {
     }
 
     console.log(`🎙️ Found ${activeVcs.length} active voice channel(s) to announce in.`);
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q=${encodeURIComponent(cleanText)}`;
 
     for (const vc of activeVcs) {
       try {
@@ -146,9 +233,28 @@ async function announceInActiveVoiceChannels(guild, text) {
         });
         connection.subscribe(player);
 
-        // Speak 3 times as requested
+        // 1. Play EAS Emergency Attention Beeps first!
+        try {
+          console.log(`🚨 [${vc.name}] Playing EAS emergency attention beeps...`);
+          const beepWav = generateEASBeeps();
+          const beepResource = createAudioResource(Readable.from(beepWav), {
+            inputType: StreamType.Arbitrary,
+            inlineVolume: false
+          });
+          player.play(beepResource);
+          await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
+          await entersState(player, AudioPlayerStatus.Idle, 10000).catch(() => {});
+          await new Promise(resolve => setTimeout(resolve, 600)); // Dramatic pause after beeps
+        } catch (beepErr) {
+          console.error(`EAS beep playback error: ${beepErr.message}`);
+        }
+
+        // 2. Speak the 3 serious announcements
         for (let i = 0; i < 3; i++) {
-          console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3): "${cleanText}"`);
+          const spokenText = formatSeriousSpeech(cleanText, i);
+          console.log(`🔊 [${vc.name}] Announcement (${i + 1}/3): "${spokenText}"`);
+
+          const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&ttsspeed=0.88&q=${encodeURIComponent(spokenText)}`;
           let resource = null;
           try {
             const ttsResp = await fetch(ttsUrl, {
@@ -166,7 +272,6 @@ async function announceInActiveVoiceChannels(guild, text) {
           }
 
           if (!resource) {
-            // Fallback to direct URL if stream conversion had issue
             resource = createAudioResource(ttsUrl, {
               inputType: StreamType.Arbitrary,
               inlineVolume: false
@@ -174,12 +279,16 @@ async function announceInActiveVoiceChannels(guild, text) {
           }
 
           player.play(resource);
-          await entersState(player, AudioPlayerStatus.Playing, 5000).catch(() => {});
-          await entersState(player, AudioPlayerStatus.Idle, 15000).catch(() => {});
+          await entersState(player, AudioPlayerStatus.Playing, 8000).catch(() => {});
+          await entersState(player, AudioPlayerStatus.Idle, 35000).catch(() => {});
           if (i < 2) {
-            await new Promise(resolve => setTimeout(resolve, 800));
+            await new Promise(resolve => setTimeout(resolve, 1200));
           }
         }
+
+        // 3. Generous buffer after the 3rd announcement so Discord audio doesn't cut off early
+        console.log(`⏳ Waiting 3.5 seconds to flush Discord audio buffer before disconnecting from "${vc.name}"...`);
+        await new Promise(resolve => setTimeout(resolve, 3500));
 
         connection.destroy();
         console.log(`🔌 Finished announcement and disconnected from "${vc.name}".`);

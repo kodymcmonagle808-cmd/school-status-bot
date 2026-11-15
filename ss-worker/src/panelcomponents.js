@@ -920,7 +920,21 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       }
     })());
     return interactionResponse({
-      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times, then disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
+      content: '🎙️ **Voice Diagnostic Dispatched!**\n\nThe bot has triggered the voice announcement across active voice channels.\nIt will join each active voice channel with human listeners, play the EAS attention beeps, speak `HCPSS Status Update (Schools Open 2 Hours Late - Test Announcement)` 3 times in an authoritative voice, then disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_btn_debug_test_weather_voice') {
+    ctx.waitUntil((async () => {
+      try {
+        await dispatchVoiceAnnouncement(env, guildId, "National Weather Service Alert. Winter Storm Warning in effect for Howard County. Heavy snow accumulations of 4 to 8 inches expected.", true);
+      } catch (e) {
+        console.error('Failed to dispatch test weather voice announcement:', e);
+      }
+    })());
+    return interactionResponse({
+      content: '🌪️ **Weather Voice Alert Dispatched!**\n\nThe bot has triggered the NWS weather voice announcement.\nIt will join active voice channels with listeners, play the EAS emergency alert beeps, announce the NWS warning 3 times in an authoritative emergency voice, and disconnect.\n\n*(Note: Ensure `hcpss-greeter` gateway companion bot is running to receive and execute voice commands.)*',
       flags: EPHEMERAL_FLAG
     });
   }
