@@ -540,7 +540,6 @@ payload=$(jq -n '[
     type: 1,
     integration_types: [0],
     contexts: [0],
-    default_member_permissions: "8",
     options: [
       {
         name: "set",

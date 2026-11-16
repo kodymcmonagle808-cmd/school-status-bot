@@ -7,7 +7,7 @@ import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel
 import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY } from './districts.js';
 import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
-import { getConfig, setConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride } from './config.js';
+import { getConfig, setConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride, canUseCommands } from './config.js';
 import { refreshPanelMessage } from './panel.js';
 import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
@@ -1336,9 +1336,9 @@ export async function runEmailChannelCommand(body, env) {
   }
 
   const member = body.member;
-  const isAdmin = member && member.permissions && (BigInt(member.permissions) & 8n) === 8n;
-  if (!isAdmin) {
-    return { content: '❌ Only server administrators can configure the email announcements channel.', flags: EPHEMERAL_FLAG };
+  const isAllowed = await canUseCommands(member, env, guildId);
+  if (!isAllowed) {
+    return { content: '❌ Only staff and administrators can configure the email announcements channel.', flags: EPHEMERAL_FLAG };
   }
 
   const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];

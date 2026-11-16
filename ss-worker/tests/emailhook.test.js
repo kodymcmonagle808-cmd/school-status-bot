@@ -175,4 +175,23 @@ test('runEmailChannelCommand manages email_channel_id', async () => {
     data: { options: [{ name: 'clear', type: 1 }] }
   }, env);
   assert.match(clearRes.content, /cleared/);
+
+  // rejected for regular user
+  const regularMember = { permissions: '0', roles: [] };
+  const rejected = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: regularMember,
+    data: { options: [{ name: 'view', type: 1 }] }
+  }, env);
+  assert.match(rejected.content, /Only staff and administrators/);
+
+  // accepted for staff member with staff role
+  const staffMember = { permissions: '0', roles: ['role-staff'] };
+  const envStaff = makeEnv({ g1: { staff_role_id: 'role-staff', alert_channel_id: 'chan-alerts' } });
+  const staffRes = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: staffMember,
+    data: { options: [{ name: 'view', type: 1 }] }
+  }, envStaff);
+  assert.match(staffRes.content, /Current Email Announcement Channel/);
 });
