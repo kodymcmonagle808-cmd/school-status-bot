@@ -21,7 +21,7 @@ import {
 } from './discord.js';
 import { delay, formatScheduleTimeLabel } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
-import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride } from './config.js';
+import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride, ALL_COMMANDS_META, getCommandTier } from './config.js';
 import { splitEmbeds } from './embeds.js';
 import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload } from './panel.js';
 import { logAction } from './actionlog.js';
@@ -87,65 +87,112 @@ export const OWNER_ADMIN_COMMANDS = [
   { value: 'mydata', label: '/mydata', description: 'View or erase server data' }
 ];
 
-export function buildOwnerPermsPayload(targetGuildId, disabledCommands = []) {
-  const disabled = Array.isArray(disabledCommands) ? disabledCommands : [];
-  const disabledCount = disabled.length;
-  const statusLine = disabledCount === 0
-    ? '🟢 **All commands are currently enabled.**'
-    : `⚠️ **${disabledCount} command(s) disabled:** ${disabled.map(c => `\`/${c}\``).join(', ')}`;
+export function buildOwnerPermsPayload(targetGuildId, config = {}) {
+  const cfg = Array.isArray(config) ? { disabled_commands: config } : (config || {});
+
+  const everyoneList = ALL_COMMANDS_META.filter(c => getCommandTier(cfg, c.name) === 'everyone');
+  const staffList = ALL_COMMANDS_META.filter(c => getCommandTier(cfg, c.name) === 'staff');
+  const disabledList = ALL_COMMANDS_META.filter(c => getCommandTier(cfg, c.name) === 'disabled');
+
+  const generalCmds = ALL_COMMANDS_META.filter(c => c.category === 'general');
+  const adminCmds = ALL_COMMANDS_META.filter(c => c.category === 'admin');
+
+  const embed = {
+    title: `⚙️ Command Access & Permissions — Server \`${targetGuildId}\``,
+    color: 0x9B59B6,
+    description: `### 🌐 Available to Everyone (${everyoneList.length})\n` +
+      (everyoneList.length ? everyoneList.map(c => `\`/${c.name}\``).join(', ') : '*(none)*') +
+      `\n\n### 🛡️ Restricted to Staff & Admins (${staffList.length})\n` +
+      (staffList.length ? staffList.map(c => `\`/${c.name}\``).join(', ') : '*(none)*') +
+      `\n\n### 🚫 Disabled Commands (${disabledList.length})\n` +
+      (disabledList.length ? disabledList.map(c => `\`/${c.name}\``).join(', ') : '*(none)*') +
+      `\n\n*Select any command below to switch its access level (**Everyone ↔ Staff Only**), or use the quick action buttons.*`,
+    footer: { text: 'Bot Owner Permissions Panel · Changes save and apply immediately' },
+    timestamp: new Date().toISOString()
+  };
+
+  const components = [
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `cfg_owner_perm_toggle:${targetGuildId}`,
+        placeholder: '🌐 General Commands: Click to toggle Everyone ↔ Staff...',
+        options: generalCmds.map(c => {
+          const tier = getCommandTier(cfg, c.name);
+          const icon = tier === 'everyone' ? '🌐' : (tier === 'staff' ? '🛡️' : '🚫');
+          const nextLabel = tier === 'everyone' ? 'Staff Only' : 'Everyone';
+          return {
+            label: `/${c.name}`,
+            value: c.name,
+            description: `Currently: ${tier.toUpperCase()} — click to make ${nextLabel}`,
+            emoji: { name: icon }
+          };
+        }),
+        min_values: 1,
+        max_values: 1
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `cfg_owner_perm_toggle:${targetGuildId}`,
+        placeholder: '🛡️ Staff Commands: Click to toggle Staff ↔ Everyone...',
+        options: adminCmds.map(c => {
+          const tier = getCommandTier(cfg, c.name);
+          const icon = tier === 'staff' ? '🛡️' : (tier === 'everyone' ? '🌐' : '🚫');
+          const nextLabel = tier === 'staff' ? 'Everyone' : 'Staff Only';
+          return {
+            label: `/${c.name}`,
+            value: c.name,
+            description: `Currently: ${tier.toUpperCase()} — click to make ${nextLabel}`,
+            emoji: { name: icon }
+          };
+        }),
+        min_values: 1,
+        max_values: 1
+      }]
+    },
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 1,
+          custom_id: `cfg_owner_perms_all_everyone:${targetGuildId}`,
+          label: 'General to Everyone',
+          emoji: { name: '🌐' }
+        },
+        {
+          type: 2,
+          style: 2,
+          custom_id: `cfg_owner_perms_all_staff:${targetGuildId}`,
+          label: 'Lock All to Staff',
+          emoji: { name: '🛡️' }
+        },
+        {
+          type: 2,
+          style: 4,
+          custom_id: `cfg_owner_perms_reset_defaults:${targetGuildId}`,
+          label: 'Reset Defaults',
+          emoji: { name: '🔄' }
+        },
+        {
+          type: 2,
+          style: 2,
+          custom_id: 'panel_owner_return',
+          label: 'Back to Updates',
+          emoji: { name: '⬅️' }
+        }
+      ]
+    }
+  ];
 
   return {
-    content: `⚙️ **Command Permissions for Server \`${targetGuildId}\`**\n${statusLine}\n\nSelect commands to **DISABLE** below (uncheck to enable):`,
-    flags: EPHEMERAL_FLAG,
-    components: [
-      {
-        type: 1,
-        components: [{
-          type: 3,
-          custom_id: `cfg_owner_perms_save_g1:${targetGuildId}`,
-          placeholder: 'General & Member Commands to disable...',
-          options: OWNER_GENERAL_COMMANDS.map(cmd => ({
-            ...cmd,
-            default: disabled.includes(cmd.value)
-          })),
-          min_values: 0,
-          max_values: OWNER_GENERAL_COMMANDS.length
-        }]
-      },
-      {
-        type: 1,
-        components: [{
-          type: 3,
-          custom_id: `cfg_owner_perms_save_g2:${targetGuildId}`,
-          placeholder: 'Staff & Admin Commands to disable...',
-          options: OWNER_ADMIN_COMMANDS.map(cmd => ({
-            ...cmd,
-            default: disabled.includes(cmd.value)
-          })),
-          min_values: 0,
-          max_values: OWNER_ADMIN_COMMANDS.length
-        }]
-      },
-      {
-        type: 1,
-        components: [
-          {
-            type: 2,
-            style: 3,
-            custom_id: `cfg_owner_perms_enable_all:${targetGuildId}`,
-            label: 'Enable All Commands',
-            emoji: { name: '🟢' }
-          },
-          {
-            type: 2,
-            style: 2,
-            custom_id: 'panel_owner_return',
-            label: 'Back to Worker Updates',
-            emoji: { name: '⬅️' }
-          }
-        ]
-      }
-    ]
+    embeds: [embed],
+    components,
+    flags: EPHEMERAL_FLAG
   };
 }
 
@@ -208,52 +255,83 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const values = body.data?.values || [];
     const targetGuildId = values[0];
     const config = await getConfig(env, targetGuildId);
-    const disabled = Array.isArray(config.disabled_commands) ? config.disabled_commands : [];
     
-    return interactionResponse(buildOwnerPermsPayload(targetGuildId, disabled));
+    return interactionResponse(buildOwnerPermsPayload(targetGuildId, config));
   }
 
-  if (customId.startsWith('cfg_owner_perms_save_g1:')) {
+  if (customId.startsWith('cfg_owner_perm_toggle:') || customId.startsWith('cfg_owner_perms_save_g1:') || customId.startsWith('cfg_owner_perms_save_g2:')) {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
     }
     const targetGuildId = customId.split(':')[1];
     const values = body.data?.values || [];
+    const selectedCmd = values[0];
     const config = await getConfig(env, targetGuildId);
-    const adminDisabled = (config.disabled_commands || []).filter(c => OWNER_ADMIN_COMMANDS.some(a => a.value === c));
-    config.disabled_commands = [...values, ...adminDisabled];
-    await setConfig(env, targetGuildId, config);
+    if (!config.command_permissions) config.command_permissions = {};
 
-    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config.disabled_commands) });
+    if (selectedCmd) {
+      const currentTier = getCommandTier(config, selectedCmd);
+      const nextTier = currentTier === 'everyone' ? 'staff' : 'everyone';
+      config.command_permissions[selectedCmd] = nextTier;
+
+      if (Array.isArray(config.disabled_commands)) {
+        config.disabled_commands = config.disabled_commands.filter(c => c !== selectedCmd);
+      }
+      await setConfig(env, targetGuildId, config);
+    }
+
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
   }
 
-  if (customId.startsWith('cfg_owner_perms_save_g2:')) {
+  if (customId.startsWith('cfg_owner_perms_all_everyone:')) {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
     }
     const targetGuildId = customId.split(':')[1];
-    const values = body.data?.values || [];
     const config = await getConfig(env, targetGuildId);
-    const generalDisabled = (config.disabled_commands || []).filter(c => OWNER_GENERAL_COMMANDS.some(g => g.value === c));
-    config.disabled_commands = [...generalDisabled, ...values];
-    await setConfig(env, targetGuildId, config);
-
-    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config.disabled_commands) });
-  }
-
-  if (customId.startsWith('cfg_owner_perms_enable_all:')) {
-    const ownerId = String(env.OWNER_ID || '').trim();
-    if (!ownerId || getInvokerId(body) !== ownerId) {
-      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    if (!config.command_permissions) config.command_permissions = {};
+    for (const cmd of ALL_COMMANDS_META) {
+      if (cmd.category === 'general') {
+        config.command_permissions[cmd.name] = 'everyone';
+      }
     }
-    const targetGuildId = customId.split(':')[1];
-    const config = await getConfig(env, targetGuildId);
     config.disabled_commands = [];
     await setConfig(env, targetGuildId, config);
 
-    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, []) });
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_all_staff:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
+    if (!config.command_permissions) config.command_permissions = {};
+    for (const cmd of ALL_COMMANDS_META) {
+      config.command_permissions[cmd.name] = 'staff';
+    }
+    config.disabled_commands = [];
+    await setConfig(env, targetGuildId, config);
+
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_reset_defaults:') || customId.startsWith('cfg_owner_perms_enable_all:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
+    delete config.command_permissions;
+    delete config.disabled_commands;
+    await setConfig(env, targetGuildId, config);
+
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
   }
 
   if (customId.startsWith('cfg_owner_perms_save:')) {
@@ -278,7 +356,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
     }
     const ownerPayload = await buildWorkerUpdatesPayload(env);
-    return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
+    return jsonResponse({ type: 7, data: ownerPayload });
   }
 
   if (customId === 'panel_owner_lock_select') {

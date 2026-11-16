@@ -21,7 +21,7 @@ import {
   dmUser
 } from './discord.js';
 import { getSubscribers, setSubscriber } from './subscriptions.js';
-import { getConfig, getEffectiveConfig, canUseCommands, canConfigure } from './config.js';
+import { getConfig, getEffectiveConfig, canUseCommands, canConfigure, canMemberExecuteCommand, getCommandTier } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { maybePushMemberCheckChange } from './check.js';
 import { buildControlPanelPayload, applyConfigUpdate, buildWorkerUpdatesPayload } from './panel.js';
@@ -260,6 +260,16 @@ export async function handleInteraction(body, env, ctx) {
       return deferredInteractionResponse(true);
     }
 
+    if (name !== 'ownerpanel' && name !== 'emergency' && name !== 'emergencyleave') {
+      const check = await canMemberExecuteCommand(name, body.member, env, guildId);
+      if (!check.allowed) {
+        return interactionResponse({
+          content: check.reason,
+          flags: EPHEMERAL_FLAG
+        });
+      }
+    }
+
     if (name === 'status') {
       ctx.waitUntil(runStatusCommand(body, env));
       return deferredInteractionResponse();
@@ -350,11 +360,14 @@ export async function handleInteraction(body, env, ctx) {
     }
   }
 
-  if (body.type === 2 && !(await canUseCommands(body.member, env, guildId))) {
-    return interactionResponse({
-      content: 'You do not have permission to use this bot command.',
-      flags: EPHEMERAL_FLAG
-    });
+  if (body.type === 2 && body.data && body.data.name) {
+    const tier = getCommandTier(await getConfig(env, guildId), body.data.name);
+    if (tier === 'staff' && !(await canUseCommands(body.member, env, guildId))) {
+      return interactionResponse({
+        content: 'You do not have permission to use this bot command.',
+        flags: EPHEMERAL_FLAG
+      });
+    }
   }
 
   if (body.type === 2 && body.data && body.data.name === 'health') {

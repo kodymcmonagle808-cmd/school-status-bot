@@ -570,11 +570,11 @@ export async function buildWorkerUpdatesPayload(env) {
           custom_id: 'panel_owner_perms_select',
           placeholder: '⚙️ Manage Command Permissions...',
           options: permServers.map(s => ({
-          label: s.name.slice(0, 100),
-          value: s.id,
-          description: 'Enable/disable commands for this server',
-          emoji: { name: '⚙️' }
-        })),
+            label: s.name.slice(0, 100),
+            value: s.id,
+            description: 'View all commands & configure Staff vs Everyone',
+            emoji: { name: '⚙️' }
+          })),
         min_values: 1,
         max_values: 1
       }]

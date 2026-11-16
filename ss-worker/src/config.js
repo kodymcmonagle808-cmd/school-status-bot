@@ -102,6 +102,91 @@ export async function canConfigure(member, env, guildId = '') {
   return await canUseCommands(member, env, guildId);
 }
 
+export const ALL_COMMANDS_META = [
+  // General & Student Commands (default: everyone)
+  { name: 'status', label: '/status', category: 'general', defaultTier: 'everyone', description: 'Check operating status' },
+  { name: 'snowday', label: '/snowday', category: 'general', defaultTier: 'everyone', description: 'Snow day outlook' },
+  { name: 'calendar', label: '/calendar', category: 'general', defaultTier: 'everyone', description: 'Upcoming calendar events' },
+  { name: 'history', label: '/history', category: 'general', defaultTier: 'everyone', description: 'Operating status history' },
+  { name: 'districts', label: '/districts', category: 'general', defaultTier: 'everyone', description: 'Neighboring school districts' },
+  { name: 'outages', label: '/outages', category: 'general', defaultTier: 'everyone', description: 'Utility outage counts' },
+  { name: 'stats', label: '/stats', category: 'general', defaultTier: 'everyone', description: 'Closure & check statistics' },
+  { name: 'notify', label: '/notify', category: 'general', defaultTier: 'everyone', description: 'DM notifications on status changes' },
+  { name: 'myschool', label: '/myschool', category: 'general', defaultTier: 'everyone', description: 'School-specific notice DMs' },
+  { name: 'setupclasses', label: '/setupclasses', category: 'general', defaultTier: 'everyone', description: 'Class schedule & room numbers' },
+  { name: 'mapmyclass', label: '/mapmyclass', category: 'general', defaultTier: 'everyone', description: 'Class route map generation' },
+  { name: 'dankmemer', label: '/dankmemer', category: 'general', defaultTier: 'everyone', description: 'Dank Memer application' },
+  { name: 'staffapplication', label: '/staffapplication', category: 'general', defaultTier: 'everyone', description: 'Staff application' },
+  { name: 'requestannouncement', label: '/requestannouncement', category: 'general', defaultTier: 'everyone', description: 'Submit announcement request' },
+  { name: 'searchemails', label: '/searchemails', category: 'general', defaultTier: 'everyone', description: 'Search archived school emails' },
+  { name: 'terms', label: '/terms', category: 'general', defaultTier: 'everyone', description: 'Terms and Conditions' },
+  { name: 'privacy', label: '/privacy', category: 'general', defaultTier: 'everyone', description: 'Privacy Policy' },
+  { name: 'help', label: '/help', category: 'general', defaultTier: 'everyone', description: 'Command list & help' },
+
+  // Staff & Admin Commands (default: staff)
+  { name: 'post-status', label: '/post-status', category: 'admin', defaultTier: 'staff', description: 'Force post status to alert channel' },
+  { name: 'manualstatus', label: '/manualstatus', category: 'admin', defaultTier: 'staff', description: 'Set/clear manual school status' },
+  { name: 'override', label: '/override', category: 'admin', defaultTier: 'staff', description: 'Status override' },
+  { name: 'events', label: '/events', category: 'admin', defaultTier: 'staff', description: 'Add/remove calendar events' },
+  { name: 'announce', label: '/announce', category: 'admin', defaultTier: 'staff', description: 'Post announcement embed' },
+  { name: 'health', label: '/health', category: 'admin', defaultTier: 'staff', description: 'Bot health & diagnostics snapshot' },
+  { name: 'refresh-panel', label: '/refresh-panel', category: 'admin', defaultTier: 'staff', description: 'Refresh log panel embed' },
+  { name: 'setup', label: '/setup', category: 'admin', defaultTier: 'staff', description: 'Initial setup wizard' },
+  { name: 'setupjoinlogs', label: '/setupjoinlogs', category: 'admin', defaultTier: 'staff', description: 'Configure join logs & auto-roles' },
+  { name: 'emailchannel', label: '/emailchannel', category: 'admin', defaultTier: 'staff', description: 'Configure school email channel' },
+  { name: 'addroledm', label: '/addroledm', category: 'admin', defaultTier: 'staff', description: 'Give role & DM member' },
+  { name: 'dankstaffsetup', label: '/dankstaffsetup', category: 'admin', defaultTier: 'staff', description: 'Dank Memer application channel' },
+  { name: 'staffappsetup', label: '/staffappsetup', category: 'admin', defaultTier: 'staff', description: 'Staff application review channel' },
+  { name: 'social-link', label: '/social-link', category: 'admin', defaultTier: 'staff', description: 'Social media webhook generator' },
+  { name: 'mydata', label: '/mydata', category: 'admin', defaultTier: 'staff', description: 'View or erase server stored data' }
+];
+
+export function getCommandTier(config, commandName) {
+  const meta = ALL_COMMANDS_META.find(c => c.name === commandName);
+  const defaultTier = meta ? meta.defaultTier : 'staff';
+  if (!config) return defaultTier;
+
+  // Check legacy disabled_commands array
+  if (Array.isArray(config.disabled_commands) && config.disabled_commands.includes(commandName)) {
+    return 'disabled';
+  }
+
+  // Check command_permissions map: { [commandName]: 'everyone' | 'staff' | 'disabled' }
+  if (config.command_permissions && typeof config.command_permissions[commandName] === 'string') {
+    return config.command_permissions[commandName];
+  }
+
+  return defaultTier;
+}
+
+export async function canMemberExecuteCommand(commandName, member, env, guildId = '') {
+  // Owner can always run any command
+  const ownerId = String(env?.OWNER_ID || '').trim();
+  const invokerId = member?.user?.id;
+  if (ownerId && invokerId && invokerId === ownerId) {
+    return { allowed: true };
+  }
+
+  const config = await getConfig(env, guildId);
+  const tier = getCommandTier(config, commandName);
+
+  if (tier === 'disabled') {
+    return { allowed: false, reason: `❌ The \`/${commandName}\` command has been disabled on this server.` };
+  }
+
+  if (tier === 'everyone') {
+    return { allowed: true };
+  }
+
+  // Tier is 'staff'
+  const isStaff = await canUseCommands(member, env, guildId);
+  if (!isStaff) {
+    return { allowed: false, reason: `❌ You do not have permission to use the \`/${commandName}\` command (Staff Only).` };
+  }
+
+  return { allowed: true };
+}
+
 function overrideKey(guildId) {
   return guildId ? `override:${guildId}` : 'override:default';
 }
