@@ -53,6 +53,11 @@ id = "f0ecd441d95a4cbca41035b619a94705"
 binding = "BACKUPS_BUCKET"
 bucket_name = "ss-backups"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "school-status-db"
+database_id = "9276705a-f50c-4bd9-9d85-6ac565c55469"
+
 # Cron fires every minute; the worker matches each guild's configured check
 # times (Eastern, any minute of the day) and dedupes so each slot runs once.
 [triggers]
