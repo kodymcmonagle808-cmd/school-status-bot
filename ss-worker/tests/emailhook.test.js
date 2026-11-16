@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import worker from '../src/index.js';
 import { buildEmailEmbed, handleEmailHook } from '../src/emailhook.js';
 
 function makeKv(store = new Map()) {
@@ -88,4 +89,32 @@ test('handleEmailHook dedupes by Gmail message id', async (t) => {
   assert.equal(second.sent, 0);
   assert.equal(second.deduped, true);
   assert.equal(posts.filter(p => /channels\/chan-/.test(p.url)).length, 1);
+});
+
+test('POST /email-hook requires secret and routes valid payload', async (t) => {
+  mockDiscord(t);
+  const env = makeEnv({ g1: { alert_channel_id: 'chan-g1' } });
+  env.NWS_HOOK_SECRET = 'email-secret';
+  const ctx = { waitUntil() {} };
+
+  const unauthReq = new Request('https://worker.example/email-hook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(email)
+  });
+  assert.equal((await worker.fetch(unauthReq, env, ctx)).status, 403);
+
+  const authReq = new Request('https://worker.example/email-hook', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer email-secret'
+    },
+    body: JSON.stringify(email)
+  });
+  const res = await worker.fetch(authReq, env, ctx);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.sent, 1);
 });

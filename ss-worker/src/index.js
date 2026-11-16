@@ -33,6 +33,7 @@ import { LOGS_PATH, logsPageResponse } from './workerlogs.js';
 import { recordWatcherError } from './watcherhealth.js';
 import { isHeartbeatMinute } from './timeutil.js';
 import { maybeRunKvBackup, runKvBackup } from './backup.js';
+import { handleEmailHook } from './emailhook.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -198,7 +199,7 @@ export default {
     // watches the NWS alert feeds and the HCPSS status page on Google's free
     // timed triggers and calls here only when something changes. Same
     // bearer-token shape as the manual trigger, separate shared secret.
-    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook' || url.pathname === '/push-data') {
+    if (url.pathname === '/nws-hook' || url.pathname === '/status-hook' || url.pathname === '/refresh-hook' || url.pathname === '/context-hook' || url.pathname === '/push-data' || url.pathname === '/email-hook') {
       if (!env.NWS_HOOK_SECRET) {
         return new Response('Push hooks disabled: NWS_HOOK_SECRET is not configured.', { status: 403 });
       }
@@ -465,6 +466,17 @@ export default {
         });
       })());
       return jsonResponse({ ok: true, zone });
+    }
+
+    if (url.pathname === '/email-hook') {
+      let payload;
+      try {
+        payload = await request.json();
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid JSON payload' }, 400);
+      }
+      const result = await handleEmailHook(env, payload);
+      return jsonResponse(result, result.ok ? 200 : 400);
     }
 
     const sig = request.headers.get('x-signature-ed25519');
