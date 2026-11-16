@@ -698,7 +698,7 @@ export async function handleInteraction(body, env, ctx) {
       return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
     }
 
-    if (selected === 'status_opt_outages') {
+    if (selected === 'status_opt_outages' || selected === 'outages') {
       const payload = await runOutagesCommand(env, guildId);
       return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
     }

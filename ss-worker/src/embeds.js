@@ -130,6 +130,12 @@ export function buildCheckAgainComponents(config = null) {
           emoji: { name: '📝' }
         },
         {
+          label: 'Outages',
+          value: 'status_opt_outages',
+          description: 'View BGE & local utility power outages',
+          emoji: { name: '⚡' }
+        },
+        {
           label: 'Snow Day Outlook',
           value: 'status_opt_snowday',
           description: 'Check winter weather signals & closure odds',
@@ -146,12 +152,6 @@ export function buildCheckAgainComponents(config = null) {
           value: 'status_opt_districts',
           description: 'Check operating status of surrounding counties',
           emoji: { name: '🏫' }
-        },
-        {
-          label: 'Utility Outages Tracker',
-          value: 'status_opt_outages',
-          description: 'View BGE power outage counts & county impacts',
-          emoji: { name: '⚡' }
         },
         {
           label: 'My School Alerts',

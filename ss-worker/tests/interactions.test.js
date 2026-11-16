@@ -271,6 +271,15 @@ test('status_options_select opens request announcement modal', async () => {
   assert.equal(out.data.custom_id, 'modal_requestannouncement');
 });
 
+test('status_options_select handles Outages command', async () => {
+  const env = makeEnv();
+  const out = await json(handleInteraction(
+    component('status_options_select', { member: member(), values: ['status_opt_outages'] }), env, ctx));
+  assert.equal(out.type, 4);
+  assert.ok(out.data.embeds && out.data.embeds.length > 0);
+  assert.match(out.data.embeds[0].title, /Outages/);
+});
+
 test('my_weather_pings_select adds and removes weather alert roles', async (t) => {
   const putUrls = [];
   const delUrls = [];
