@@ -560,6 +560,21 @@ payload=$(jq -n '[
         type: 1
       }
     ]
+  },
+  {
+    name: "searchemails",
+    description: "Search through archived school announcements and emails.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      {
+        name: "query",
+        description: "Keyword or phrase to search for (e.g. delay, field trip, exam)",
+        type: 3,
+        required: true
+      }
+    ]
   }
 ]')
 

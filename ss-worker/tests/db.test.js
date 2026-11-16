@@ -1,13 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createD1KvAdapter, initEnv, getD1Stats, buildD1Section, formatBytes } from '../src/db.js';
+import {
+  createD1KvAdapter,
+  initEnv,
+  getD1Stats,
+  buildD1Section,
+  formatBytes,
+  recordEmailToD1,
+  searchEmailsInD1,
+  getEmailStats
+} from '../src/db.js';
 
 function createMockD1() {
   const store = new Map(); // key -> { value, expires_at }
+  const emailStore = new Map(); // `${id}:${guild_id}` -> emailRecord
 
   return {
     _store: store,
+    _emailStore: emailStore,
     prepare(sql) {
       let bound = [];
       const stmt = {
@@ -28,6 +39,23 @@ function createMockD1() {
             }
             return { total_keys: store.size, total_bytes: totalBytes };
           }
+          if (sql.includes('COUNT(*) AS total')) {
+            const [, , guildId] = bound;
+            let total = 0;
+            let past7Days = 0;
+            let past30Days = 0;
+            const now = Date.now();
+            const sevenDays = now - (7 * 24 * 60 * 60 * 1000);
+            const thirtyDays = now - (30 * 24 * 60 * 60 * 1000);
+            for (const [, e] of emailStore) {
+              if (e.guild_id === guildId) {
+                total++;
+                if (e.ts >= sevenDays) past7Days++;
+                if (e.ts >= thirtyDays) past30Days++;
+              }
+            }
+            return { total, past_7_days: past7Days, past_30_days: past30Days };
+          }
           return null;
         },
         async run() {
@@ -39,6 +67,22 @@ function createMockD1() {
           if (sql.includes('DELETE FROM kv_store WHERE key = ?')) {
             const [key] = bound;
             store.delete(key);
+            return { success: true };
+          }
+          if (sql.includes('INSERT INTO emails')) {
+            const [id, guildId, subject, body, channelId, messageId, ts, url, imageUrl, aiSummary] = bound;
+            emailStore.set(`${id}:${guildId}`, {
+              id,
+              guild_id: guildId,
+              subject,
+              body,
+              channel_id: channelId,
+              message_id: messageId,
+              ts,
+              url,
+              image_url: imageUrl,
+              ai_summary: aiSummary
+            });
             return { success: true };
           }
           return { success: true };
@@ -62,6 +106,22 @@ function createMockD1() {
               if (v.expires_at == null || v.expires_at > nowSec) {
                 results.push({ key: k });
                 if (results.length >= limit) break;
+              }
+            }
+            return { results, success: true };
+          }
+          if (sql.includes('FROM emails') && sql.includes('guild_id = ?')) {
+            const [guildId, searchPattern, , limit] = bound;
+            const cleanPattern = searchPattern.replace(/%/g, '').toLowerCase();
+            const results = [];
+            for (const [, e] of emailStore) {
+              if (e.guild_id === guildId) {
+                const subMatch = (e.subject || '').toLowerCase().includes(cleanPattern);
+                const bodyMatch = (e.body || '').toLowerCase().includes(cleanPattern);
+                if (subMatch || bodyMatch) {
+                  results.push(e);
+                  if (results.length >= limit) break;
+                }
               }
             }
             return { results, success: true };
@@ -122,12 +182,10 @@ test('createD1KvAdapter: respects expiration TTL', async () => {
   const d1 = createMockD1();
   const adapter = createD1KvAdapter(d1);
 
-  // Expired in past
   await adapter.put('expired_key', 'old_val', { expiration: 1000 });
   const expired = await adapter.get('expired_key');
   assert.equal(expired, null);
 
-  // Valid in future
   await adapter.put('active_key', 'new_val', { expirationTtl: 3600 });
   const active = await adapter.get('active_key');
   assert.equal(active, 'new_val');
@@ -138,11 +196,9 @@ test('createD1KvAdapter: falls back to legacy KV and backfills D1', async () => 
   const fallbackKv = createMockKv({ legacy_item: 'from_kv_store' });
   const adapter = createD1KvAdapter(d1, fallbackKv);
 
-  // Not in D1 yet, should pull from fallbackKv
   const res = await adapter.get('legacy_item');
   assert.equal(res, 'from_kv_store');
 
-  // Should have lazily backfilled into D1
   assert.ok(d1._store.has('legacy_item'));
   assert.equal(d1._store.get('legacy_item').value, 'from_kv_store');
 });
@@ -217,4 +273,41 @@ test('formatBytes: handles B, KB, MB', () => {
   assert.equal(formatBytes(500), '500 B');
   assert.equal(formatBytes(2048), '2.0 KB');
   assert.equal(formatBytes(5 * 1024 * 1024), '5.00 MB');
+});
+
+test('recordEmailToD1 and searchEmailsInD1: stores and queries announcements', async () => {
+  const d1 = createMockD1();
+  await recordEmailToD1(d1, {
+    id: 'msg-1',
+    guildId: 'g1',
+    subject: 'Centennial High School Field Trip Information',
+    body: 'Please submit your permission slips by Friday.',
+    channelId: 'c1',
+    messageId: 'm1',
+    ts: Date.now(),
+    url: 'https://hcpss.org/view/1'
+  });
+
+  await recordEmailToD1(d1, {
+    id: 'msg-2',
+    guildId: 'g1',
+    subject: 'Winter Weather Advisory - Two Hour Delay',
+    body: 'HCPSS schools opening 2 hours late.',
+    channelId: 'c1',
+    messageId: 'm2',
+    ts: Date.now(),
+    url: 'https://hcpss.org/view/2'
+  });
+
+  const tripResults = await searchEmailsInD1(d1, 'g1', 'field trip');
+  assert.equal(tripResults.length, 1);
+  assert.equal(tripResults[0].subject, 'Centennial High School Field Trip Information');
+
+  const weatherResults = await searchEmailsInD1(d1, 'g1', 'delay');
+  assert.equal(weatherResults.length, 1);
+  assert.equal(weatherResults[0].subject, 'Winter Weather Advisory - Two Hour Delay');
+
+  const stats = await getEmailStats(d1, 'g1');
+  assert.equal(stats.total, 2);
+  assert.equal(stats.past7Days, 2);
 });

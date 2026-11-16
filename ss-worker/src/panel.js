@@ -12,7 +12,7 @@ import {
 } from './timeutil.js';
 import { hasStormAlert, getCachedWeatherAlerts } from './weather.js';
 import { PRIMARY_DISTRICT_CHOICES } from './districts.js';
-import { getStatusHistory } from './history.js';
+import { getStatusHistory, computeIncidentStats, schoolYearLabel } from './history.js';
 import { getConfig, setConfig, getEffectiveConfig, getActiveOverride } from './config.js';
 import { listCalendarEvents } from './calendar.js';
 import { getWatcherErrors, formatWatcherErrors } from './watcherhealth.js';
@@ -20,7 +20,7 @@ import { getBlockedGuilds } from './blocklist.js';
 import { logAction } from './actionlog.js';
 import { discordFetch } from './discord.js';
 import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
-import { getD1Stats, buildD1Section } from './db.js';
+import { getD1Stats, buildD1Section, getEmailStats } from './db.js';
 
 // NWS alert categories for ping-role routing. Order matches the check
 // order in alertCategory(): specific hazards win over the generic storm
@@ -107,6 +107,7 @@ export const PANEL_NAV_TABS = [
   { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' },
   { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' },
   { label: 'School Emails', value: 'config_emails', emoji: '📧', description: 'Recent HCPSS announcement emails and channel settings' },
+  { label: 'Analytics & Trends', value: 'config_analytics', emoji: '📊', description: 'School closure trends, email volume, and database analytics' },
   { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, voice tests, and system tests' }
 ];
 
@@ -1297,6 +1298,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       ? `<#${config.email_channel_id}>`
       : (config.alert_channel_id ? `<#${config.alert_channel_id}> *(default alerts channel)*` : '*(not set)*');
     const toggleEmails = config.toggle_email_alerts !== false;
+    const toggleAi = config.toggle_ai_summary !== false;
 
     let emailLogs = [];
     try {
@@ -1321,7 +1323,8 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       color: 0x3498DB,
       description: '### 📬 HCPSS & Centennial Email Settings\n' +
                    `• **Email Channel**: ${emailChannel}\n` +
-                   `• **Email Alerts**: ${toggleEmails ? '🟢 Enabled' : '🔴 Disabled'}\n\n` +
+                   `• **Email Alerts**: ${toggleEmails ? '🟢 Enabled' : '🔴 Disabled'}\n` +
+                   `• **AI Summaries**: ${toggleAi ? '🟢 Enabled' : '🔴 Disabled'}\n\n` +
                    `### 📋 Recent Email Announcements\n${emailLines}\n\n` +
                    '*Pick a channel below to set where announcement emails are posted.*',
       timestamp: new Date().toISOString()
@@ -1348,10 +1351,71 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           emoji: { name: toggleEmails ? '🔕' : '🔔' }
         },
         {
+          label: toggleAi ? 'Disable AI Summaries' : 'Enable AI Summaries',
+          value: 'panel_toggle_ai_summary',
+          description: toggleAi ? 'Do not generate AI summaries for emails' : 'Generate 2-3 bullet point AI summaries for emails',
+          emoji: { name: '🤖' }
+        },
+        {
           label: 'Clear Channel Override',
           value: 'panel_clear_email_channel',
           description: 'Revert to using the main alerts channel',
           emoji: { name: '↩️' }
+        }
+      ])
+    ];
+
+    return { embeds: [embed], components };
+  }
+
+  if (page === 'config_analytics') {
+    let incidentStats = { totalIncidents: 0, byStatus: {}, lastIncident: null };
+    let syLabel = 'Current Year';
+    try {
+      const hist = await getStatusHistory(env, config.primary_district);
+      incidentStats = computeIncidentStats(hist);
+      syLabel = schoolYearLabel();
+    } catch {}
+
+    let emailStats = { total: 0, past7Days: 0, past30Days: 0 };
+    if (env.DB) {
+      try {
+        emailStats = await getEmailStats(env.DB, guildId);
+      } catch {}
+    }
+
+    const closureCount = (incidentStats.byStatus?.schools_closed || 0) + (incidentStats.byStatus?.schools_and_offices_closed || 0);
+    const delayCount = incidentStats.byStatus?.schools_open_2_hours_late || 0;
+    const earlyCount = incidentStats.byStatus?.schools_close_3_hours_early || 0;
+
+    const embed = {
+      title: '📊 Control Panel — Analytics & Trends',
+      color: 0x9B59B6,
+      description: `### 📈 School Impact Trends (${syLabel})\n` +
+                   `• **Total Weather / Emergency Incidents**: **${incidentStats.totalIncidents}**\n` +
+                   `> 🔴 **Full Closures:** ${closureCount} day(s)\n` +
+                   `> 🟠 **2-Hour Delays:** ${delayCount} day(s)\n` +
+                   `> 🟡 **Early Dismissals:** ${earlyCount} day(s)\n\n` +
+                   `### 📧 Announcement Email Volume\n` +
+                   `• **Total Archived Announcements:** ${emailStats.total}\n` +
+                   `• **Past 7 Days:** ${emailStats.past7Days} email(s)\n` +
+                   `• **Past 30 Days:** ${emailStats.past30Days} email(s)\n\n` +
+                   `### ⚡ Database Performance & Capacity\n` +
+                   `• **Active Storage:** Cloudflare D1 (SQLite)\n` +
+                   `• **Write Capacity:** 100,000 writes/day (Free Tier)\n` +
+                   `• **Read Capacity:** 5,000,000 reads/day\n` +
+                   `• **Max Storage:** 5 GB`,
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_analytics'),
+      actionSelectRow([
+        {
+          label: 'Refresh Analytics',
+          value: 'panel_to_config_analytics',
+          description: 'Re-query latest incident and email metrics',
+          emoji: { name: '🔄' }
         }
       ])
     ];

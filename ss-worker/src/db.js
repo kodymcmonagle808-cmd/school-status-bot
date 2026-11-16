@@ -219,3 +219,117 @@ export function buildD1Section(stats) {
     `• **Storage Used:** ${formatBytes(stats.totalBytes)} / 5 GB (${storagePct}%)\n` +
     `> All bot operations automatically read and write via Cloudflare D1.`;
 }
+
+/**
+ * Ensures the emails archive table exists in D1 SQLite.
+ */
+export async function ensureEmailsTable(db) {
+  if (!db) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS emails (
+        id TEXT,
+        guild_id TEXT,
+        subject TEXT,
+        body TEXT,
+        channel_id TEXT,
+        message_id TEXT,
+        ts INTEGER,
+        url TEXT,
+        image_url TEXT,
+        ai_summary TEXT,
+        PRIMARY KEY (id, guild_id)
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_emails_guild_ts ON emails(guild_id, ts DESC)').run();
+  } catch (err) {
+    console.error('ensureEmailsTable error:', err);
+  }
+}
+
+/**
+ * Records an incoming school announcement email into the D1 archive.
+ */
+export async function recordEmailToD1(db, { id, guildId, subject, body, channelId, messageId, ts, url, imageUrl, aiSummary }) {
+  if (!db || !id || !guildId) return;
+  try {
+    await ensureEmailsTable(db);
+    await db.prepare(`
+      INSERT INTO emails (id, guild_id, subject, body, channel_id, message_id, ts, url, image_url, ai_summary)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id, guild_id) DO UPDATE SET
+        subject = excluded.subject,
+        body = excluded.body,
+        channel_id = excluded.channel_id,
+        message_id = excluded.message_id,
+        ts = excluded.ts,
+        url = excluded.url,
+        image_url = excluded.image_url,
+        ai_summary = excluded.ai_summary
+    `).bind(
+      String(id),
+      String(guildId),
+      String(subject || ''),
+      String(body || ''),
+      channelId ? String(channelId) : null,
+      messageId ? String(messageId) : null,
+      Number(ts) || Date.now(),
+      url ? String(url) : null,
+      imageUrl ? String(imageUrl) : null,
+      aiSummary ? String(aiSummary) : null
+    ).run();
+  } catch (err) {
+    console.error('recordEmailToD1 error:', err);
+  }
+}
+
+/**
+ * Searches the D1 email archive for matching subjects or content.
+ */
+export async function searchEmailsInD1(db, guildId, query, limit = 5) {
+  if (!db || !guildId || !query) return [];
+  try {
+    await ensureEmailsTable(db);
+    const searchPattern = `%${String(query).trim()}%`;
+    const res = await db.prepare(`
+      SELECT id, subject, body, channel_id, message_id, ts, url, image_url, ai_summary
+      FROM emails
+      WHERE guild_id = ? AND (subject LIKE ? OR body LIKE ?)
+      ORDER BY ts DESC
+      LIMIT ?
+    `).bind(String(guildId), searchPattern, searchPattern, Math.min(Number(limit) || 5, 20)).all();
+    return (res && Array.isArray(res.results)) ? res.results : [];
+  } catch (err) {
+    console.error('searchEmailsInD1 error:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetches announcement email statistics for the Analytics tab.
+ */
+export async function getEmailStats(db, guildId) {
+  if (!db || !guildId) return { total: 0, past7Days: 0, past30Days: 0 };
+  try {
+    await ensureEmailsTable(db);
+    const now = Date.now();
+    const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+    const res = await db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS past_7_days,
+        SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS past_30_days
+      FROM emails
+      WHERE guild_id = ?
+    `).bind(sevenDaysAgo, thirtyDaysAgo, String(guildId)).first();
+    return {
+      total: Number(res?.total || 0),
+      past7Days: Number(res?.past_7_days || 0),
+      past30Days: Number(res?.past_30_days || 0)
+    };
+  } catch (err) {
+    console.error('getEmailStats error:', err);
+    return { total: 0, past7Days: 0, past30Days: 0 };
+  }
+}

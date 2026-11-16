@@ -1078,6 +1078,26 @@ client.once('ready', async () => {
         }
       );
       console.log('✅ Registered /emailchannel command with Discord API');
+
+      await rest.post(
+        Routes.applicationCommands(client.user.id),
+        {
+          body: {
+            name: 'searchemails',
+            description: 'Search through archived school announcements and emails.',
+            type: 1,
+            options: [
+              {
+                name: 'query',
+                description: 'Keyword or phrase to search for (e.g. delay, field trip, exam)',
+                type: 3,
+                required: true
+              }
+            ]
+          }
+        }
+      );
+      console.log('✅ Registered /searchemails command with Discord API');
     } catch (err) {
       console.error('⚠️ Could not register /emailchannel command:', err.message);
     }

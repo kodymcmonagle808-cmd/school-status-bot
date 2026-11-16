@@ -58,6 +58,9 @@ binding = "DB"
 database_name = "school-status-db"
 database_id = "9276705a-f50c-4bd9-9d85-6ac565c55469"
 
+[ai]
+binding = "AI"
+
 # Cron fires every minute; the worker matches each guild's configured check
 # times (Eastern, any minute of the day) and dedupes so each slot runs once.
 [triggers]

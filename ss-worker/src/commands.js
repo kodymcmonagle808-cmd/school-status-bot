@@ -1369,3 +1369,67 @@ export async function runEmailChannelCommand(body, env) {
     return { content: `📧 **Current Email Announcement Channel**: ${current}`, flags: EPHEMERAL_FLAG };
   }
 }
+
+export async function runSearchEmailsCommand(body, env) {
+  const guildId = body.guild_id || '';
+  if (!guildId) {
+    return { content: '❌ This command can only be used in a server.', flags: EPHEMERAL_FLAG };
+  }
+
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  const query = String(getCommandOption(options, 'query') || '').trim();
+  if (!query) {
+    return { content: '❌ Please provide a search query (e.g. `/searchemails query:delay`).', flags: EPHEMERAL_FLAG };
+  }
+
+  let results = [];
+  if (env && env.DB) {
+    try {
+      const { searchEmailsInD1 } = await import('./db.js');
+      results = await searchEmailsInD1(env.DB, guildId, query, 5);
+    } catch (err) {
+      console.error('searchEmailsInD1 error:', err);
+    }
+  }
+
+  // Fallback to KV email_logs if D1 returned no results or is not bound
+  if ((!results || results.length === 0) && env && env.STATUS_KV) {
+    try {
+      const rawLogs = await env.STATUS_KV.get(`email_logs:${guildId}`);
+      if (rawLogs) {
+        const logs = JSON.parse(rawLogs) || [];
+        const q = query.toLowerCase();
+        results = logs.filter(l => l.subject && l.subject.toLowerCase().includes(q)).slice(0, 5);
+      }
+    } catch {}
+  }
+
+  if (!results || results.length === 0) {
+    return { content: `🔍 No announcement emails found matching **"${query.slice(0, 50)}"**.`, flags: EPHEMERAL_FLAG };
+  }
+
+  const lines = results.map((r, i) => {
+    const tsSec = r.ts ? Math.floor(Number(r.ts) / 1000) : null;
+    const dateStr = tsSec ? `<t:${tsSec}:R>` : 'recently';
+    const chanId = r.channel_id || r.channelId;
+    const msgId = r.message_id || r.messageId;
+    const jumpLink = chanId && msgId
+      ? ` · [Jump to Message](https://discord.com/channels/${guildId}/${chanId}/${msgId})`
+      : '';
+    const webLink = r.url ? ` · [Web View](${r.url})` : '';
+    const snippet = r.ai_summary
+      ? `\n> 🤖 *${r.ai_summary.slice(0, 140)}*`
+      : (r.body ? `\n> ${r.body.slice(0, 100).replace(/\n+/g, ' ')}…` : '');
+    return `**${i + 1}.** 📧 **${r.subject}** (${dateStr})${jumpLink}${webLink}${snippet}`;
+  });
+
+  const embed = {
+    title: `🔍 School Announcement Search: "${query.slice(0, 50)}"`,
+    color: 0x3498DB,
+    description: lines.join('\n\n'),
+    footer: { text: `Found ${results.length} result(s) · Cloudflare D1 Archive` },
+    timestamp: new Date().toISOString()
+  };
+
+  return { embeds: [embed], flags: EPHEMERAL_FLAG };
+}

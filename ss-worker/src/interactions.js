@@ -51,7 +51,8 @@ import {
   runStaffAppSetupCommand,
   handlePanelRefresh,
   runSetupJoinLogsCommand,
-  runEmailChannelCommand
+  runEmailChannelCommand,
+  runSearchEmailsCommand
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
 import { logAction } from './actionlog.js';
@@ -369,6 +370,10 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && (body.data.name === 'emailchannel' || body.data.name === 'setupemailchannel')) {
     return interactionResponse(await runEmailChannelCommand(body, env));
+  }
+
+  if (body.type === 2 && body.data && (body.data.name === 'searchemails' || body.data.name === 'searchemail')) {
+    return interactionResponse(await runSearchEmailsCommand(body, env));
   }
 
   if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {

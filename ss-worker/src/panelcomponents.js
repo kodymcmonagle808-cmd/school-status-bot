@@ -463,6 +463,13 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return renderPanelNav(env, body, guildId, 'config_emails');
   }
 
+  if (customId === 'panel_toggle_ai_summary') {
+    const config = await getConfig(env, guildId);
+    config.toggle_ai_summary = config.toggle_ai_summary === false;
+    await setConfig(env, guildId, config);
+    return renderPanelNav(env, body, guildId, 'config_emails');
+  }
+
   if (customId === 'panel_clear_email_channel') {
     const config = await getConfig(env, guildId);
     delete config.email_channel_id;
@@ -485,6 +492,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_nws_pings: 'config_nws_pings',
     panel_to_config_announcementrequests: 'config_announcementrequests',
     panel_to_config_emails: 'config_emails',
+    panel_to_config_analytics: 'config_analytics',
     panel_to_config_debug: 'config_debug',
     panel_to_dashboard: 'dashboard',
     panel_to_dashboard_logs: 'dashboard_logs'

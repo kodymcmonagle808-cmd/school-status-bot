@@ -10,6 +10,8 @@ import { discordFetch } from './discord.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { logAction } from './actionlog.js';
 import { postLog } from './panel.js';
+import { generateEmailSummary } from './ai.js';
+import { recordEmailToD1 } from './db.js';
 
 // Dedupe window for Gmail message ids. The Apps Script only re-sends when a
 // worker ack was lost, so a week of memory is plenty.
@@ -21,7 +23,7 @@ function clamp(text, limit) {
 }
 
 // Pure embed builder for tests. `footerText` is the guild's configured footer.
-export function buildEmailEmbed({ subject, body, receivedAt, imageUrl, webLink }, footerText = 'School Status') {
+export function buildEmailEmbed({ subject, body, receivedAt, imageUrl, webLink, aiSummary }, footerText = 'School Status') {
   const ts = Number(receivedAt) > 0 ? new Date(Number(receivedAt)) : new Date();
   const embed = {
     title: clamp(`📧 ${subject}`, 256),
@@ -35,6 +37,15 @@ export function buildEmailEmbed({ subject, body, receivedAt, imageUrl, webLink }
   }
   if (imageUrl && typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl)) {
     embed.image = { url: imageUrl.trim() };
+  }
+  if (aiSummary && typeof aiSummary === 'string' && aiSummary.trim()) {
+    embed.fields = [
+      {
+        name: '🤖 AI Summary',
+        value: clamp(aiSummary.trim(), 1024),
+        inline: false
+      }
+    ];
   }
   return embed;
 }
@@ -69,6 +80,13 @@ export async function handleEmailHook(env, payload) {
   }
 
   let sent = 0;
+  let aiSummary = null;
+  if (env && env.AI) {
+    try {
+      aiSummary = await generateEmailSummary(env, { subject, body });
+    } catch {}
+  }
+
   for (const gid of guildIds) {
     try {
       const cfg = getEffectiveConfig(await getConfig(env, gid));
@@ -77,11 +95,26 @@ export async function handleEmailHook(env, payload) {
       if (!targetChannelId) continue;
       if (cfg.primary_district && cfg.primary_district !== 'hcpss') continue;
 
+      // School-level filter (e.g. if guild is scoped to Centennial and email is specific to another school)
+      if (cfg.school_filter && typeof cfg.school_filter === 'string') {
+        const filter = cfg.school_filter.trim().toLowerCase();
+        const content = `${subject} ${body}`.toLowerCase();
+        if (!content.includes(filter) && !content.includes('all schools') && !content.includes('district') && !content.includes('hcpss')) {
+          continue;
+        }
+      }
+
+      const useAi = cfg.toggle_ai_summary !== false;
+      const embedData = {
+        ...payload,
+        aiSummary: useAi ? aiSummary : null
+      };
+
       const resp = await discordFetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
         method: 'POST',
         headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          embeds: [buildEmailEmbed(payload, cfg.alert_embed_footer || 'School Status')],
+          embeds: [buildEmailEmbed(embedData, cfg.alert_embed_footer || 'School Status')],
           allowed_mentions: { parse: [] }
         })
       });
@@ -91,6 +124,25 @@ export async function handleEmailHook(env, payload) {
         const messageId = postData && postData.id;
         const jumpUrl = messageId ? `https://discord.com/channels/${gid}/${targetChannelId}/${messageId}` : '';
         logAction(`📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${targetChannelId}>.`, { guildId: gid });
+
+        if (env.DB) {
+          try {
+            await recordEmailToD1(env.DB, {
+              id,
+              guildId: gid,
+              subject,
+              body,
+              channelId: targetChannelId,
+              messageId: messageId || null,
+              ts: Date.now(),
+              url: payload.webLink || null,
+              imageUrl: payload.imageUrl || null,
+              aiSummary: aiSummary || null
+            });
+          } catch (err) {
+            console.error('Failed to record email to D1:', err);
+          }
+        }
 
         try {
           const emailLogKey = `email_logs:${gid}`;
