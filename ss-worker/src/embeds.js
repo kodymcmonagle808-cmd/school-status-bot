@@ -6,7 +6,6 @@ import {
   EMBED_SAFE,
   MAX_EMBEDS,
   SCHOOL_CALENDAR_EVENTS,
-  ALL_STATUS_LABELS,
   getDefaultStatusColor,
   getStatusThumbnail
 } from './constants.js';
@@ -104,38 +103,67 @@ export function buildCheckAgainComponents(config = null) {
     ]
   }];
 
-  // Self-service ping roles: anyone can toggle the notification role for a
-  // status right from the post (only affects their own roles).
-  const pingRoles = (config && config.status_ping_roles) || {};
-  const options = Object.entries(ALL_STATUS_LABELS)
-    .filter(([key]) => pingRoles[key])
-    .map(([key, label]) => ({
-      label: `${label} pings`,
-      value: key,
-      description: `Toggle the ping role for ${label}`,
-      emoji: { name: '🔔' }
-    }));
-  if (options.length) {
-    // First option opens the per-user "My notifications" panel, which can
-    // show real checked state (ephemeral responses are per-user).
-    options.unshift({
-      label: 'My notification roles',
-      value: 'my_pings',
-      description: 'See which ping roles you have and edit them all at once',
-      emoji: { name: '📋' }
-    });
-    rows.push({
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: 'role_toggle_select',
-        placeholder: '🔔 Get pinged — toggle a notification role...',
-        options,
-        min_values: 1,
-        max_values: 1
-      }]
-    });
-  }
+  // Options / quick commands dropdown on status alerts
+  rows.push({
+    type: 1,
+    components: [{
+      type: 3,
+      custom_id: 'status_options_select',
+      placeholder: '⚙️ Options...',
+      options: [
+        {
+          label: 'Notification Roles',
+          value: 'status_opt_notification_roles',
+          description: 'Choose which school status updates ping you',
+          emoji: { name: '🔔' }
+        },
+        {
+          label: 'Weather Alert Roles',
+          value: 'status_opt_weather_roles',
+          description: 'Choose which weather hazard alerts ping you',
+          emoji: { name: '⛈️' }
+        },
+        {
+          label: 'Request Announcement',
+          value: 'status_opt_request_announcement',
+          description: 'Submit an announcement request to staff',
+          emoji: { name: '📝' }
+        },
+        {
+          label: 'Snow Day Outlook',
+          value: 'status_opt_snowday',
+          description: 'Check winter weather signals & closure odds',
+          emoji: { name: '❄️' }
+        },
+        {
+          label: 'Upcoming Calendar Events',
+          value: 'status_opt_calendar',
+          description: 'View HCPSS calendar dates and days off',
+          emoji: { name: '📅' }
+        },
+        {
+          label: 'Nearby School Districts',
+          value: 'status_opt_districts',
+          description: 'Check operating status of surrounding counties',
+          emoji: { name: '🏫' }
+        },
+        {
+          label: 'Utility Outages Tracker',
+          value: 'status_opt_outages',
+          description: 'View BGE power outage counts & county impacts',
+          emoji: { name: '⚡' }
+        },
+        {
+          label: 'My School Alerts',
+          value: 'status_opt_myschool',
+          description: 'Configure notifications for your specific school',
+          emoji: { name: '🎒' }
+        }
+      ],
+      min_values: 1,
+      max_values: 1
+    }]
+  });
 
   return rows;
 }

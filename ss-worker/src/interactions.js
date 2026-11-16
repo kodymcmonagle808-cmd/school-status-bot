@@ -62,7 +62,13 @@ import {
 } from './setupflow.js';
 import { handlePanelComponent, handleTestAlert } from './panelcomponents.js';
 import { purgeGuildData, removeFromGuildIndex } from './cleanup.js';
-import { MY_PINGS_VALUE, buildMyPingsPanel, handleMyPingsSubmit } from './rolepanel.js';
+import {
+  MY_PINGS_VALUE,
+  buildMyPingsPanel,
+  handleMyPingsSubmit,
+  buildMyWeatherPingsPanel,
+  handleMyWeatherPingsSubmit
+} from './rolepanel.js';
 import { handleGreeterInteraction } from './greeter.js';
 import { isGuildBlocked } from './blocklist.js';
 import { handleSetupClasses, handleMapMyClass } from './mapcommands.js';
@@ -622,6 +628,92 @@ export async function handleInteraction(body, env, ctx) {
     return await handleGreeterInteraction(body, env);
   }
 
+  if (body.type === 3 && body.data && body.data.custom_id === 'status_options_select') {
+    const selected = Array.isArray(body.data.values) && body.data.values[0];
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+
+    if (selected === 'status_opt_notification_roles') {
+      return interactionResponse(buildMyPingsPanel(cfg, body.member));
+    }
+
+    if (selected === 'status_opt_weather_roles') {
+      return interactionResponse(buildMyWeatherPingsPanel(cfg, body.member));
+    }
+
+    if (selected === 'status_opt_request_announcement') {
+      const channelId = cfg.announcement_request_channel_id;
+      if (!channelId) {
+        return interactionResponse({
+          content: '❌ No announcement request channel is configured in this server. An administrator can configure one in `/panel` under **Channels**.',
+          flags: EPHEMERAL_FLAG
+        });
+      }
+      return jsonResponse({
+        type: 9,
+        data: {
+          title: '📝 Request an Announcement',
+          custom_id: 'modal_requestannouncement',
+          components: [
+            {
+              type: 1,
+              components: [{
+                type: 4,
+                custom_id: 'input_request_summary',
+                style: 2,
+                label: 'Summary',
+                placeholder: 'Brief summary of the announcement...',
+                max_length: 1000,
+                required: true
+              }]
+            },
+            {
+              type: 1,
+              components: [{
+                type: 4,
+                custom_id: 'input_request_link',
+                style: 1,
+                label: 'Link to story (optional)',
+                placeholder: 'https://example.com/story',
+                max_length: 512,
+                required: false
+              }]
+            }
+          ]
+        }
+      });
+    }
+
+    if (selected === 'status_opt_snowday') {
+      ctx.waitUntil(runSnowdayCommand(body, env));
+      return deferredInteractionResponse();
+    }
+
+    if (selected === 'status_opt_calendar') {
+      const payload = await runCalendarCommand(env, guildId);
+      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+    }
+
+    if (selected === 'status_opt_districts') {
+      const payload = await runDistrictsCommand(env, guildId);
+      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+    }
+
+    if (selected === 'status_opt_outages') {
+      const payload = await runOutagesCommand(env, guildId);
+      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+    }
+
+    if (selected === 'status_opt_myschool') {
+      const payload = await runMySchoolCommand(body, env);
+      return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
+    }
+
+    return interactionResponse({
+      content: '❌ Unknown option selected.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (body.type === 3 && body.data && body.data.custom_id === 'role_toggle_select') {
     // Open to everyone — toggling only affects the user's own roles.
     const userId = getInvokerId(body);
@@ -754,6 +846,13 @@ export async function handleInteraction(body, env, ctx) {
     // Open to everyone — syncing only affects the user's own roles.
     const cfg = getEffectiveConfig(await getConfig(env, guildId));
     const data = await handleMyPingsSubmit(body, env, guildId, cfg);
+    return jsonResponse({ type: 7, data });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'my_weather_pings_select') {
+    // Open to everyone — syncing only affects the user's own roles.
+    const cfg = getEffectiveConfig(await getConfig(env, guildId));
+    const data = await handleMyWeatherPingsSubmit(body, env, guildId, cfg);
     return jsonResponse({ type: 7, data });
   }
 

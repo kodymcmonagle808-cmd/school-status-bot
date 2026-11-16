@@ -216,3 +216,84 @@ test('panel navigation is still gated behind command permission', async () => {
   assert.equal(out.type, 4);
   assert.match(out.data.content, /permission/i);
 });
+
+test('buildCheckAgainComponents includes the Options dropdown with 8 actions', async () => {
+  const { buildCheckAgainComponents } = await import('../src/embeds.js');
+  const rows = buildCheckAgainComponents();
+  assert.equal(rows.length, 2);
+  const select = rows[1].components[0];
+  assert.equal(select.custom_id, 'status_options_select');
+  assert.equal(select.placeholder, '⚙️ Options...');
+  assert.equal(select.options.length, 8);
+  const values = select.options.map(o => o.value);
+  assert.ok(values.includes('status_opt_notification_roles'));
+  assert.ok(values.includes('status_opt_weather_roles'));
+  assert.ok(values.includes('status_opt_request_announcement'));
+  assert.ok(values.includes('status_opt_snowday'));
+  assert.ok(values.includes('status_opt_calendar'));
+  assert.ok(values.includes('status_opt_districts'));
+  assert.ok(values.includes('status_opt_outages'));
+  assert.ok(values.includes('status_opt_myschool'));
+});
+
+test('status_options_select opens notification roles panel', async () => {
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({
+    status_ping_roles: { schools_closed: 'r1' }
+  }));
+  const out = await json(handleInteraction(
+    component('status_options_select', { member: member({ roles: ['r1'] }), values: ['status_opt_notification_roles'] }), env, ctx));
+  assert.equal(out.type, 4);
+  assert.match(out.data.content, /Your notification roles/);
+  assert.equal(out.data.components[0].components[0].custom_id, 'my_pings_select');
+});
+
+test('status_options_select opens weather alert roles panel', async () => {
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({
+    ping_role_ids: { tornado: ['r_tor'], winter: ['r_win'] }
+  }));
+  const out = await json(handleInteraction(
+    component('status_options_select', { member: member({ roles: ['r_tor'] }), values: ['status_opt_weather_roles'] }), env, ctx));
+  assert.equal(out.type, 4);
+  assert.match(out.data.content, /Your weather alert notification roles/);
+  assert.equal(out.data.components[0].components[0].custom_id, 'my_weather_pings_select');
+});
+
+test('status_options_select opens request announcement modal', async () => {
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({
+    announcement_request_channel_id: 'chan_req'
+  }));
+  const out = await json(handleInteraction(
+    component('status_options_select', { member: member(), values: ['status_opt_request_announcement'] }), env, ctx));
+  assert.equal(out.type, 9);
+  assert.equal(out.data.custom_id, 'modal_requestannouncement');
+});
+
+test('my_weather_pings_select adds and removes weather alert roles', async (t) => {
+  const putUrls = [];
+  const delUrls = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
+    if (opts.method === 'PUT') putUrls.push(String(url));
+    if (opts.method === 'DELETE') delUrls.push(String(url));
+    return new Response(null, { status: 204 });
+  });
+
+  const env = makeEnv();
+  env.STATUS_KV.store.set('config:g1', JSON.stringify({
+    ping_role_ids: { tornado: ['r_tor'], winter: ['r_win'] }
+  }));
+
+  // Member currently has r_tor, wants r_win instead:
+  const out = await json(handleInteraction(
+    component('my_weather_pings_select', { member: member({ roles: ['r_tor'] }), values: ['winter'] }), env, ctx));
+  assert.equal(out.type, 7);
+  assert.match(out.data.content, /Weather alert notification roles updated/);
+  assert.match(out.data.content, /Added: Winter Weather Alerts/);
+  assert.match(out.data.content, /Removed: Tornado Alerts/);
+  assert.equal(putUrls.length, 1);
+  assert.match(putUrls[0], /members\/user1\/roles\/r_win$/);
+  assert.equal(delUrls.length, 1);
+  assert.match(delUrls[0], /members\/user1\/roles\/r_tor$/);
+});
