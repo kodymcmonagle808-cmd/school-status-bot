@@ -1217,6 +1217,14 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
     }
+    let d1Text = '';
+    if (env.DB) {
+      try {
+        const { getD1Stats, buildD1Section } = await import('./db.js');
+        const d1 = await getD1Stats(env.DB);
+        if (d1) d1Text = `## 🗄️ Cloudflare D1 Database\n${buildD1Section(d1)}\n\n`;
+      } catch {}
+    }
     let kvInfo = 'No KV analytics available.';
     try {
       const { getKvUsage, KV_FREE_LIMITS } = await import('./kvanalytics.js');
@@ -1231,7 +1239,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       }
     } catch {}
     return interactionResponse({
-      content: `## 💾 KV Analytics\n${kvInfo}`,
+      content: `${d1Text}## 💾 KV Analytics\n${kvInfo}`,
       flags: EPHEMERAL_FLAG
     });
   }

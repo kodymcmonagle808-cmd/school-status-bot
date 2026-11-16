@@ -34,6 +34,7 @@ import { recordWatcherError } from './watcherhealth.js';
 import { isHeartbeatMinute } from './timeutil.js';
 import { maybeRunKvBackup, runKvBackup } from './backup.js';
 import { handleEmailHook } from './emailhook.js';
+import { initEnv } from './db.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -60,6 +61,7 @@ function validateManualTrigger(request, env) {
 
 export default {
   async fetch(request, env, ctx) {
+    initEnv(env);
     const url = new URL(request.url);
 
     if (request.method === 'GET') {
@@ -519,6 +521,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    initEnv(env);
     ctx.waitUntil((async () => {
       // Heartbeat for the external uptime monitor: proves the cron itself is
       // firing (a dead cron is otherwise invisible). Clock-gated to one write

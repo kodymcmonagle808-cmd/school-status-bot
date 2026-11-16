@@ -20,6 +20,7 @@ import { getBlockedGuilds } from './blocklist.js';
 import { logAction } from './actionlog.js';
 import { discordFetch } from './discord.js';
 import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
+import { getD1Stats, buildD1Section } from './db.js';
 
 // NWS alert categories for ping-role routing. Order matches the check
 // order in alertCategory(): specific hazards win over the generic storm
@@ -503,6 +504,20 @@ export async function buildWorkerUpdatesPayload(env) {
   let kvUsage = null;
   try { kvUsage = await getKvUsage(env); } catch {}
 
+  let d1Stats = null;
+  if (env.DB) {
+    try { d1Stats = await getD1Stats(env.DB); } catch {}
+  }
+
+  const storageFields = d1Stats
+    ? [
+        { name: '🗄️ Primary Database: Cloudflare D1', value: buildD1Section(d1Stats), inline: false },
+        { name: '💾 Legacy KV (Fallback / Standby)', value: buildKvUsageSection(kvUsage), inline: false }
+      ]
+    : [
+        { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false }
+      ];
+
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
     color: 0x9B59B6,
@@ -517,7 +532,7 @@ export async function buildWorkerUpdatesPayload(env) {
       lastCheckTime,
       lastCheckLatencyMs
     }).concat([
-      { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false },
+      ...storageFields,
       { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false },
       { name: '🌐 Servers', value: buildServerLines(servers, blockedIds, env.DISCORD_GUILD_ID || ''), inline: false }
     ]),
