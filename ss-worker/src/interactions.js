@@ -20,7 +20,7 @@ import {
   getInvokerId,
   dmUser
 } from './discord.js';
-import { toggleSubscriber } from './subscriptions.js';
+import { getSubscribers, setSubscriber } from './subscriptions.js';
 import { getConfig, getEffectiveConfig, canUseCommands, canConfigure } from './config.js';
 import { buildStatusPayload } from './embeds.js';
 import { maybePushMemberCheckChange } from './check.js';
@@ -905,20 +905,78 @@ export async function handleInteraction(body, env, ctx) {
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'dm_subscribe') {
-    // Open to everyone — subscribing only affects the user's own DMs.
+    // Open to everyone — shows current subscription status and prompts whether to change it.
     const userId = getInvokerId(body);
     if (!userId) {
       return interactionResponse({ content: '❌ Could not determine your user ID.', flags: EPHEMERAL_FLAG });
     }
-    const result = await toggleSubscriber(env, guildId, userId);
-    if (result.full) {
-      return interactionResponse({ content: '❌ The subscriber list for this server is full.', flags: EPHEMERAL_FLAG });
+
+    const subs = await getSubscribers(env, guildId);
+    const isSubbed = subs.includes(userId);
+
+    if (isSubbed) {
+      return interactionResponse({
+        content: '🔔 **DM Notifications: You are currently SUBSCRIBED**\n\n' +
+                 "You are currently set to receive a direct message whenever the HCPSS operating status changes (e.g. 2-hour delays, closures, early dismissals).\n" +
+                 '*(DMs are only sent on actual status changes, not on daily scheduled reposts.)*\n\n' +
+                 'Would you like to **unsubscribe** from DM notifications?',
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 4, label: 'Unsubscribe from DMs', custom_id: 'dm_sub_toggle:off', emoji: { name: '🔕' } },
+            { type: 2, style: 2, label: 'Keep Subscribed', custom_id: 'dm_sub_cancel', emoji: { name: '✅' } }
+          ]
+        }],
+        flags: EPHEMERAL_FLAG
+      });
     }
+
     return interactionResponse({
-      content: result.subscribed
-        ? "🔔 **Subscribed!** I'll DM you whenever the HCPSS operating status changes (not on every scheduled repost). Make sure DMs from this server's members are enabled. Click the button again to unsubscribe."
-        : '🔕 **Unsubscribed.** You will no longer get DMs when the status changes.',
+      content: '🔕 **DM Notifications: You are currently NOT SUBSCRIBED**\n\n' +
+               "If you subscribe, the bot will automatically send you a direct message whenever the HCPSS operating status changes (delays, closures, early dismissals).\n\n" +
+               'Would you like to **subscribe** to DM notifications?',
+      components: [{
+        type: 1,
+        components: [
+          { type: 2, style: 3, label: 'Subscribe to DMs', custom_id: 'dm_sub_toggle:on', emoji: { name: '🔔' } },
+          { type: 2, style: 2, label: 'No Thanks', custom_id: 'dm_sub_cancel' }
+        ]
+      }],
       flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'dm_sub_cancel') {
+    return jsonResponse({
+      type: 7,
+      data: { content: '👍 Your DM notification preferences were kept unchanged.', components: [] }
+    });
+  }
+
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('dm_sub_toggle:')) {
+    const action = body.data.custom_id.slice('dm_sub_toggle:'.length);
+    const userId = getInvokerId(body);
+    if (!userId) {
+      return interactionResponse({ content: '❌ Could not determine your user ID.', flags: EPHEMERAL_FLAG });
+    }
+
+    const wantSub = action === 'on';
+    const result = await setSubscriber(env, guildId, userId, wantSub);
+    if (wantSub && result.full) {
+      return jsonResponse({
+        type: 7,
+        data: { content: '❌ The subscriber list for this server is full.', components: [] }
+      });
+    }
+
+    return jsonResponse({
+      type: 7,
+      data: {
+        content: wantSub
+          ? "🔔 **Subscribed!** I'll DM you whenever the HCPSS operating status changes (not on every scheduled repost). Make sure DMs from this server's members are enabled in your Discord privacy settings."
+          : '🔕 **Unsubscribed.** You will no longer receive DMs when the operating status changes.',
+        components: []
+      }
     });
   }
 

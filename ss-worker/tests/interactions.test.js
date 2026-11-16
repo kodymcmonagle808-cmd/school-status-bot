@@ -306,3 +306,37 @@ test('my_weather_pings_select adds and removes weather alert roles', async (t) =
   assert.equal(delUrls.length, 1);
   assert.match(delUrls[0], /members\/user1\/roles\/r_tor$/);
 });
+
+test('dm_subscribe checks status and confirms before toggling', async () => {
+  const env = makeEnv();
+
+  // 1. Not subscribed yet: prompts to subscribe
+  const prompt1 = await json(handleInteraction(component('dm_subscribe'), env, ctx));
+  assert.equal(prompt1.type, 4);
+  assert.match(prompt1.data.content, /NOT SUBSCRIBED/);
+  assert.equal(prompt1.data.components[0].components[0].custom_id, 'dm_sub_toggle:on');
+
+  // 2. Click Subscribe button
+  const subbed = await json(handleInteraction(component('dm_sub_toggle:on'), env, ctx));
+  assert.equal(subbed.type, 7);
+  assert.match(subbed.data.content, /Subscribed/);
+  assert.deepEqual(JSON.parse(env.STATUS_KV.store.get('dm_subscribers:g1')), ['user1']);
+
+  // 3. Now subscribed: clicking Notify Me prompts to unsubscribe
+  const prompt2 = await json(handleInteraction(component('dm_subscribe'), env, ctx));
+  assert.equal(prompt2.type, 4);
+  assert.match(prompt2.data.content, /SUBSCRIBED/);
+  assert.equal(prompt2.data.components[0].components[0].custom_id, 'dm_sub_toggle:off');
+
+  // 4. Click Cancel button: leaves preferences unchanged
+  const cancelled = await json(handleInteraction(component('dm_sub_cancel'), env, ctx));
+  assert.equal(cancelled.type, 7);
+  assert.match(cancelled.data.content, /unchanged/);
+  assert.deepEqual(JSON.parse(env.STATUS_KV.store.get('dm_subscribers:g1')), ['user1']);
+
+  // 5. Click Unsubscribe button
+  const unsubbed = await json(handleInteraction(component('dm_sub_toggle:off'), env, ctx));
+  assert.equal(unsubbed.type, 7);
+  assert.match(unsubbed.data.content, /Unsubscribed/);
+  assert.deepEqual(JSON.parse(env.STATUS_KV.store.get('dm_subscribers:g1')), []);
+});

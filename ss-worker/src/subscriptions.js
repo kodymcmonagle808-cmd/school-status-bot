@@ -40,6 +40,25 @@ export async function toggleSubscriber(env, guildId, userId) {
   return { subscribed, count: subs.length };
 }
 
+export async function isSubscribed(env, guildId, userId) {
+  const subs = await getSubscribers(env, guildId);
+  return subs.includes(userId);
+}
+
+export async function setSubscriber(env, guildId, userId, subscribe) {
+  const subs = await getSubscribers(env, guildId);
+  const idx = subs.indexOf(userId);
+  if (subscribe) {
+    if (idx >= 0) return { subscribed: true, count: subs.length };
+    if (subs.length >= MAX_SUBSCRIBERS) return { subscribed: false, count: subs.length, full: true };
+    subs.push(userId);
+  } else {
+    if (idx >= 0) subs.splice(idx, 1);
+  }
+  await env.STATUS_KV.put(subsKey(guildId), JSON.stringify(subs));
+  return { subscribed: subscribe, count: subs.length };
+}
+
 // DMs every subscriber of the guild the given embeds. Individual failures
 // (closed DMs, blocked bot) are ignored so one user can't stall the rest.
 export async function notifySubscribers(env, guildId, embeds) {
