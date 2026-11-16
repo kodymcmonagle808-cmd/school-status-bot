@@ -1042,6 +1042,47 @@ const playInVoice = async (vc, textChannel = null) => {
 client.once('ready', async () => {
   console.log(`Greeter bot logged in as ${client.user.tag}`);
 
+  // Register / update /emailchannel slash command directly with Discord API
+  (async () => {
+    try {
+      const { REST, Routes } = require('discord.js');
+      const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
+      await rest.post(
+        Routes.applicationCommands(client.user.id),
+        {
+          body: {
+            name: 'emailchannel',
+            description: 'Configure the channel where school announcement emails are posted.',
+            type: 1,
+            options: [
+              {
+                name: 'set',
+                description: 'Set the channel for school announcement emails.',
+                type: 1,
+                options: [
+                  { name: 'channel', description: 'The channel to post emails in.', type: 7, channel_types: [0], required: true }
+                ]
+              },
+              {
+                name: 'clear',
+                description: 'Clear email channel override and fall back to main alerts channel.',
+                type: 1
+              },
+              {
+                name: 'view',
+                description: 'View the current email announcement channel.',
+                type: 1
+              }
+            ]
+          }
+        }
+      );
+      console.log('✅ Registered /emailchannel command with Discord API');
+    } catch (err) {
+      console.error('⚠️ Could not register /emailchannel command:', err.message);
+    }
+  })();
+
   // Startup self-test: prove the pieces the music pipeline depends on actually
   // work in THIS environment (Render vs local differ). Runs once, logs clearly,
   // and never blocks startup. If music is silent later, these lines say whether
