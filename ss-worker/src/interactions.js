@@ -50,7 +50,8 @@ import {
   runDankMemerCommand,
   runStaffAppSetupCommand,
   handlePanelRefresh,
-  runSetupJoinLogsCommand
+  runSetupJoinLogsCommand,
+  runEmailChannelCommand
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
 import { logAction } from './actionlog.js';
@@ -364,6 +365,10 @@ export async function handleInteraction(body, env, ctx) {
       return interactionResponse({ content: '❌ Only users with Administrator permissions can use this command.', flags: EPHEMERAL_FLAG });
     }
     return interactionResponse(await runSetupJoinLogsCommand(body, env));
+  }
+
+  if (body.type === 2 && body.data && (body.data.name === 'emailchannel' || body.data.name === 'setupemailchannel')) {
+    return interactionResponse(await runEmailChannelCommand(body, env));
   }
 
   if (body.type === 2 && body.data && body.data.name === POST_STATUS_COMMAND) {

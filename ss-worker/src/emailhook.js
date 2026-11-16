@@ -64,10 +64,12 @@ export async function handleEmailHook(env, payload) {
   for (const gid of guildIds) {
     try {
       const cfg = getEffectiveConfig(await getConfig(env, gid));
-      if (cfg.toggle_email_alerts === false || !cfg.alert_channel_id) continue;
+      if (cfg.toggle_email_alerts === false) continue;
+      const targetChannelId = cfg.email_channel_id || cfg.alert_channel_id;
+      if (!targetChannelId) continue;
       if (cfg.primary_district && cfg.primary_district !== 'hcpss') continue;
 
-      const resp = await discordFetch(`https://discord.com/api/v10/channels/${cfg.alert_channel_id}/messages`, {
+      const resp = await discordFetch(`https://discord.com/api/v10/channels/${targetChannelId}/messages`, {
         method: 'POST',
         headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -77,7 +79,7 @@ export async function handleEmailHook(env, payload) {
       });
       if (resp.ok) {
         sent++;
-        logAction(`📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${cfg.alert_channel_id}>.`, { guildId: gid });
+        logAction(`📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${targetChannelId}>.`, { guildId: gid });
       } else {
         console.error(`Email notice post failed for guild ${gid}: ${resp.status}`);
       }

@@ -7,7 +7,7 @@ import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel
 import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY } from './districts.js';
 import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
-import { getConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride } from './config.js';
+import { getConfig, setConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride } from './config.js';
 import { refreshPanelMessage } from './panel.js';
 import { doCheckAndPost, maybePushMemberCheckChange } from './check.js';
 import { footerWithCheckedAt, buildStatusPayload } from './embeds.js';
@@ -1327,4 +1327,45 @@ ${webhookUrl}
 8. Turn it on! New posts will appear in Discord automatically.`;
 
   return { content: instructions, flags: 64 };
+}
+
+export async function runEmailChannelCommand(body, env) {
+  const guildId = body.guild_id || '';
+  if (!guildId) {
+    return { content: '❌ This command can only be used in a server.', flags: EPHEMERAL_FLAG };
+  }
+
+  const member = body.member;
+  const isAdmin = member && member.permissions && (BigInt(member.permissions) & 8n) === 8n;
+  if (!isAdmin) {
+    return { content: '❌ Only server administrators can configure the email announcements channel.', flags: EPHEMERAL_FLAG };
+  }
+
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  let subName = '';
+  let subOpts = [];
+  if (options.length > 0 && options[0].type === 1) {
+    subName = options[0].name;
+    subOpts = Array.isArray(options[0].options) ? options[0].options : [];
+  }
+
+  const config = await getConfig(env, guildId);
+
+  if (subName === 'set' || (!subName && getCommandOption(options, 'channel'))) {
+    const channelId = subName === 'set' ? getCommandOption(subOpts, 'channel') : getCommandOption(options, 'channel');
+    if (!channelId) return { content: '❌ Missing channel option.', flags: EPHEMERAL_FLAG };
+    config.email_channel_id = channelId;
+    await setConfig(env, guildId, config);
+    return { content: `✅ School announcement emails will now be posted in <#${channelId}>.`, flags: EPHEMERAL_FLAG };
+  } else if (subName === 'clear') {
+    delete config.email_channel_id;
+    await setConfig(env, guildId, config);
+    const fallback = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '*(none configured)*';
+    return { content: `✅ Email channel override cleared. Announcement emails will post to your main alerts channel (${fallback}).`, flags: EPHEMERAL_FLAG };
+  } else {
+    const current = config.email_channel_id
+      ? `<#${config.email_channel_id}>`
+      : (config.alert_channel_id ? `<#${config.alert_channel_id}> (main alerts channel)` : '*(not configured)*');
+    return { content: `📧 **Current Email Announcement Channel**: ${current}`, flags: EPHEMERAL_FLAG };
+  }
 }

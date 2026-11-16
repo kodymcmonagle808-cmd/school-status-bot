@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../src/index.js';
 import { buildEmailEmbed, handleEmailHook } from '../src/emailhook.js';
+import { runEmailChannelCommand } from '../src/commands.js';
 
 function makeKv(store = new Map()) {
   return {
@@ -117,4 +118,61 @@ test('POST /email-hook requires secret and routes valid payload', async (t) => {
   const data = await res.json();
   assert.equal(data.ok, true);
   assert.equal(data.sent, 1);
+});
+
+test('handleEmailHook uses email_channel_id when configured', async (t) => {
+  const posts = mockDiscord(t);
+  const env = makeEnv({
+    g1: { alert_channel_id: 'chan-alerts', email_channel_id: 'chan-emails' }
+  });
+
+  const result = await handleEmailHook(env, { ...email, id: 'msg-override' });
+  assert.equal(result.ok, true);
+  assert.equal(result.sent, 1);
+  const alertPosts = posts.filter(p => /channels\/chan-/.test(p.url));
+  assert.equal(alertPosts.length, 1);
+  assert.match(alertPosts[0].url, /channels\/chan-emails\/messages$/);
+});
+
+test('runEmailChannelCommand manages email_channel_id', async () => {
+  const env = makeEnv({ g1: { alert_channel_id: 'chan-alerts' } });
+  const adminMember = { permissions: '8' };
+
+  // view initial
+  const view1 = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: adminMember,
+    data: { options: [{ name: 'view', type: 1 }] }
+  }, env);
+  assert.match(view1.content, /chan-alerts/);
+
+  // set
+  const setRes = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: adminMember,
+    data: {
+      options: [{
+        name: 'set',
+        type: 1,
+        options: [{ name: 'channel', value: 'chan-custom-emails' }]
+      }]
+    }
+  }, env);
+  assert.match(setRes.content, /chan-custom-emails/);
+
+  // view after set
+  const view2 = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: adminMember,
+    data: { options: [{ name: 'view', type: 1 }] }
+  }, env);
+  assert.match(view2.content, /chan-custom-emails/);
+
+  // clear
+  const clearRes = await runEmailChannelCommand({
+    guild_id: 'g1',
+    member: adminMember,
+    data: { options: [{ name: 'clear', type: 1 }] }
+  }, env);
+  assert.match(clearRes.content, /cleared/);
 });

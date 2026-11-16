@@ -533,6 +533,34 @@ payload=$(jq -n '[
     type: 1,
     integration_types: [0],
     contexts: [0]
+  },
+  {
+    name: "emailchannel",
+    description: "Configure the channel where school announcement emails are posted.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    default_member_permissions: "8",
+    options: [
+      {
+        name: "set",
+        description: "Set the channel for school announcement emails.",
+        type: 1,
+        options: [
+          { name: "channel", description: "The channel to post emails in.", type: 7, channel_types: [0], required: true }
+        ]
+      },
+      {
+        name: "clear",
+        description: "Clear email channel override and fall back to main alerts channel.",
+        type: 1
+      },
+      {
+        name: "view",
+        description: "View the current email announcement channel.",
+        type: 1
+      }
+    ]
   }
 ]')
 
