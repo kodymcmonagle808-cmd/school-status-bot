@@ -456,6 +456,20 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return deferredInteractionResponse();
   }
 
+  if (customId === 'panel_toggle_email_alerts') {
+    const config = await getConfig(env, guildId);
+    config.toggle_email_alerts = config.toggle_email_alerts === false;
+    await setConfig(env, guildId, config);
+    return renderPanelNav(env, body, guildId, 'config_emails');
+  }
+
+  if (customId === 'panel_clear_email_channel') {
+    const config = await getConfig(env, guildId);
+    delete config.email_channel_id;
+    await setConfig(env, guildId, config);
+    return renderPanelNav(env, body, guildId, 'config_emails');
+  }
+
   // Simple page-navigation buttons share one pattern: panel_to_<page>.
   const NAV_BUTTON_PAGES = {
     panel_to_config_general: 'config_general',
@@ -470,6 +484,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     panel_to_config_joinlogs: 'config_joinlogs',
     panel_to_config_nws_pings: 'config_nws_pings',
     panel_to_config_announcementrequests: 'config_announcementrequests',
+    panel_to_config_emails: 'config_emails',
     panel_to_config_debug: 'config_debug',
     panel_to_dashboard: 'dashboard',
     panel_to_dashboard_logs: 'dashboard_logs'

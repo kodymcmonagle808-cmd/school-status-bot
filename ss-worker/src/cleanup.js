@@ -35,7 +35,8 @@ function guildKeys(guildId) {
     // before then must still be purged on removal (Privacy Policy promise).
     `last_storm_recap:${guildId}`,
     `alert_post_failures:${guildId}`,
-    `nws_alerts_seen:${guildId}`
+    `nws_alerts_seen:${guildId}`,
+    `email_logs:${guildId}`
   ];
 }
 

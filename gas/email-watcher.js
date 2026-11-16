@@ -53,6 +53,28 @@ function checkHcpssEmails() {
     try {
       var allOk = true;
       thread.getMessages().forEach(function (msg) {
+        var htmlBody = '';
+        try {
+          htmlBody = msg.getBody() || '';
+        } catch (_) {}
+
+        // Extract online web view link if SchoolMessenger / Finalsite included one
+        var webLink = null;
+        var webMatch = htmlBody.match(/href=["'](https?:\/\/[^"'>]*(?:schoolmessenger|finalsite|message|broadcast|view|newsletter)[^"'>]*)["']/i);
+        if (webMatch) webLink = webMatch[1];
+
+        // Extract flyer/banner image URL from HTML if present (filtering out 1x1 tracking pixels)
+        var imageUrl = null;
+        var imgMatch = htmlBody.match(/<img[^>]+src=["'](https?:\/\/[^"'>]+\.(?:png|jpe?g|webp|gif)(?:\?[^"'>]*)?)["']/i);
+        if (imgMatch && !/1x1|spacer|pixel|tracking|beacon/i.test(imgMatch[1])) {
+          imageUrl = imgMatch[1];
+        } else {
+          var anyImg = htmlBody.match(/<img[^>]+src=["'](https?:\/\/[^"'>]+)["']/i);
+          if (anyImg && !/1x1|spacer|pixel|tracking|beacon/i.test(anyImg[1])) {
+            imageUrl = anyImg[1];
+          }
+        }
+
         var resp = UrlFetchApp.fetch(workerUrl.replace(/\/+$/, '') + '/email-hook', {
           method: 'post',
           contentType: 'application/json',
@@ -61,7 +83,9 @@ function checkHcpssEmails() {
             id: msg.getId(),
             subject: msg.getSubject(),
             body: msg.getPlainBody().trim().slice(0, 3500),
-            receivedAt: msg.getDate().getTime()
+            receivedAt: msg.getDate().getTime(),
+            webLink: webLink,
+            imageUrl: imageUrl
           }),
           muteHttpExceptions: true
         });

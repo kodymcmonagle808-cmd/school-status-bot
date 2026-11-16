@@ -9,6 +9,7 @@
 import { discordFetch } from './discord.js';
 import { getConfig, getEffectiveConfig } from './config.js';
 import { logAction } from './actionlog.js';
+import { postLog } from './panel.js';
 
 // Dedupe window for Gmail message ids. The Apps Script only re-sends when a
 // worker ack was lost, so a week of memory is plenty.
@@ -20,15 +21,22 @@ function clamp(text, limit) {
 }
 
 // Pure embed builder for tests. `footerText` is the guild's configured footer.
-export function buildEmailEmbed({ subject, body, receivedAt }, footerText = 'School Status') {
+export function buildEmailEmbed({ subject, body, receivedAt, imageUrl, webLink }, footerText = 'School Status') {
   const ts = Number(receivedAt) > 0 ? new Date(Number(receivedAt)) : new Date();
-  return {
+  const embed = {
     title: clamp(`📧 ${subject}`, 256),
     description: clamp(body, 2500),
     color: 0x3498DB,
     footer: { text: `${footerText} · via HCPSS email` },
     timestamp: ts.toISOString()
   };
+  if (webLink && typeof webLink === 'string' && /^https?:\/\//i.test(webLink)) {
+    embed.url = webLink.trim();
+  }
+  if (imageUrl && typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl)) {
+    embed.image = { url: imageUrl.trim() };
+  }
+  return embed;
 }
 
 // Validates and posts one forwarded email to every eligible guild. Returns
@@ -79,7 +87,36 @@ export async function handleEmailHook(env, payload) {
       });
       if (resp.ok) {
         sent++;
+        const postData = await resp.json().catch(() => null);
+        const messageId = postData && postData.id;
+        const jumpUrl = messageId ? `https://discord.com/channels/${gid}/${targetChannelId}/${messageId}` : '';
         logAction(`📧 HCPSS email notice ("${clamp(subject, 80)}") posted to <#${targetChannelId}>.`, { guildId: gid });
+
+        try {
+          const emailLogKey = `email_logs:${gid}`;
+          let emailLogs = [];
+          const rawLogs = await env.STATUS_KV.get(emailLogKey);
+          if (rawLogs) {
+            try { emailLogs = JSON.parse(rawLogs); } catch {}
+          }
+          if (!Array.isArray(emailLogs)) emailLogs = [];
+          emailLogs.unshift({
+            subject: clamp(subject, 100),
+            channelId: targetChannelId,
+            messageId: messageId || null,
+            ts: Date.now(),
+            url: payload.webLink || null,
+            imageUrl: payload.imageUrl || null
+          });
+          await env.STATUS_KV.put(emailLogKey, JSON.stringify(emailLogs.slice(0, 20)));
+        } catch (err) {
+          console.error('Failed to save email log:', err);
+        }
+
+        if (cfg.log_channel_id) {
+          const linkStr = jumpUrl ? `([Jump to Announcement](${jumpUrl}))` : `in <#${targetChannelId}>`;
+          await postLog(env, cfg.log_channel_id, `📧 Email: "${clamp(subject, 40)}" posted ${linkStr}`, {}, gid).catch(() => {});
+        }
       } else {
         console.error(`Email notice post failed for guild ${gid}: ${resp.status}`);
       }

@@ -105,6 +105,7 @@ export const PANEL_NAV_TABS = [
   { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' },
   { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' },
   { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' },
+  { label: 'School Emails', value: 'config_emails', emoji: '📧', description: 'Recent HCPSS announcement emails and channel settings' },
   { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, voice tests, and system tests' }
 ];
 
@@ -1276,6 +1277,73 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     return { embeds: [embed], components };
   }
 
+  if (page === 'config_emails') {
+    const emailChannel = config.email_channel_id
+      ? `<#${config.email_channel_id}>`
+      : (config.alert_channel_id ? `<#${config.alert_channel_id}> *(default alerts channel)*` : '*(not set)*');
+    const toggleEmails = config.toggle_email_alerts !== false;
+
+    let emailLogs = [];
+    try {
+      const raw = await env.STATUS_KV.get(`email_logs:${guildId}`);
+      if (raw) emailLogs = JSON.parse(raw);
+    } catch {}
+
+    let emailLines = '*No announcement emails recorded yet.*';
+    if (Array.isArray(emailLogs) && emailLogs.length > 0) {
+      emailLines = emailLogs.map((e, idx) => {
+        const timeStr = e.ts ? `<t:${Math.floor(e.ts / 1000)}:R>` : '';
+        const jump = (e.channelId && e.messageId)
+          ? `[Jump to Announcement](https://discord.com/channels/${guildId}/${e.channelId}/${e.messageId})`
+          : (e.channelId ? `in <#${e.channelId}>` : '');
+        const titleText = e.url ? `[${e.subject || 'Announcement'}](${e.url})` : (e.subject || 'Announcement');
+        return `> **${idx + 1}. ${titleText}**\n> ${timeStr} · ${jump}`;
+      }).slice(0, 8).join('\n\n');
+    }
+
+    const embed = {
+      title: '📧 Control Panel — School Announcement Emails',
+      color: 0x3498DB,
+      description: '### 📬 HCPSS & Centennial Email Settings\n' +
+                   `• **Email Channel**: ${emailChannel}\n` +
+                   `• **Email Alerts**: ${toggleEmails ? '🟢 Enabled' : '🔴 Disabled'}\n\n` +
+                   `### 📋 Recent Email Announcements\n${emailLines}\n\n` +
+                   '*Pick a channel below to set where announcement emails are posted.*',
+      timestamp: new Date().toISOString()
+    };
+
+    const components = [
+      getNavBarRow('config_emails'),
+      {
+        type: 1,
+        components: [{
+          type: 8,
+          custom_id: 'cfg_email_channel',
+          placeholder: 'Select announcement email channel',
+          min_values: 1,
+          max_values: 1,
+          channel_types: [0, 5]
+        }]
+      },
+      actionSelectRow([
+        {
+          label: toggleEmails ? 'Disable Email Alerts' : 'Enable Email Alerts',
+          value: 'panel_toggle_email_alerts',
+          description: toggleEmails ? 'Turn off automatic school email announcements' : 'Turn on automatic school email announcements',
+          emoji: { name: toggleEmails ? '🔕' : '🔔' }
+        },
+        {
+          label: 'Clear Channel Override',
+          value: 'panel_clear_email_channel',
+          description: 'Revert to using the main alerts channel',
+          emoji: { name: '↩️' }
+        }
+      ])
+    ];
+
+    return { embeds: [embed], components };
+  }
+
   if (page === 'config_schedule') {
     const currentSchedule = Array.isArray(config.check_schedule) ? config.check_schedule : [];
     const scheduleLines = currentSchedule
@@ -2116,6 +2184,8 @@ export async function applyConfigUpdate(body, env) {
     next.editing_override_status_key = values[0];
   } else if (customId === 'cfg_announcement_request_channel' && Array.isArray(values)) {
     next.announcement_request_channel_id = values[0] || null;
+  } else if (customId === 'cfg_email_channel' && Array.isArray(values)) {
+    next.email_channel_id = values[0] || null;
   }
 
   await setConfig(env, guildId, next);

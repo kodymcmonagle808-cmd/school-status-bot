@@ -52,6 +52,18 @@ test('buildEmailEmbed clamps and shapes the notice', () => {
   assert.equal(embed.timestamp, new Date(1752940800000).toISOString());
 });
 
+test('buildEmailEmbed includes webLink and imageUrl when valid', () => {
+  const embed = buildEmailEmbed({
+    subject: 'Centennial Newsletter',
+    body: 'Details inside',
+    receivedAt: 1752940800000,
+    webLink: 'https://schoolmessenger.com/broadcast/123',
+    imageUrl: 'https://resources.finalsite.net/flyer.png'
+  });
+  assert.equal(embed.url, 'https://schoolmessenger.com/broadcast/123');
+  assert.deepEqual(embed.image, { url: 'https://resources.finalsite.net/flyer.png' });
+});
+
 test('handleEmailHook rejects malformed payloads', async () => {
   const env = makeEnv({});
   assert.equal((await handleEmailHook(env, {})).ok, false);
@@ -194,4 +206,27 @@ test('runEmailChannelCommand manages email_channel_id', async () => {
     data: { options: [{ name: 'view', type: 1 }] }
   }, envStaff);
   assert.match(staffRes.content, /Current Email Announcement Channel/);
+});
+
+test('handleEmailHook stores email log with message link', async (t) => {
+  mockDiscord(t);
+  const env = makeEnv({ g1: { alert_channel_id: 'chan-alerts' } });
+
+  const result = await handleEmailHook(env, {
+    id: 'msg-logged-1',
+    subject: 'Centennial Night Event',
+    body: 'Join us tonight.',
+    receivedAt: 1752940800000,
+    webLink: 'https://example.com/view'
+  });
+  assert.equal(result.ok, true);
+
+  const rawLogs = await env.STATUS_KV.get('email_logs:g1');
+  assert.ok(rawLogs);
+  const logs = JSON.parse(rawLogs);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].subject, 'Centennial Night Event');
+  assert.equal(logs[0].channelId, 'chan-alerts');
+  assert.equal(logs[0].messageId, 'm1');
+  assert.equal(logs[0].url, 'https://example.com/view');
 });
