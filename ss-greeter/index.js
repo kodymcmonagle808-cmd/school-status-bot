@@ -36,9 +36,9 @@ let isPlayingErrorTTS = false;
 let lastErrorTTSTime = 0;
 let emergencyMode = false;
 
-// Music is enabled in Discord. Flip this to false to temporarily disable the
-// 24/7 auto-join and voice runtime without deleting any playback code.
-const MUSIC_ENABLED = true;
+// Music is disabled because YouTube blocks data center IPs (Render, AWS, etc.)
+// and causes startup delays. Emergency voice TTS announcements remain fully active.
+const MUSIC_ENABLED = false;
 
 const musicPlayer = createAudioPlayer({
   behaviors: {
@@ -1119,13 +1119,6 @@ client.once('ready', async () => {
       });
     } catch (e) {
       console.log(`[selftest] FFmpeg check threw: ${e.message}`);
-    }
-    try {
-      const yt = await getInnertube();
-      const info = await yt.getBasicInfo('kIft-LUHHVA').catch(e => { throw e; });
-      console.log(`[selftest] YouTube session OK (title: ${info.basic_info && info.basic_info.title})`);
-    } catch (e) {
-      console.log(`[selftest] YouTube session FAILED: ${e.message}`);
     }
   })();
 

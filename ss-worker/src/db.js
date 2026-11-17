@@ -187,11 +187,31 @@ export async function getD1Stats(db) {
     const row = await db.prepare(
       'SELECT count(*) AS total_keys, coalesce(sum(length(value)), 0) AS total_bytes FROM kv_store'
     ).first();
+
+    let statusCount = 0;
+    let weatherCount = 0;
+    let emailCount = 0;
+    try {
+      const sRow = await db.prepare('SELECT count(*) AS cnt FROM status_history').first();
+      statusCount = Number(sRow?.cnt || 0);
+    } catch {}
+    try {
+      const wRow = await db.prepare('SELECT count(*) AS cnt FROM weather_events').first();
+      weatherCount = Number(wRow?.cnt || 0);
+    } catch {}
+    try {
+      const eRow = await db.prepare('SELECT count(*) AS cnt FROM emails').first();
+      emailCount = Number(eRow?.cnt || 0);
+    } catch {}
+
     return {
       configured: true,
       ok: true,
       totalKeys: Number(row?.total_keys || 0),
-      totalBytes: Number(row?.total_bytes || 0)
+      totalBytes: Number(row?.total_bytes || 0),
+      statusCount,
+      weatherCount,
+      emailCount
     };
   } catch (err) {
     return {
@@ -212,12 +232,158 @@ export function buildD1Section(stats) {
   if (!stats) return 'D1 database not bound.';
   if (!stats.ok) return `⚠️ D1 error: ${stats.error}`;
   const storagePct = ((stats.totalBytes / (5 * 1024 * 1024 * 1024)) * 100).toFixed(2);
+  const items = [];
+  if (stats.statusCount != null && stats.statusCount > 0) items.push(`${stats.statusCount} status changes`);
+  if (stats.weatherCount != null && stats.weatherCount > 0) items.push(`${stats.weatherCount} weather alerts`);
+  if (stats.emailCount != null && stats.emailCount > 0) items.push(`${stats.emailCount} emails`);
+  const details = items.length ? ` (${items.join(' · ')})` : '';
+
   return `🟢 **Active Storage Engine** — \`school-status-db\`\n` +
     `• **Daily Writes:** 100,000 / day (upgraded from 1,000)\n` +
     `• **Daily Reads:** 5,000,000 / day (upgraded from 100,000)\n` +
-    `• **Active Records:** ${stats.totalKeys.toLocaleString()} keys\n` +
+    `• **Active Records:** ${stats.totalKeys.toLocaleString()} keys${details}\n` +
     `• **Storage Used:** ${formatBytes(stats.totalBytes)} / 5 GB (${storagePct}%)\n` +
-    `> All bot operations automatically read and write via Cloudflare D1.`;
+    `> All status changes, weather delays, emails, and bot operations store in Cloudflare D1.`;
+}
+
+/**
+ * Ensures status history and weather events tables exist in D1 SQLite.
+ */
+export async function ensureStatusTables(db) {
+  if (!db) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS status_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        district_id TEXT NOT NULL DEFAULT 'hcpss',
+        status_key TEXT,
+        status_text TEXT,
+        status_date TEXT,
+        timestamp INTEGER NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_status_history_district_ts ON status_history(district_id, timestamp DESC)').run();
+
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS weather_events (
+        id TEXT PRIMARY KEY,
+        event TEXT NOT NULL,
+        severity TEXT,
+        headline TEXT,
+        description TEXT,
+        zone TEXT,
+        county TEXT,
+        effective INTEGER,
+        expires INTEGER,
+        timestamp INTEGER NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_weather_events_ts ON weather_events(timestamp DESC)').run();
+  } catch (err) {
+    console.error('ensureStatusTables error:', err);
+  }
+}
+
+/**
+ * Records an HCPSS or neighboring district status change into D1 SQLite.
+ */
+export async function recordStatusToD1(db, { districtId = 'hcpss', statusKey = '', statusText = '', statusDate = '', timestamp = Date.now() }) {
+  if (!db) return;
+  try {
+    await ensureStatusTables(db);
+    await db.prepare(`
+      INSERT INTO status_history (district_id, status_key, status_text, status_date, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(
+      String(districtId || 'hcpss'),
+      String(statusKey || ''),
+      String(statusText || ''),
+      String(statusDate || ''),
+      Number(timestamp) || Date.now()
+    ).run();
+  } catch (err) {
+    console.error('recordStatusToD1 error:', err);
+  }
+}
+
+/**
+ * Records an NWS weather alert or weather delay notice into D1 SQLite.
+ */
+export async function recordWeatherEventToD1(db, { id, event, severity = '', headline = '', description = '', zone = '', county = '', effective = 0, expires = 0, timestamp = Date.now() }) {
+  if (!db || !id) return;
+  try {
+    await ensureStatusTables(db);
+    await db.prepare(`
+      INSERT INTO weather_events (id, event, severity, headline, description, zone, county, effective, expires, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        event = excluded.event,
+        severity = excluded.severity,
+        headline = excluded.headline,
+        description = excluded.description,
+        zone = excluded.zone,
+        county = excluded.county,
+        effective = excluded.effective,
+        expires = excluded.expires,
+        timestamp = excluded.timestamp
+    `).bind(
+      String(id),
+      String(event || 'Weather Alert'),
+      String(severity || ''),
+      String(headline || ''),
+      String(description || ''),
+      String(zone || ''),
+      String(county || ''),
+      Number(effective) || 0,
+      Number(expires) || 0,
+      Number(timestamp) || Date.now()
+    ).run();
+  } catch (err) {
+    console.error('recordWeatherEventToD1 error:', err);
+  }
+}
+
+/**
+ * Retrieves recorded status history events from D1 SQLite.
+ */
+export async function getStatusHistoryFromD1(db, districtId = 'hcpss', limit = 20) {
+  if (!db) return [];
+  try {
+    await ensureStatusTables(db);
+    const res = await db.prepare(`
+      SELECT id, district_id, status_key, status_text, status_date, timestamp, created_at
+      FROM status_history
+      WHERE district_id = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).bind(String(districtId || 'hcpss'), Math.min(Number(limit) || 20, 100)).all();
+    return (res && Array.isArray(res.results)) ? res.results : [];
+  } catch (err) {
+    console.error('getStatusHistoryFromD1 error:', err);
+    return [];
+  }
+}
+
+/**
+ * Retrieves recorded weather events from D1 SQLite.
+ */
+export async function getWeatherEventsFromD1(db, limit = 20) {
+  if (!db) return [];
+  try {
+    await ensureStatusTables(db);
+    const res = await db.prepare(`
+      SELECT id, event, severity, headline, description, zone, county, effective, expires, timestamp, created_at
+      FROM weather_events
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).bind(Math.min(Number(limit) || 20, 100)).all();
+    return (res && Array.isArray(res.results)) ? res.results : [];
+  } catch (err) {
+    console.error('getWeatherEventsFromD1 error:', err);
+    return [];
+  }
 }
 
 /**

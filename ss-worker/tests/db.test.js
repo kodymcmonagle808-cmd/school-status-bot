@@ -9,16 +9,24 @@ import {
   formatBytes,
   recordEmailToD1,
   searchEmailsInD1,
-  getEmailStats
+  getEmailStats,
+  recordStatusToD1,
+  recordWeatherEventToD1,
+  getStatusHistoryFromD1,
+  getWeatherEventsFromD1
 } from '../src/db.js';
 
 function createMockD1() {
   const store = new Map(); // key -> { value, expires_at }
   const emailStore = new Map(); // `${id}:${guild_id}` -> emailRecord
+  const statusStore = []; // list of status events
+  const weatherStore = new Map(); // id -> weather event
 
   return {
     _store: store,
     _emailStore: emailStore,
+    _statusStore: statusStore,
+    _weatherStore: weatherStore,
     prepare(sql) {
       let bound = [];
       const stmt = {
@@ -38,6 +46,15 @@ function createMockD1() {
               totalBytes += (v.value || '').length;
             }
             return { total_keys: store.size, total_bytes: totalBytes };
+          }
+          if (sql.includes('FROM status_history')) {
+            return { cnt: statusStore.length };
+          }
+          if (sql.includes('FROM weather_events')) {
+            return { cnt: weatherStore.size };
+          }
+          if (sql.includes('FROM emails') && sql.includes('SELECT count(*) AS cnt')) {
+            return { cnt: emailStore.size };
           }
           if (sql.includes('COUNT(*) AS total')) {
             const [, , guildId] = bound;
@@ -69,6 +86,34 @@ function createMockD1() {
             store.delete(key);
             return { success: true };
           }
+          if (sql.includes('INSERT INTO status_history')) {
+            const [districtId, statusKey, statusText, statusDate, timestamp] = bound;
+            statusStore.unshift({
+              id: statusStore.length + 1,
+              district_id: districtId,
+              status_key: statusKey,
+              status_text: statusText,
+              status_date: statusDate,
+              timestamp
+            });
+            return { success: true };
+          }
+          if (sql.includes('INSERT INTO weather_events')) {
+            const [id, event, severity, headline, description, zone, county, effective, expires, timestamp] = bound;
+            weatherStore.set(id, {
+              id,
+              event,
+              severity,
+              headline,
+              description,
+              zone,
+              county,
+              effective,
+              expires,
+              timestamp
+            });
+            return { success: true };
+          }
           if (sql.includes('INSERT INTO emails')) {
             const [id, guildId, subject, body, channelId, messageId, ts, url, imageUrl, aiSummary] = bound;
             emailStore.set(`${id}:${guildId}`, {
@@ -88,6 +133,16 @@ function createMockD1() {
           return { success: true };
         },
         async all() {
+          if (sql.includes('FROM status_history')) {
+            const [districtId, limit] = bound;
+            const filtered = statusStore.filter(s => s.district_id === districtId).slice(0, limit);
+            return { results: filtered, success: true };
+          }
+          if (sql.includes('FROM weather_events')) {
+            const [limit] = bound;
+            const list = Array.from(weatherStore.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+            return { results: list, success: true };
+          }
           if (sql.includes('WHERE substr(key, 1, ?) = ?')) {
             const [, prefix, nowSec, limit] = bound;
             const results = [];
@@ -310,4 +365,68 @@ test('recordEmailToD1 and searchEmailsInD1: stores and queries announcements', a
   const stats = await getEmailStats(d1, 'g1');
   assert.equal(stats.total, 2);
   assert.equal(stats.past7Days, 2);
+});
+
+test('recordStatusToD1 and getStatusHistoryFromD1: records status changes into D1', async () => {
+  const d1 = createMockD1();
+  const now = Date.now();
+
+  await recordStatusToD1(d1, {
+    districtId: 'hcpss',
+    statusKey: 'closed',
+    statusText: 'Schools Closed due to Winter Storm',
+    statusDate: 'Monday, Feb 2',
+    timestamp: now
+  });
+
+  await recordStatusToD1(d1, {
+    districtId: 'hcpss',
+    statusKey: 'two_hour_delay',
+    statusText: 'Schools opening 2 hours late',
+    statusDate: 'Tuesday, Feb 3',
+    timestamp: now + 1000
+  });
+
+  const history = await getStatusHistoryFromD1(d1, 'hcpss', 5);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].status_key, 'two_hour_delay');
+  assert.equal(history[1].status_key, 'closed');
+});
+
+test('recordWeatherEventToD1 and getWeatherEventsFromD1: records weather delays and advisories into D1', async () => {
+  const d1 = createMockD1();
+  const now = Date.now();
+
+  await recordWeatherEventToD1(d1, {
+    id: 'nws-wwa-1',
+    event: 'Winter Weather Advisory',
+    severity: 'Moderate',
+    headline: 'Winter Weather Advisory issued for Howard County',
+    description: 'Snow expected. Total snow accumulations of 2 to 4 inches.',
+    zone: 'MDZ010',
+    county: 'Howard',
+    effective: now,
+    expires: now + 3600000,
+    timestamp: now
+  });
+
+  const events = await getWeatherEventsFromD1(d1, 5);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].id, 'nws-wwa-1');
+  assert.equal(events[0].event, 'Winter Weather Advisory');
+  assert.equal(events[0].county, 'Howard');
+});
+
+test('buildD1Section includes status changes, weather alerts, and emails breakdown', () => {
+  const stats = {
+    ok: true,
+    totalKeys: 150,
+    totalBytes: 204800,
+    statusCount: 12,
+    weatherCount: 5,
+    emailCount: 8
+  };
+  const section = buildD1Section(stats);
+  assert.match(section, /150 keys \(12 status changes · 5 weather alerts · 8 emails\)/);
+  assert.match(section, /100,000 \/ day/);
 });

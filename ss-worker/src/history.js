@@ -158,6 +158,22 @@ export async function trackStatusHistory(env, currentStatus, primaryDate, status
 
   await env.STATUS_KV.put(historyKey(districtId), JSON.stringify(history.slice(0, HISTORY_LIMIT)));
 
+  // Record into Cloudflare D1 status_history table when D1 database is bound
+  if (env && env.DB) {
+    try {
+      const { recordStatusToD1 } = await import('./db.js');
+      await recordStatusToD1(env.DB, {
+        districtId: districtId || 'hcpss',
+        statusKey: statusKey || '',
+        statusText: currentStatus,
+        statusDate: primaryDate,
+        timestamp: Date.now()
+      });
+    } catch (err) {
+      console.error('Failed to record status change to D1:', err);
+    }
+  }
+
   // Increment the all-time and per-school-year operating status counters
   if (statusKey && statusKey !== 'normal_operations') {
     if (!districtId || districtId === 'hcpss') {

@@ -431,6 +431,29 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
       // Mark before posting so a delayed cron tick can't double-post.
       await env.STATUS_KV.put(`nws_alerts_seen:${gid}`, JSON.stringify(updatedSeen));
 
+      // Record newly detected weather alerts and delays into Cloudflare D1
+      if (env && env.DB && newAlerts.length) {
+        try {
+          const { recordWeatherEventToD1 } = await import('./db.js');
+          for (const a of newAlerts) {
+            await recordWeatherEventToD1(env.DB, {
+              id: a.id || `${a.event}-${a.effective || nowMs}`,
+              event: a.event || 'Weather Alert',
+              severity: a.severity || '',
+              headline: a.headline || '',
+              description: a.description || '',
+              zone,
+              county,
+              effective: a.effective ? new Date(a.effective).getTime() : nowMs,
+              expires: a.expires ? new Date(a.expires).getTime() : 0,
+              timestamp: nowMs
+            });
+          }
+        } catch (err) {
+          console.error('Failed to record weather alert to D1:', err);
+        }
+      }
+
       const { emergency, routine } = splitEmergencyAlerts(newAlerts);
       // Both branches below may amend the map that was just written; they share
       // one rewrite at the end so a scan still costs at most two writes.
