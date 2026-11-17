@@ -7,7 +7,7 @@ import {
   canMemberExecuteCommand
 } from '../src/config.js';
 
-import { buildOwnerPermsPayload } from '../src/panelcomponents.js';
+import { buildOwnerPermsPayload, handlePanelComponent } from '../src/panelcomponents.js';
 
 function makeKv(store = {}) {
   const map = new Map(Object.entries(store));
@@ -128,4 +128,109 @@ test('buildOwnerPermsPayload: builds rich embed with select menus and action but
   assert.ok(payload.embeds && payload.embeds.length === 1);
   assert.match(payload.embeds[0].title, /Command Access & Permissions/);
   assert.ok(payload.components.length >= 3);
+
+  // CRITICAL: Ensure every component custom_id is completely unique (Discord rejects duplicates)
+  const customIds = [];
+  for (const row of payload.components) {
+    for (const comp of row.components) {
+      assert.ok(comp.custom_id, 'Component must have custom_id');
+      assert.ok(!customIds.includes(comp.custom_id), `Duplicate custom_id found: ${comp.custom_id}`);
+      customIds.push(comp.custom_id);
+    }
+  }
+  assert.ok(customIds.includes('cfg_owner_perm_toggle_g1:guild-123'));
+  assert.ok(customIds.includes('cfg_owner_perm_toggle_g2:guild-123'));
+});
+
+test('handlePanelComponent: panel_owner_perms_select returns type 7 and updates message', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'panel_owner_perms_select',
+      values: ['guild-123']
+    }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  assert.ok(resp);
+  const json = await resp.json();
+  assert.equal(json.type, 7, 'Must return type 7 (UPDATE_MESSAGE) to edit ephemeral message in-place');
+  assert.ok(json.data.embeds);
+  assert.match(json.data.embeds[0].title, /guild-123/);
+});
+
+test('handlePanelComponent: toggling general command g1 flips tier and returns type 7', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'cfg_owner_perm_toggle_g1:guild-123',
+      values: ['status'] // general default is everyone -> next tier is staff
+    }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+
+  // Check KV was updated
+  const saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions.status, 'staff');
+});
+
+test('handlePanelComponent: toggling admin command g2 flips tier and returns type 7', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'cfg_owner_perm_toggle_g2:guild-123',
+      values: ['post-status'] // admin default is staff -> next tier is everyone
+    }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+
+  const saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions['post-status'], 'everyone');
+});
+
+test('handlePanelComponent: quick action buttons (all staff, reset) return type 7', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+
+  // Lock all to staff
+  const staffBody = {
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_perms_all_staff:guild-123' }
+  };
+  const staffResp = await handlePanelComponent(staffBody, env, null, 'guild-123');
+  const staffJson = await staffResp.json();
+  assert.equal(staffJson.type, 7);
+  let saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions.status, 'staff');
+
+  // Reset defaults
+  const resetBody = {
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_perms_reset_defaults:guild-123' }
+  };
+  const resetResp = await handlePanelComponent(resetBody, env, null, 'guild-123');
+  const resetJson = await resetResp.json();
+  assert.equal(resetJson.type, 7);
+  saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions, undefined);
 });

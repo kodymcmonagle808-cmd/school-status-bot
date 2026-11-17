@@ -116,7 +116,7 @@ export function buildOwnerPermsPayload(targetGuildId, config = {}) {
       type: 1,
       components: [{
         type: 3,
-        custom_id: `cfg_owner_perm_toggle:${targetGuildId}`,
+        custom_id: `cfg_owner_perm_toggle_g1:${targetGuildId}`,
         placeholder: '🌐 General Commands: Click to toggle Everyone ↔ Staff...',
         options: generalCmds.map(c => {
           const tier = getCommandTier(cfg, c.name);
@@ -137,7 +137,7 @@ export function buildOwnerPermsPayload(targetGuildId, config = {}) {
       type: 1,
       components: [{
         type: 3,
-        custom_id: `cfg_owner_perm_toggle:${targetGuildId}`,
+        custom_id: `cfg_owner_perm_toggle_g2:${targetGuildId}`,
         placeholder: '🛡️ Staff Commands: Click to toggle Staff ↔ Everyone...',
         options: adminCmds.map(c => {
           const tier = getCommandTier(cfg, c.name);
@@ -256,10 +256,14 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const targetGuildId = values[0];
     const config = await getConfig(env, targetGuildId);
     
-    return interactionResponse(buildOwnerPermsPayload(targetGuildId, config));
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
   }
 
-  if (customId.startsWith('cfg_owner_perm_toggle:') || customId.startsWith('cfg_owner_perms_save_g1:') || customId.startsWith('cfg_owner_perms_save_g2:')) {
+  if (customId.startsWith('cfg_owner_perm_toggle:') ||
+      customId.startsWith('cfg_owner_perm_toggle_g1:') ||
+      customId.startsWith('cfg_owner_perm_toggle_g2:') ||
+      customId.startsWith('cfg_owner_perms_save_g1:') ||
+      customId.startsWith('cfg_owner_perms_save_g2:')) {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });

@@ -624,8 +624,8 @@ export async function handleInteraction(body, env, ctx) {
     });
   }
 
-  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && body.data.custom_id.startsWith('panel_') && body.data.custom_id !== 'panel_trigger_test_alert') {
-    const isOwnerPanel = body.data.custom_id.startsWith('panel_owner_');
+  if (body.type === 3 && body.data && typeof body.data.custom_id === 'string' && (body.data.custom_id.startsWith('panel_') || body.data.custom_id.startsWith('cfg_owner_')) && body.data.custom_id !== 'panel_trigger_test_alert') {
+    const isOwnerPanel = body.data.custom_id.startsWith('panel_owner_') || body.data.custom_id.startsWith('cfg_owner_');
     if (!isOwnerPanel && !(await canUseCommands(body.member, env, guildId))) {
       return interactionResponse({
         content: 'You do not have permission to use the control panel.',
