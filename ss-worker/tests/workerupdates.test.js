@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatWorkerUpdates, buildOwnerStatsFields, buildWorkerUpdatesPayload } from '../src/panel.js';
+import { formatWorkerUpdates, buildOwnerStatsFields, buildWorkerUpdatesPayload, fetchCloudflareDeployments } from '../src/panel.js';
 
 test('formatWorkerUpdates handles an empty or missing list', () => {
   assert.match(formatWorkerUpdates([]), /No worker updates recorded yet/);
@@ -127,4 +127,86 @@ test('buildOwnerStatsFields degrades cleanly with no data at all', () => {
   assert.equal(fieldValue(fields, 'Deploys recorded'), '(none yet)');
   assert.equal(fieldValue(fields, 'Scrapes'), '(none yet)');
   assert.equal(fieldValue(fields, 'Last check'), '(none yet)');
+});
+
+test('fetchCloudflareDeployments parses Cloudflare deployment API response', async (t) => {
+  const origFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = origFetch; });
+
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/deployments')) {
+      return new Response(JSON.stringify({
+        success: true,
+        result: [
+          {
+            id: 'b89f614b-325d-444b-952d-8fe26532d20d',
+            created_on: '2026-11-16T22:30:00.000Z',
+            annotations: {
+              'workers/message': 'feat: update owner panel',
+              'workers/triggered_by': 'workers_builds'
+            },
+            versions: [{ version_id: 'c17822ae-88ef-41bc-b5b6-76402434f412' }]
+          }
+        ]
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(null, { status: 404 });
+  };
+
+  const env = {
+    CF_API_TOKEN: 'fake-token',
+    CF_ACCOUNT_ID: 'fake-acct',
+    STATUS_KV: kvStub({})
+  };
+
+  const deployments = await fetchCloudflareDeployments(env);
+  assert.ok(Array.isArray(deployments));
+  assert.equal(deployments.length, 1);
+  assert.equal(deployments[0].sha, 'c17822a');
+  assert.equal(deployments[0].trigger, 'workers_builds');
+  assert.equal(deployments[0].message, 'feat: update owner panel');
+
+  const formatted = formatWorkerUpdates(deployments, true);
+  assert.match(formatted, /c17822a/);
+  assert.match(formatted, /workers_builds/);
+  assert.match(formatted, /feat: update owner panel/);
+});
+
+test('buildWorkerUpdatesPayload renders Cloudflare Deployments heading when CF configured', async (t) => {
+  const origFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = origFetch; });
+
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/deployments')) {
+      return new Response(JSON.stringify({
+        success: true,
+        result: [
+          {
+            id: 'b89f614b-325d-444b-952d-8fe26532d20d',
+            created_on: '2026-11-16T22:30:00.000Z',
+            annotations: {
+              'workers/message': 'feat: update owner panel',
+              'workers/triggered_by': 'workers_builds'
+            },
+            versions: [{ version_id: 'c17822ae-88ef-41bc-b5b6-76402434f412' }]
+          }
+        ]
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(null, { status: 404 });
+  };
+
+  const env = {
+    CF_API_TOKEN: 'fake-token',
+    CF_ACCOUNT_ID: 'fake-acct',
+    STATUS_KV: kvStub({
+      guild_index: JSON.stringify([])
+    }),
+    DISCORD_BOT_TOKEN: 'token'
+  };
+
+  const payload = await buildWorkerUpdatesPayload(env);
+  const desc = payload.embeds[0].description;
+  assert.match(desc, /### ⛅ Cloudflare Deployments \(Workers Builds\)/);
+  assert.match(desc, /c17822a/);
 });

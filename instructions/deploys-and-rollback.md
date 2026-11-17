@@ -2,19 +2,12 @@
 
 ## How a deploy happens
 
-Every push to `main` runs `Deploy SS Worker`
-(`.github/workflows/deploy_worker.yml`): lint → tests → deploy script
-(uploads secrets, registers slash commands, `wrangler deploy`). Deploys are
-**serialized** — if several land at once they queue instead of racing.
+Every push to `main` is automatically built and deployed by **Cloudflare Workers Builds** (connected directly to the GitHub repository).
 
-Every run (success or failure) is recorded and shown on the control panel's
-🚀 **Worker Updates** page (owner-only), including the currently running
-version. A ⚠️ drift warning there means the last deploy failed and the old
-version is still live.
+Every deployment is tracked via Cloudflare's Deployments API and shown on the control panel's
+🚀 **Worker Updates** page (owner-only), under **⛅ Cloudflare Deployments (Workers Builds)**, including the active deployment version, timestamp, triggers, and commit messages.
 
-If a deploy fails, the bot posts ❌ **Worker deploy failed** in the log
-channel; the previous version keeps running — a failed deploy never takes
-the bot down.
+If a deploy fails during the Cloudflare build, the previous deployment version remains running — a failed build never takes the bot down.
 
 ## Roll back a bad deploy
 

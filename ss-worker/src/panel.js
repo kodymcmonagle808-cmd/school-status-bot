@@ -283,21 +283,92 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   return { embeds: [embed], components };
 }
 
-// The deploy workflow prepends an entry to the global `worker_updates` KV key
-// after every run on main: { sha, ok, ts }. Global, not per-guild — deploys
-// affect every server — so it is not part of guildKeys() cleanup.
-export function formatWorkerUpdates(list) {
+// Format deploy entries for the owner updates page. Supports both Cloudflare
+// Deployments (Workers Builds) and legacy worker_updates KV entries.
+export function formatWorkerUpdates(list, isCloudflare = false) {
   const entries = Array.isArray(list) ? list.filter(e => e && e.sha).slice(0, 15) : [];
   if (entries.length === 0) {
+    if (isCloudflare) {
+      return '⚡ Active via **Cloudflare Workers Builds** (connected to GitHub `main`).\nCommits pushed to `main` automatically build and deploy live.';
+    }
     return 'No worker updates recorded yet. Each deploy to `main` will appear here.';
   }
   return entries.map(e => {
     const when = Number(e.ts) > 0 ? `<t:${Math.floor(Number(e.ts) / 1000)}:f>` : 'unknown time';
     const tag = e.rollback ? ' ↩️ rollback' : '';
+    const trigger = e.trigger ? ` · via \`${e.trigger}\`` : (e.isCloudflare ? ' · via `Cloudflare Builds`' : '');
+    const note = e.message ? `\n> 💬 *${String(e.message).slice(0, 70)}*` : '';
     return e.ok
-      ? `✅ \`${e.sha}\` — deployed ${when}${tag}`
-      : `❌ \`${e.sha}\` — **failed** ${when}${tag} (previous version still running)`;
+      ? `✅ \`${e.sha}\` — deployed ${when}${trigger}${tag}${note}`
+      : `❌ \`${e.sha}\` — **failed** ${when}${trigger}${tag}${note} (previous version still running)`;
   }).join('\n');
+}
+
+// Queries Cloudflare REST API for live Worker deployments (Workers Builds)
+export async function fetchCloudflareDeployments(env) {
+  const token = env?.CF_API_TOKEN;
+  const account = env?.CF_ACCOUNT_ID;
+  const service = env?.WORKER_SERVICE_NAME || 'ss-worker';
+  if (!token || !account) {
+    return null;
+  }
+
+  const cacheKey = 'cf_deployments_cache';
+  try {
+    const cached = await env.STATUS_KV?.get(cacheKey);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch {}
+
+  try {
+    let resp = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${service}/deployments`, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+    if (resp.status === 404) {
+      resp = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/services/${service}/environments/production/deployments`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+    }
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (!json || json.success === false) return null;
+
+    const list = Array.isArray(json.result)
+      ? json.result
+      : (Array.isArray(json.result?.deployments) ? json.result.deployments : []);
+
+    const deployments = list.map(d => {
+      const createdOn = d.created_on || d.created_at || '';
+      const ts = createdOn ? new Date(createdOn).getTime() : 0;
+      const msg = d.annotations?.['workers/message'] || d.annotations?.message || '';
+      const trigger = d.annotations?.['workers/triggered_by'] || d.annotations?.triggered_by || 'Cloudflare';
+      const versionId = d.versions?.[0]?.version_id || d.id || '';
+      const rawId = (versionId || d.id || '').replace(/-/g, '');
+      const sha = rawId.slice(0, 7);
+      return {
+        sha,
+        id: d.id,
+        ok: true,
+        ts,
+        message: msg,
+        trigger,
+        author: d.author_email || '',
+        isCloudflare: true
+      };
+    }).filter(d => d.sha);
+
+    if (deployments.length > 0) {
+      if (env.STATUS_KV?.put) {
+        await env.STATUS_KV.put(cacheKey, JSON.stringify(deployments), { expirationTtl: 120 }).catch(() => {});
+      }
+      return deployments;
+    }
+  } catch (e) {
+    console.error('Failed to fetch Cloudflare deployments:', e);
+  }
+  return null;
 }
 
 // Owner-only operational stats shown under the deploy list. Pure so tests can
@@ -519,13 +590,22 @@ export async function buildWorkerUpdatesPayload(env) {
         { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false }
       ];
 
+  let cfDeployments = null;
+  try {
+    cfDeployments = await fetchCloudflareDeployments(env);
+  } catch {}
+
+  const activeUpdates = (cfDeployments && cfDeployments.length) ? cfDeployments : updates;
+  const isCf = Boolean(cfDeployments && cfDeployments.length) || Boolean(env.CF_API_TOKEN && env.CF_ACCOUNT_ID);
+  const sectionHeading = isCf ? '### ⛅ Cloudflare Deployments (Workers Builds)' : '### Recent deploys to `main`';
+
   const embed = {
     title: '🚀 Control Panel — Worker Updates',
     color: 0x9B59B6,
-    description: `### Recent deploys to \`main\`\n${formatWorkerUpdates(updates)}`,
+    description: `${sectionHeading}\n${formatWorkerUpdates(activeUpdates, isCf)}`,
     fields: buildOwnerStatsFields({
-      runningSha: env.GIT_SHA || '',
-      updates,
+      runningSha: env.GIT_SHA || (activeUpdates?.[0]?.sha || ''),
+      updates: activeUpdates,
       guildCount,
       scrapesTotal: stats.scrapes_total,
       scrapesFailed: stats.scrapes_failed,

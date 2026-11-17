@@ -1289,6 +1289,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     // The owner panel is delivered as an ephemeral follow-up in the DM. This
     // button lives on that follow-up, so a type-7 response edits it in place
     // with freshly-read stats — no new message, no log write.
+    await env.STATUS_KV?.delete('cf_deployments_cache').catch(() => {});
     const payload = await buildWorkerUpdatesPayload(env);
     return jsonResponse({ type: 7, data: payload });
   }
