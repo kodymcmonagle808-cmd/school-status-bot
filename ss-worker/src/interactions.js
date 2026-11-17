@@ -34,6 +34,7 @@ import {
   runEventsCommand,
   runTermsCommand,
   runPrivacyCommand,
+  runWidgetCommand,
   runStatusCommand,
   runHelpCommand,
   runSnowdayCommand,
@@ -215,6 +216,7 @@ export async function handleInteraction(body, env, ctx) {
 
     if (name === 'terms') return interactionResponse(runTermsCommand());
     if (name === 'privacy') return interactionResponse(runPrivacyCommand());
+    if (name === 'widget') return interactionResponse(runWidgetCommand(env));
     if (name === 'help') return interactionResponse(runHelpCommand());
     if (name === 'notify') return interactionResponse(await runNotifyCommand(body, env));
     if (name === 'myschool') return interactionResponse(await runMySchoolCommand(body, env));

@@ -632,6 +632,13 @@ payload=$(jq -n '[
         autocomplete: true
       }
     ]
+  },
+  {
+    name: "widget",
+    description: "Instructions and code to set up live school status widgets on iPhone / iOS.",
+    type: 1,
+    integration_types: [0, 1],
+    contexts: [0, 1, 2]
   }
 ]')
 

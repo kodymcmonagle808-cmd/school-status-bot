@@ -96,6 +96,71 @@ export function runPrivacyCommand() {
   };
 }
 
+export function runWidgetCommand(env = {}) {
+  const baseUrl = (env && env.PUBLIC_BASE_URL) || 'https://ss-worker.kodymcmonagle808.workers.dev';
+  const apiUrl = `${baseUrl}/api/status`;
+
+  const scriptableSnippet = `// HCPSS Status Widget for Scriptable (iOS)
+const req = new Request("${apiUrl}");
+const data = await req.loadJSON();
+
+let w = new ListWidget();
+w.backgroundColor = new Color("#1e1f22");
+
+let t1 = w.addText("🏫 " + (data.districtName || "HCPSS Status"));
+t1.font = Font.boldSystemFont(12);
+t1.textColor = new Color("#949ba4");
+
+w.addSpacer(4);
+let t2 = w.addText(data.statusText || "Normal Operations");
+t2.font = Font.boldSystemFont(16);
+t2.textColor = (data.status === "schools_closed" || data.status === "schools_and_offices_closed") 
+  ? new Color("#ed4245") 
+  : new Color("#57f287");
+
+w.addSpacer(4);
+let t3 = w.addText(data.abDay ? ("Today: " + data.abDay + " Day") : "Regular Schedule");
+t3.font = Font.systemFont(13);
+t3.textColor = new Color("#dbdee1");
+
+Script.setWidget(w);
+Script.complete();`;
+
+  return {
+    embeds: [{
+      title: '📱 iOS / iPhone Live School Status Widget Setup',
+      color: 0x3498DB,
+      description:
+        `Track live school operating status and A/B days right from your iPhone Home Screen or Lock Screen!\n\n` +
+        `**📡 Live API Endpoint:**\n` +
+        `\`${apiUrl}\`\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `### 🚀 Method 1: Apple Shortcuts (No Apps to Install!)\n` +
+        `1. Open the built-in **Shortcuts** app on your iPhone and tap **+** (New Shortcut).\n` +
+        `2. Add action: **Get Contents of URL** ➔ enter \`${apiUrl}\`\n` +
+        `3. Add action: **Get Dictionary Value** ➔ Key: \`statusText\`\n` +
+        `4. Add action: **Show Result** (or **Show Notification**).\n` +
+        `5. On your Home Screen, touch & hold ➔ tap **+** top-left ➔ search **Shortcuts** ➔ add your widget!\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `### ⚡ Method 2: Scriptable App (Live Home Screen Widget)\n` +
+        `1. Download **[Scriptable](https://apps.apple.com/app/scriptable/id1405459188)** from the App Store (Free).\n` +
+        `2. Open Scriptable, tap **+**, paste the code below, and name it **HCPSS Status**:\n` +
+        `\`\`\`javascript\n${scriptableSnippet}\n\`\`\`\n` +
+        `3. On your Home Screen, touch & hold ➔ tap **+** ➔ add a **Scriptable** widget.\n` +
+        `4. Tap the widget in jiggle mode ➔ choose **HCPSS Status** as the script.\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `### 🎨 Method 3: Widgy Widgets App\n` +
+        `1. Download **[Widgy Widgets](https://apps.apple.com/app/widgy-widgets/id1524540481)** from the App Store.\n` +
+        `2. Add a Text layer ➔ set Data to **External JSON** with URL: \`${apiUrl}\`\n` +
+        `3. Select the key \`statusText\` or \`abDayLine\`.\n\n` +
+        `*Updates automatically from official school status feeds.*`,
+      footer: { text: 'School Status · iPhone Widget Guide' },
+      timestamp: new Date().toISOString()
+    }],
+    flags: EPHEMERAL_FLAG
+  };
+}
+
 // Deferred: scrapes the live status page and edits the ephemeral response.
 export async function runStatusCommand(body, env) {
   const guildId = body.guild_id || '';
@@ -131,6 +196,7 @@ export function runHelpCommand() {
         '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
         '• `/myschool` — register your school to get DMed when a notice mentions it\n' +
         '• `/searchemails` — search through archived school announcement emails\n' +
+        '• `/widget` — set up live school status on your iPhone / iOS Home Screen\n' +
         '• `/requestannouncement` — submit an announcement request (summary + optional story link) to staff\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
         '**Buttons on status posts:**\n' +

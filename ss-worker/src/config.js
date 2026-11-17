@@ -122,6 +122,7 @@ export const ALL_COMMANDS_META = [
   { name: 'searchemails', label: '/searchemails', category: 'general', defaultTier: 'everyone', description: 'Search archived school emails' },
   { name: 'terms', label: '/terms', category: 'general', defaultTier: 'everyone', description: 'Terms and Conditions' },
   { name: 'privacy', label: '/privacy', category: 'general', defaultTier: 'everyone', description: 'Privacy Policy' },
+  { name: 'widget', label: '/widget', category: 'general', defaultTier: 'everyone', description: 'Setup live school status widget on iPhone / iOS' },
   { name: 'help', label: '/help', category: 'general', defaultTier: 'everyone', description: 'Command list & help' },
 
   // Staff & Admin Commands (default: staff)
