@@ -138,6 +138,7 @@ export const ALL_COMMANDS_META = [
   { name: 'dankstaffsetup', label: '/dankstaffsetup', category: 'admin', defaultTier: 'staff', description: 'Dank Memer application channel' },
   { name: 'staffappsetup', label: '/staffappsetup', category: 'admin', defaultTier: 'staff', description: 'Staff application review channel' },
   { name: 'social-link', label: '/social-link', category: 'admin', defaultTier: 'staff', description: 'Social media webhook generator' },
+  { name: 'backup-db', label: '/backup-db', category: 'admin', defaultTier: 'staff', description: 'Snapshot Cloudflare D1 database to R2' },
   { name: 'mydata', label: '/mydata', category: 'admin', defaultTier: 'staff', description: 'View or erase server stored data' }
 ];
 

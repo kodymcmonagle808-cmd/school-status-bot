@@ -94,7 +94,7 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && body.data.name) {
     const cmdName = body.data.name;
-    if (cmdName !== 'ownerpanel' && cmdName !== 'ownerpannel' && cmdName !== 'emergency' && cmdName !== 'emergencyleave') {
+    if (cmdName !== 'ownerpanel' && cmdName !== 'ownerpannel' && cmdName !== 'emergency' && cmdName !== 'emergencyleave' && cmdName !== 'backup-db' && cmdName !== 'backupdb') {
       const config = await getConfig(env, guildId);
       const disabled = Array.isArray(config.disabled_commands) ? config.disabled_commands : [];
       if (disabled.includes(cmdName)) {
@@ -262,7 +262,28 @@ export async function handleInteraction(body, env, ctx) {
       return deferredInteractionResponse(true);
     }
 
-    if (name !== 'ownerpanel' && name !== 'emergency' && name !== 'emergencyleave') {
+    if (name === 'backup-db' || name === 'backupdb') {
+      const ownerId = String(env.OWNER_ID || '').trim();
+      const invokerId = getInvokerId(body);
+      if (!ownerId || invokerId !== ownerId) {
+        return interactionResponse({ content: '🔒 Only the bot owner can use this command.', flags: EPHEMERAL_FLAG });
+      }
+      ctx.waitUntil((async () => {
+        try {
+          const { runD1Backup } = await import('./backup.js');
+          const res = await runD1Backup(env);
+          await updateInteractionOriginal(env, body.token, {
+            content: `✅ **Cloudflare D1 Database Backup Complete!**\n• Stored to R2 bucket: \`${res.filename}\`\n• **${res.records} total records** backed up (${res.counts.statusHistory} status changes, ${res.counts.weatherEvents} weather alerts, ${res.counts.emails} emails).`
+          });
+        } catch (e) {
+          console.error('backup-db failed:', e);
+          await updateInteractionOriginal(env, body.token, { content: '❌ Failed to backup database: ' + e.message });
+        }
+      })());
+      return deferredInteractionResponse(true);
+    }
+
+    if (name !== 'ownerpanel' && name !== 'emergency' && name !== 'emergencyleave' && name !== 'backup-db' && name !== 'backupdb') {
       const check = await canMemberExecuteCommand(name, body.member, env, guildId);
       if (!check.allowed) {
         return interactionResponse({

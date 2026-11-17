@@ -315,6 +315,13 @@ payload=$(jq -n '[
     contexts: [0]
   },
   {
+    name: "backup-db",
+    description: "Snapshot Cloudflare D1 database to R2 backup bucket (bot owner only).",
+    type: 1,
+    integration_types: [0],
+    contexts: [0]
+  },
+  {
     name: "social-link",
     description: "Generate a webhook URL to forward Facebook/Instagram posts via IFTTT or Make.com",
     type: 1,

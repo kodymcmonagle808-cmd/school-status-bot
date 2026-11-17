@@ -101,6 +101,89 @@ export async function runKvBackup(env) {
 }
 
 /**
+ * Runs a full D1 SQL database export and writes the snapshot to the Cloudflare R2 bucket.
+ */
+export async function runD1Backup(env) {
+  if (!env || !env.DB || !env.BACKUPS_BUCKET) {
+    throw new Error('DB and BACKUPS_BUCKET must be bound to run D1 backup');
+  }
+
+  const [statuses, weather, emails] = await Promise.all([
+    env.DB.prepare('SELECT * FROM status_history ORDER BY id ASC').all().then(r => r?.results || []).catch(() => []),
+    env.DB.prepare('SELECT * FROM weather_events ORDER BY timestamp ASC').all().then(r => r?.results || []).catch(() => []),
+    env.DB.prepare('SELECT * FROM emails ORDER BY ts ASC').all().then(r => r?.results || []).catch(() => [])
+  ]);
+
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const totalRecords = statuses.length + weather.length + emails.length;
+
+  const backupData = {
+    exportedAt: now.toISOString(),
+    totalRecords,
+    counts: {
+      statusHistory: statuses.length,
+      weatherEvents: weather.length,
+      emails: emails.length
+    },
+    tables: {
+      status_history: statuses,
+      weather_events: weather,
+      emails
+    }
+  };
+
+  const payload = JSON.stringify(backupData, null, 2);
+  const datedFilename = `d1_backup_${todayStr}.json`;
+
+  await env.BACKUPS_BUCKET.put(datedFilename, payload, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: {
+      exportedAt: backupData.exportedAt,
+      totalRecords: String(totalRecords)
+    }
+  });
+
+  await env.BACKUPS_BUCKET.put('d1_backup_latest.json', payload, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: {
+      exportedAt: backupData.exportedAt,
+      totalRecords: String(totalRecords)
+    }
+  });
+
+  logAction(`💾 Backed up ${totalRecords} D1 database records to Cloudflare R2 (${datedFilename})`);
+
+  // Prune D1 backups older than 90 days
+  try {
+    const listed = await env.BACKUPS_BUCKET.list({ prefix: 'd1_backup_' });
+    if (listed && listed.objects) {
+      const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+      const cutoff = now.getTime() - ninetyDaysMs;
+
+      for (const obj of listed.objects) {
+        if (obj.key === 'd1_backup_latest.json') continue;
+        if (obj.uploaded && new Date(obj.uploaded).getTime() < cutoff) {
+          await env.BACKUPS_BUCKET.delete(obj.key);
+          console.log(`Pruned old D1 R2 backup: ${obj.key}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to prune old D1 R2 backups:', err);
+  }
+
+  return {
+    ok: true,
+    filename: datedFilename,
+    records: totalRecords,
+    counts: backupData.counts,
+    exportedAt: backupData.exportedAt,
+    backupData
+  };
+}
+
+/**
  * Scheduled check: runs on Mondays (UTC) if not already run today.
  */
 export async function maybeRunKvBackup(env) {
@@ -115,7 +198,11 @@ export async function maybeRunKvBackup(env) {
   if (lastRun === todayStr) return null;
 
   try {
-    return await runKvBackup(env);
+    const kvResult = await runKvBackup(env);
+    if (env.DB) {
+      await runD1Backup(env).catch(e => console.error('Weekly D1 backup failed:', e));
+    }
+    return kvResult;
   } catch (err) {
     console.error('Scheduled KV backup to R2 failed:', err);
     logAction(`Scheduled KV backup to R2 failed: ${err && err.message ? err.message : err}`, { level: 'error' });

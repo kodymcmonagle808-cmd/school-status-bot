@@ -6,7 +6,7 @@ import {
   pickNewAlerts, formatIssuanceLines, issuanceEmbedColor, shouldScanThisMinute, SCAN_MINUTE_OFFSET,
   maybeCleanupExpiredAlertNotices, isNoticeCleanupMinute, CLEANUP_MINUTE_OFFSET,
   maybeSendWeatherAlertNotices, splitEmergencyAlerts, buildEmergencyMessage, emergencyActionLine,
-  recordNotice
+  recordNotice, shouldIncludeRadarImage, getLiveRadarImageUrl
 } from '../src/weatheralerts.js';
 import worker from '../src/index.js';
 
@@ -1408,4 +1408,33 @@ test('/refresh-hook acks but touches nothing when no alert is active', async (t)
 test('clearWeatherAlertCache never throws without KV', async () => {
   await clearWeatherAlertCache(null, 'MDC027');
   await clearWeatherAlertCache({}, 'MDC031');
+});
+
+test('shouldIncludeRadarImage: identifies precipitation and severe convective alerts', () => {
+  assert.equal(shouldIncludeRadarImage([{ event: 'Winter Storm Warning' }]), true);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Tornado Warning' }]), true);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Severe Thunderstorm Warning' }]), true);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Flash Flood Warning' }]), true);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Winter Weather Advisory' }]), true);
+  // Non-radar events
+  assert.equal(shouldIncludeRadarImage([{ event: 'Heat Advisory' }]), false);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Excessive Heat Warning' }]), false);
+  assert.equal(shouldIncludeRadarImage([{ event: 'Air Quality Alert' }]), false);
+});
+
+test('getLiveRadarImageUrl: returns live NOAA radar GIF loop URL', () => {
+  assert.equal(getLiveRadarImageUrl('KLWX'), 'https://radar.weather.gov/ridge/standard/KLWX_loop.gif');
+  assert.equal(getLiveRadarImageUrl(''), 'https://radar.weather.gov/ridge/standard/KLWX_loop.gif');
+  assert.equal(getLiveRadarImageUrl('kdoz'), 'https://radar.weather.gov/ridge/standard/KDOZ_loop.gif');
+});
+
+test('buildEmergencyMessage: includes live radar loop for severe storms and winter emergencies', () => {
+  const msg = buildEmergencyMessage([{ event: 'Tornado Warning', severity: 'Extreme' }], { county: 'Howard' });
+  assert.ok(msg);
+  assert.ok(msg.embeds[0].image);
+  assert.equal(msg.embeds[0].image.url, 'https://radar.weather.gov/ridge/standard/KLWX_loop.gif');
+
+  // Radar can be explicitly turned off
+  const noRadar = buildEmergencyMessage([{ event: 'Tornado Warning', severity: 'Extreme' }], { county: 'Howard', radar: false });
+  assert.equal(noRadar.embeds[0].image, undefined);
 });

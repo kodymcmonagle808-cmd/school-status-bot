@@ -217,6 +217,25 @@ export function splitEmergencyAlerts(alerts) {
 // The full Discord message payload for an emergency alert. Pure for tests.
 //
 // Deliberately loud: an @everyone ping, an H1 banner and an H2 action line in
+/**
+ * Determines whether a set of weather alerts involves precipitation or severe convection
+ * that warrants attaching a live NOAA animated radar loop.
+ */
+export function shouldIncludeRadarImage(alerts) {
+  const list = (Array.isArray(alerts) ? alerts : [alerts]).filter(Boolean);
+  const radarRegex = /winter|snow|blizzard|ice|thunderstorm|tornado|flood|storm|hail|squall/i;
+  return list.some(a => a && radarRegex.test(a.event || ''));
+}
+
+/**
+ * Returns the official live NOAA animated radar loop for a given NWS radar station.
+ * Defaults to KLWX (Sterling / Baltimore-Washington, covering Central MD).
+ */
+export function getLiveRadarImageUrl(station = 'KLWX') {
+  const cleanStation = String(station || 'KLWX').trim().toUpperCase();
+  return `https://radar.weather.gov/ridge/standard/${cleanStation}_loop.gif`;
+}
+
 // the message content (Discord renders markdown headings there, which is the
 // only way to make text physically larger than a normal post), and a pure-red
 // embed under it. The heading text carries the event and the action even for
@@ -249,6 +268,10 @@ export function buildEmergencyMessage(alerts, opts = {}) {
     timestamp: nowIso,
     footer: { text: `${footer} · via National Weather Service` }
   };
+
+  if (opts.radar !== false && shouldIncludeRadarImage(list)) {
+    embed.image = { url: getLiveRadarImageUrl(opts.radarStation || 'KLWX') };
+  }
 
   const instructions = list.map(a => (a.instruction || '').trim()).filter(Boolean).join('\n\n');
   if (instructions) {
@@ -502,17 +525,23 @@ export async function maybeSendWeatherAlertNotices(env, now = new Date(), opts =
         const pingRoleIds = pingRolesForAlerts(cfg, routine);
         const content = pingRoleIds.length ? pingRoleIds.map(id => `<@&${id}>`).join(' ') : '';
 
+        const routineEmbed = {
+          title,
+          url: 'https://alerts.weather.gov',
+          color: issuanceEmbedColor(routine),
+          description: formatIssuanceLines(routine) +
+            '\n\nNo decision has been announced — this is the weather alert schools watch. Status posts will follow if anything changes.',
+          timestamp: now.toISOString(),
+          footer: { text: `${cfg.alert_embed_footer || 'School Status'} · via National Weather Service` }
+        };
+
+        if (cfg.toggle_radar_image !== false && shouldIncludeRadarImage(routine)) {
+          routineEmbed.image = { url: getLiveRadarImageUrl(cfg.radar_station || 'KLWX') };
+        }
+
         const posted = await postNotice(env, cfg.alert_channel_id, {
           ...(content ? { content } : {}),
-          embeds: [{
-            title,
-            url: 'https://alerts.weather.gov',
-            color: issuanceEmbedColor(routine),
-            description: formatIssuanceLines(routine) +
-              '\n\nNo decision has been announced — this is the weather alert schools watch. Status posts will follow if anything changes.',
-            timestamp: now.toISOString(),
-            footer: { text: `${cfg.alert_embed_footer || 'School Status'} · via National Weather Service` }
-          }],
+          embeds: [routineEmbed],
           allowed_mentions: { parse: [], roles: pingRoleIds }
         });
         if (posted === null) {

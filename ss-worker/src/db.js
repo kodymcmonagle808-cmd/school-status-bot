@@ -510,18 +510,34 @@ export async function recordEmailToD1(db, { id, guildId, subject, body, channelI
  * Searches the D1 email archive for matching subjects or content.
  */
 export async function searchEmailsInD1(db, guildId, query, limit = 5) {
-  if (!db || !guildId || !query) return [];
+  if (!db || !query) return [];
   try {
     await ensureEmailsTable(db);
     const searchPattern = `%${String(query).trim()}%`;
-    const res = await db.prepare(`
+    const lim = Math.min(Number(limit) || 5, 20);
+
+    if (guildId) {
+      const res = await db.prepare(`
+        SELECT id, subject, body, channel_id, message_id, ts, url, image_url, ai_summary
+        FROM emails
+        WHERE guild_id = ? AND (subject LIKE ? OR body LIKE ?)
+        ORDER BY ts DESC
+        LIMIT ?
+      `).bind(String(guildId), searchPattern, searchPattern, lim).all();
+      if (res && Array.isArray(res.results) && res.results.length > 0) {
+        return res.results;
+      }
+    }
+
+    // Fallback: search any stored announcements
+    const fallbackRes = await db.prepare(`
       SELECT id, subject, body, channel_id, message_id, ts, url, image_url, ai_summary
       FROM emails
-      WHERE guild_id = ? AND (subject LIKE ? OR body LIKE ?)
+      WHERE subject LIKE ? OR body LIKE ?
       ORDER BY ts DESC
       LIMIT ?
-    `).bind(String(guildId), searchPattern, searchPattern, Math.min(Number(limit) || 5, 20)).all();
-    return (res && Array.isArray(res.results)) ? res.results : [];
+    `).bind(searchPattern, searchPattern, lim).all();
+    return (fallbackRes && Array.isArray(fallbackRes.results)) ? fallbackRes.results : [];
   } catch (err) {
     console.error('searchEmailsInD1 error:', err);
     return [];

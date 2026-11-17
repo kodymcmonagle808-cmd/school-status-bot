@@ -1323,6 +1323,29 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return interactionResponse({ content: '🔄 Force check triggered for all servers! Results will appear in your log channels.', flags: EPHEMERAL_FLAG });
   }
 
+  if (customId === 'panel_owner_backup_d1') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    ctx.waitUntil((async () => {
+      try {
+        const { runD1Backup } = await import('./backup.js');
+        const res = await runD1Backup(env);
+        const { dmOwner } = await import('./discord.js');
+        await dmOwner(env, `✅ **Cloudflare D1 Backup Complete!**\n• Stored to R2 bucket: \`${res.filename}\`\n• **${res.records} total records** backed up (${res.counts.statusHistory} status changes, ${res.counts.weatherEvents} weather alerts, ${res.counts.emails} emails).`);
+      } catch (err) {
+        console.error('D1 backup failed:', err);
+        const { dmOwner } = await import('./discord.js');
+        await dmOwner(env, `❌ **D1 Backup Failed:** ${err.message}`);
+      }
+    })());
+    return interactionResponse({
+      content: '💾 **D1 Database backup started!**\nA full snapshot is being written to your Cloudflare R2 bucket (`ss-backups`), and a confirmation summary will be sent to your DMs.',
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
   if (customId === 'panel_owner_view_kv_stats') {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {

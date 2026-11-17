@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runKvBackup, maybeRunKvBackup, BACKUP_DATE_KEY } from '../src/backup.js';
+import { runKvBackup, runD1Backup, maybeRunKvBackup, BACKUP_DATE_KEY } from '../src/backup.js';
 
 function mockKv(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -123,4 +123,40 @@ test('maybeRunKvBackup runs when Monday and skips when already run today', async
   await kv.put(BACKUP_DATE_KEY, todayStr);
   const skipResult = await maybeRunKvBackup(env);
   assert.equal(skipResult, null);
+});
+
+test('runD1Backup exports SQL tables to R2 and writes d1_backup_latest.json', async () => {
+  const r2 = mockR2();
+  const db = {
+    prepare(query) {
+      return {
+        all: async () => {
+          if (query.includes('status_history')) {
+            return { results: [{ id: 1, status_text: 'Open' }] };
+          }
+          if (query.includes('weather_events')) {
+            return { results: [{ id: 'w1', event: 'Snow' }] };
+          }
+          if (query.includes('emails')) {
+            return { results: [{ id: 'e1', subject: 'Newsletter' }] };
+          }
+          return { results: [] };
+        }
+      };
+    }
+  };
+  const env = { DB: db, BACKUPS_BUCKET: r2 };
+  const res = await runD1Backup(env);
+  assert.ok(res.ok);
+  assert.equal(res.records, 3);
+  assert.equal(res.counts.statusHistory, 1);
+  assert.equal(res.counts.weatherEvents, 1);
+  assert.equal(res.counts.emails, 1);
+  assert.ok(r2._storage.has('d1_backup_latest.json'));
+});
+
+test('runD1Backup throws without required bindings', async () => {
+  await assert.rejects(async () => {
+    await runD1Backup({});
+  }, /DB and BACKUPS_BUCKET must be bound/);
 });

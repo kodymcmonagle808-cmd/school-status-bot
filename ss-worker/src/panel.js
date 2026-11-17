@@ -666,6 +666,13 @@ export async function buildWorkerUpdatesPayload(env) {
       },
       {
         type: 2,
+        style: 2,
+        custom_id: 'panel_owner_backup_d1',
+        label: 'Backup DB to R2',
+        emoji: { name: '💾' }
+      },
+      {
+        type: 2,
         style: 4,
         custom_id: 'panel_owner_force_check_all',
         label: 'Force Check All Servers',
@@ -676,7 +683,7 @@ export async function buildWorkerUpdatesPayload(env) {
         style: 2,
         custom_id: 'panel_owner_view_kv_stats',
         label: 'KV Analytics',
-        emoji: { name: '💾' }
+        emoji: { name: '📊' }
       },
       {
         type: 2,
