@@ -571,15 +571,12 @@ export async function buildWorkerUpdatesPayload(env) {
     }
   } catch {}
 
-  const watcherErrors = await getWatcherErrors(env);
-
-  let kvUsage = null;
-  try { kvUsage = await getKvUsage(env); } catch {}
-
-  let d1Stats = null;
-  if (env.DB) {
-    try { d1Stats = await getD1Stats(env.DB); } catch {}
-  }
+  const [watcherErrors, kvUsage, d1Stats, cfDeployments] = await Promise.all([
+    getWatcherErrors(env).catch(() => []),
+    getKvUsage(env).catch(() => null),
+    env.DB ? getD1Stats(env.DB).catch(() => null) : Promise.resolve(null),
+    fetchCloudflareDeployments(env).catch(() => null)
+  ]);
 
   const storageFields = d1Stats
     ? [
@@ -589,11 +586,6 @@ export async function buildWorkerUpdatesPayload(env) {
     : [
         { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false }
       ];
-
-  let cfDeployments = null;
-  try {
-    cfDeployments = await fetchCloudflareDeployments(env);
-  } catch {}
 
   const activeUpdates = (cfDeployments && cfDeployments.length) ? cfDeployments : updates;
   const isCf = Boolean(cfDeployments && cfDeployments.length) || Boolean(env.CF_API_TOKEN && env.CF_ACCOUNT_ID);
@@ -667,9 +659,9 @@ export async function buildWorkerUpdatesPayload(env) {
     components: [
       {
         type: 2,
-        style: 2,
+        style: 1,
         custom_id: 'panel_owner_refresh',
-        label: 'Refresh',
+        label: 'Refresh Owner Panel',
         emoji: { name: '🔄' }
       },
       {
@@ -677,11 +669,11 @@ export async function buildWorkerUpdatesPayload(env) {
         style: 4,
         custom_id: 'panel_owner_force_check_all',
         label: 'Force Check All Servers',
-        emoji: { name: '🔄' }
+        emoji: { name: '⚡' }
       },
       {
         type: 2,
-        style: 1,
+        style: 2,
         custom_id: 'panel_owner_view_kv_stats',
         label: 'KV Analytics',
         emoji: { name: '💾' }

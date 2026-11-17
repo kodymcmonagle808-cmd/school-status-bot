@@ -221,7 +221,9 @@ export async function handleInteraction(body, env, ctx) {
             });
 
             await updateInteractionOriginal(env, body.token, {
-              content: '📬 Owner Panel has been sent to your DMs so it stays forever!'
+              content: '📬 Owner Panel has also been delivered to your DMs for permanent reference. You can view and refresh it below:',
+              embeds: ownerPayload.embeds,
+              components: ownerPayload.components
             });
           } else {
             throw new Error('Could not open a DM channel. Please check your privacy settings.');

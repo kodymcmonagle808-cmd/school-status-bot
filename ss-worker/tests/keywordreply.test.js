@@ -149,8 +149,13 @@ test('the owner panel includes a refresh button', async () => {
   env.OWNER_ID = 'owner1';
   const payload = await buildWorkerUpdatesPayload(env);
   const buttonRows = (payload.components || []).filter(c => c.type === 1);
-  const ids = buttonRows.flatMap(r => r.components.map(b => b.custom_id));
+  const allBtns = buttonRows.flatMap(r => r.components);
+  const ids = allBtns.map(b => b.custom_id);
   assert.ok(ids.includes('panel_owner_refresh'), 'refresh button present');
+  const refreshBtn = allBtns.find(b => b.custom_id === 'panel_owner_refresh');
+  assert.equal(refreshBtn.label, 'Refresh Owner Panel');
+  assert.equal(refreshBtn.style, 1);
+  assert.equal(refreshBtn.emoji?.name, '🔄');
 });
 
 test('the music leave button acks and forwards a leave command to the greeter', async (t) => {

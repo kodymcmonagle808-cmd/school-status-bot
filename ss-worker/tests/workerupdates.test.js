@@ -210,3 +210,34 @@ test('buildWorkerUpdatesPayload renders Cloudflare Deployments heading when CF c
   assert.match(desc, /### ⛅ Cloudflare Deployments \(Workers Builds\)/);
   assert.match(desc, /c17822a/);
 });
+
+test('handlePanelComponent: panel_owner_refresh clears caches and returns type 7', async () => {
+  const { handlePanelComponent } = await import('../src/panelcomponents.js');
+  const deletedKeys = [];
+  const env = {
+    OWNER_ID: 'owner-xyz',
+    STATUS_KV: {
+      ...kvStub({
+        guild_index: JSON.stringify([]),
+        cf_deployments_cache: 'old',
+        kv_usage_cache: 'old'
+      }),
+      delete: async (key) => { deletedKeys.push(key); }
+    },
+    DISCORD_BOT_TOKEN: 'token'
+  };
+
+  const body = {
+    type: 3,
+    member: { user: { id: 'owner-xyz' } },
+    data: { custom_id: 'panel_owner_refresh' }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, '');
+  assert.ok(resp);
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+  assert.ok(json.data.embeds);
+  assert.ok(deletedKeys.includes('cf_deployments_cache'));
+  assert.ok(deletedKeys.includes('kv_usage_cache'));
+});

@@ -140,6 +140,27 @@ test('buildOwnerPermsPayload: builds rich embed with select menus and action but
   }
   assert.ok(customIds.includes('cfg_owner_perm_toggle_g1:guild-123'));
   assert.ok(customIds.includes('cfg_owner_perm_toggle_g2:guild-123'));
+  assert.ok(customIds.includes('cfg_owner_perms_refresh:guild-123'));
+});
+
+test('handlePanelComponent: cfg_owner_perms_refresh refreshes the permission panel', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'cfg_owner_perms_refresh:guild-123'
+    }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  assert.ok(resp);
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+  assert.ok(json.data.embeds);
+  assert.match(json.data.embeds[0].title, /guild-123/);
 });
 
 test('handlePanelComponent: panel_owner_perms_select returns type 7 and updates message', async () => {

@@ -160,6 +160,13 @@ export function buildOwnerPermsPayload(targetGuildId, config = {}) {
         {
           type: 2,
           style: 1,
+          custom_id: `cfg_owner_perms_refresh:${targetGuildId}`,
+          label: 'Refresh',
+          emoji: { name: '🔄' }
+        },
+        {
+          type: 2,
+          style: 2,
           custom_id: `cfg_owner_perms_all_everyone:${targetGuildId}`,
           label: 'General to Everyone',
           emoji: { name: '🌐' }
@@ -335,6 +342,16 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     delete config.disabled_commands;
     await setConfig(env, targetGuildId, config);
 
+    return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_refresh:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
     return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
   }
 
@@ -1289,7 +1306,10 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     // The owner panel is delivered as an ephemeral follow-up in the DM. This
     // button lives on that follow-up, so a type-7 response edits it in place
     // with freshly-read stats — no new message, no log write.
-    await env.STATUS_KV?.delete('cf_deployments_cache').catch(() => {});
+    await Promise.allSettled([
+      env.STATUS_KV?.delete('cf_deployments_cache'),
+      env.STATUS_KV?.delete('kv_usage_cache')
+    ]);
     const payload = await buildWorkerUpdatesPayload(env);
     return jsonResponse({ type: 7, data: payload });
   }
@@ -1307,6 +1327,9 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    if (body.type === 3 && body.data?.custom_id === 'panel_owner_view_kv_stats') {
+      await env.STATUS_KV?.delete('kv_usage_cache').catch(() => {});
     }
     let d1Text = '';
     if (env.DB) {
@@ -1329,10 +1352,27 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
                  `**Storage:** ${(usage.storedBytes / 1024 / 1024).toFixed(2)} MB / ${(KV_FREE_LIMITS.storedBytes / 1024 / 1024).toFixed(0)} MB (${storagePct}%)`;
       }
     } catch {}
-    return interactionResponse({
+    const analyticsPayload = {
       content: `${d1Text}## 💾 KV Analytics\n${kvInfo}`,
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 2,
+              style: 1,
+              custom_id: 'panel_owner_view_kv_stats',
+              label: 'Refresh Analytics',
+              emoji: { name: '🔄' }
+            }
+          ]
+        }
+      ],
       flags: EPHEMERAL_FLAG
-    });
+    };
+    return (body.type === 3)
+      ? jsonResponse({ type: 7, data: analyticsPayload })
+      : interactionResponse(analyticsPayload);
   }
 
   if (customId === 'panel_owner_view_all_configs') {
