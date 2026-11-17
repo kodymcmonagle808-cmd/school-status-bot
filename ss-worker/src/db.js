@@ -223,26 +223,83 @@ export async function getD1Stats(db) {
 }
 
 /**
- * Formats D1 database stats for the Owner's Control Panel embed.
+ * Formats a percentage with up to specified decimals (default 7).
+ * Accurately represents fractions down to 0.0000001%.
+ */
+export function formatPrecisePercent(value, max, decimals = 7) {
+  const val = Number(value) || 0;
+  const total = Number(max) || 0;
+  if (total <= 0 || val <= 0) return (0).toFixed(decimals) + '%';
+  const pct = (val / total) * 100;
+  return `${pct.toFixed(decimals)}%`;
+}
+
+function commas(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function filledCount(value, max, segments = 20) {
+  return Math.min(segments, Math.max(0, Math.round(((Number(value) || 0) / (Number(max) || 1)) * segments)));
+}
+
+function barFromFilled(filled, segments = 20) {
+  const f = Math.max(0, Math.min(segments, filled));
+  return '`' + '■'.repeat(f) + ' '.repeat(segments - f) + '`';
+}
+
+function easternResetLabel(now) {
+  const d = new Date(now);
+  const nextUtcMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(nextUtcMidnight);
+}
+
+/**
+ * Formats D1 database stats with visual progress bars and precise percentage (up to 0.0000001%).
  *
  * @param {object} stats - Stats returned by getD1Stats
+ * @param {object} [usage] - Cloudflare analytics usage (reads, writes, etc.)
+ * @param {number} [now] - Current timestamp
  * @returns {string} Formatted markdown text
  */
-export function buildD1Section(stats) {
+export function buildD1Section(stats, usage = null, now = Date.now()) {
   if (!stats) return 'D1 database not bound.';
   if (!stats.ok) return `⚠️ D1 error: ${stats.error}`;
-  const storagePct = ((stats.totalBytes / (5 * 1024 * 1024 * 1024)) * 100).toFixed(2);
+
+  const storageBytes = 5 * 1024 * 1024 * 1024; // 5 GB
+  const storagePct = formatPrecisePercent(stats.totalBytes, storageBytes, 7);
+
   const items = [];
   if (stats.statusCount != null && stats.statusCount > 0) items.push(`${stats.statusCount} status changes`);
   if (stats.weatherCount != null && stats.weatherCount > 0) items.push(`${stats.weatherCount} weather alerts`);
   if (stats.emailCount != null && stats.emailCount > 0) items.push(`${stats.emailCount} emails`);
   const details = items.length ? ` (${items.join(' · ')})` : '';
 
+  const writesUsed = Number(usage?.writes) || 0;
+  const readsUsed = Number(usage?.reads) || 0;
+  const writesLimit = 100000;
+  const readsLimit = 5000000;
+
+  const writesPct = formatPrecisePercent(writesUsed, writesLimit, 7);
+  const readsPct = formatPrecisePercent(readsUsed, readsLimit, 7);
+
+  const writeDot = (writesUsed / writesLimit) >= 0.9 ? '🔴' : (writesUsed / writesLimit) >= 0.7 ? '🟡' : '🟢';
+  const readDot = (readsUsed / readsLimit) >= 0.9 ? '🔴' : (readsUsed / readsLimit) >= 0.7 ? '🟡' : '🟢';
+  const storageDot = (stats.totalBytes / storageBytes) >= 0.9 ? '🔴' : (stats.totalBytes / storageBytes) >= 0.7 ? '🟡' : '🟢';
+
   return `🟢 **Active Storage Engine** — \`school-status-db\`\n` +
-    `• **Daily Writes:** 100,000 / day (upgraded from 1,000)\n` +
-    `• **Daily Reads:** 5,000,000 / day (upgraded from 100,000)\n` +
     `• **Active Records:** ${stats.totalKeys.toLocaleString()} keys${details}\n` +
-    `• **Storage Used:** ${formatBytes(stats.totalBytes)} / 5 GB (${storagePct}%)\n` +
+    `• **Free-Plan Daily Budget (100,000 / day writes · 5,000,000 / day reads · resets ${easternResetLabel(now)}):**\n\n` +
+    `${writeDot} ✍️ **Daily Writes** — ${commas(writesUsed)} / ${commas(writesLimit)} / day · ${writesPct}\n` +
+    `${barFromFilled(filledCount(writesUsed, writesLimit))}\n` +
+    `${readDot} 📖 **Daily Reads** — ${commas(readsUsed)} / ${commas(readsLimit)} / day · ${readsPct}\n` +
+    `${barFromFilled(filledCount(readsUsed, readsLimit))}\n` +
+    `${storageDot} 💾 **Storage Used** — ${formatBytes(stats.totalBytes)} / 5 GB · ${storagePct}\n` +
+    `${barFromFilled(filledCount(stats.totalBytes, storageBytes))}\n\n` +
     `> All status changes, weather delays, emails, and bot operations store in Cloudflare D1.`;
 }
 

@@ -583,8 +583,8 @@ export async function buildWorkerUpdatesPayload(env) {
 
   const storageFields = d1Stats
     ? [
-        { name: '🗄️ Primary Database: Cloudflare D1', value: buildD1Section(d1Stats), inline: false },
-        { name: '💾 Legacy KV (Fallback / Standby)', value: buildKvUsageSection(kvUsage), inline: false }
+        { name: '🗄️ Primary Database: Cloudflare D1', value: buildD1Section(d1Stats, kvUsage), inline: false },
+        { name: '💾 Legacy KV (Standby Fallback)', value: '🟢 **Standby Mode** — Legacy KV fallback ready; 0 writes needed.', inline: false }
       ]
     : [
         { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false }

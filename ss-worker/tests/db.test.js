@@ -7,6 +7,7 @@ import {
   getD1Stats,
   buildD1Section,
   formatBytes,
+  formatPrecisePercent,
   recordEmailToD1,
   searchEmailsInD1,
   getEmailStats,
@@ -328,6 +329,15 @@ test('formatBytes: handles B, KB, MB', () => {
   assert.equal(formatBytes(500), '500 B');
   assert.equal(formatBytes(2048), '2.0 KB');
   assert.equal(formatBytes(5 * 1024 * 1024), '5.00 MB');
+});
+
+test('formatPrecisePercent: computes accurate percentages up to 0.0000001% (7 decimals)', () => {
+  assert.equal(formatPrecisePercent(0, 100000), '0.0000000%');
+  const storageBytes = 5 * 1024 * 1024 * 1024;
+  const used24Kb = 24 * 1024;
+  assert.equal(formatPrecisePercent(used24Kb, storageBytes), '0.0004578%');
+  assert.equal(formatPrecisePercent(1, 100000), '0.0010000%');
+  assert.equal(formatPrecisePercent(78, 5000000), '0.0015600%');
 });
 
 test('recordEmailToD1 and searchEmailsInD1: stores and queries announcements', async () => {
