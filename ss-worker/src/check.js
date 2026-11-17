@@ -455,10 +455,20 @@ export async function doCheckAndPost(env, options = {}) {
   // Guilds with a non-HCPSS primary district track changes against their own
   // district's announcements, not the HCPSS status page.
   const guildPrimaries = new Map();
+  const guildDistrictChannels = new Map();
   for (const gid of targetGuildIds) {
-    guildPrimaries.set(gid, (await getCfg(gid)).primary_district || 'hcpss');
+    const cfg = await getCfg(gid);
+    guildPrimaries.set(gid, cfg.primary_district || 'hcpss');
+    if (cfg.district_channels && typeof cfg.district_channels === 'object') {
+      guildDistrictChannels.set(gid, cfg.district_channels);
+    }
   }
   const primaryDistrictIds = new Set([...guildPrimaries.values()].filter(id => id !== 'hcpss'));
+  for (const distMap of guildDistrictChannels.values()) {
+    for (const d of Object.keys(distMap)) {
+      if (d && d !== 'hcpss') primaryDistrictIds.add(d);
+    }
+  }
   const changedDistricts = new Set();
   if (primaryDistrictIds.size) {
     try {
@@ -501,6 +511,36 @@ export async function doCheckAndPost(env, options = {}) {
 
   for (const guildId of activeGuildIds) {
     const config = await getCfg(guildId);
+
+    // Deliver updates to any configured secondary district channels
+    const districtChannels = guildDistrictChannels.get(guildId);
+    if (districtChannels && changedDistricts.size > 0) {
+      for (const [subDist, subChanId] of Object.entries(districtChannels)) {
+        if (subChanId && changedDistricts.has(subDist)) {
+          try {
+            const distMeta = getDistrictMeta(subDist);
+            const distStatuses = await getDistrictStatuses(env);
+            const distStat = distStatuses.find(x => x.id === subDist);
+            const label = DISTRICT_STATUS_LABELS[distStat?.status] || 'Status Update';
+            const detail = distStat?.detail ? `\n\n> ${distStat.detail}` : '';
+            const color = distStat?.status === 'closed' ? 0xE74C3C : (distStat?.status === 'delayed' ? 0xE67E22 : 0x3498DB);
+            await postMessageToChannel(env, {
+              __channelId: subChanId,
+              embeds: [{
+                title: `🏫 ${distMeta?.name || subDist.toUpperCase()} — Status Change`,
+                color,
+                description: `**${label}**${detail}\n\n*Live update detected by district watcher.*`,
+                timestamp: new Date().toISOString(),
+                footer: { text: `${config.alert_embed_footer || 'School Status'} · District Watcher` }
+              }]
+            });
+            logAction(`📢 District status change for ${distMeta?.name || subDist} posted to <#${subChanId}>.`, { guildId });
+          } catch (e) {
+            console.error(`District channel post failed for ${subDist} in guild ${guildId}:`, e);
+          }
+        }
+      }
+    }
     // The storm-mode toggle covers hook posts too: both are "off-schedule
     // posts when the status changes", and a guild that turned that off wants
     // its posts only at the panel-scheduled times.

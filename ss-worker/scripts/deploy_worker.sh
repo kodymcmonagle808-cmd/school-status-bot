@@ -569,6 +569,55 @@ payload=$(jq -n '[
     ]
   },
   {
+    name: "districtchannel",
+    description: "Configure dedicated channels for neighboring school district alerts.",
+    type: 1,
+    integration_types: [0],
+    contexts: [0],
+    options: [
+      {
+        name: "set",
+        description: "Set a dedicated channel for a neighboring district.",
+        type: 1,
+        options: [
+          {
+            name: "district",
+            description: "Neighboring school district (e.g. bcps, mcps, aacps, fcps, ccps, pgcps)",
+            type: 3,
+            required: true,
+            autocomplete: true
+          },
+          {
+            name: "channel",
+            description: "The channel where this district's updates will be posted.",
+            type: 7,
+            channel_types: [0],
+            required: true
+          }
+        ]
+      },
+      {
+        name: "clear",
+        description: "Clear dedicated channel routing for a district or all districts.",
+        type: 1,
+        options: [
+          {
+            name: "district",
+            description: "District to clear, or leave empty to clear all.",
+            type: 3,
+            required: false,
+            autocomplete: true
+          }
+        ]
+      },
+      {
+        name: "list",
+        description: "List all active neighboring district channel subscriptions.",
+        type: 1
+      }
+    ]
+  },
+  {
     name: "searchemails",
     description: "Search through archived school announcements and emails.",
     type: 1,
@@ -579,7 +628,8 @@ payload=$(jq -n '[
         name: "query",
         description: "Keyword or phrase to search for (e.g. delay, field trip, exam)",
         type: 3,
-        required: true
+        required: true,
+        autocomplete: true
       }
     ]
   }

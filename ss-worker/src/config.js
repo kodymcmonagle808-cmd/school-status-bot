@@ -87,6 +87,7 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_email_alerts !== 'boolean') next.toggle_email_alerts = true;
   if (typeof next.toggle_session_gate !== 'boolean') next.toggle_session_gate = true;
   if (typeof next.toggle_voice_announcements !== 'boolean') next.toggle_voice_announcements = false;
+  if (!next.district_channels || typeof next.district_channels !== 'object') next.district_channels = {};
   if (!next.primary_district) next.primary_district = 'hcpss';
   return next;
 }
@@ -138,6 +139,7 @@ export const ALL_COMMANDS_META = [
   { name: 'dankstaffsetup', label: '/dankstaffsetup', category: 'admin', defaultTier: 'staff', description: 'Dank Memer application channel' },
   { name: 'staffappsetup', label: '/staffappsetup', category: 'admin', defaultTier: 'staff', description: 'Staff application review channel' },
   { name: 'social-link', label: '/social-link', category: 'admin', defaultTier: 'staff', description: 'Social media webhook generator' },
+  { name: 'districtchannel', label: '/districtchannel', category: 'admin', defaultTier: 'staff', description: 'Configure dedicated channels for neighboring school districts' },
   { name: 'backup-db', label: '/backup-db', category: 'admin', defaultTier: 'staff', description: 'Snapshot Cloudflare D1 database to R2' },
   { name: 'mydata', label: '/mydata', category: 'admin', defaultTier: 'staff', description: 'View or erase server stored data' }
 ];

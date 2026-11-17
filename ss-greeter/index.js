@@ -1122,11 +1122,44 @@ client.once('ready', async () => {
     }
   })();
 
-  // Set the bot's Discord presence / status
-  client.user.setPresence({
-    activities: [{ name: 'HCPSS Status', type: ActivityType.Watching }],
-    status: 'online',
-  });
+  // Set the bot's dynamic Discord presence & activity rotator
+  let presenceIndex = 0;
+  async function updateBotPresence() {
+    try {
+      const workerUrl = process.env.WORKER_URL || 'https://ss-worker.kodymcmonagle808.workers.dev';
+      let abDayText = 'A/B Day';
+      let statusText = 'Normal Operations';
+      try {
+        const resp = await fetch(`${workerUrl}/api/status`, { signal: AbortSignal.timeout(4000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && data.abDay) abDayText = `${data.abDay} Day`;
+          if (data && data.statusText) statusText = data.statusText;
+        }
+      } catch (_) {}
+
+      const activities = [
+        { name: `HCPSS: ${statusText} · /status`, type: ActivityType.Watching },
+        { name: `Today: ${abDayText} · /status`, type: ActivityType.Watching },
+        { name: 'Weather & Snow Outlook · /snowday', type: ActivityType.Watching },
+        { name: 'School Announcements · /searchemails', type: ActivityType.Watching },
+        { name: '/help · school-status-bot', type: ActivityType.Listening }
+      ];
+
+      const current = activities[presenceIndex % activities.length];
+      presenceIndex++;
+      client.user.setPresence({
+        activities: [current],
+        status: 'online'
+      });
+    } catch (e) {
+      console.error('Error updating bot presence:', e);
+    }
+  }
+
+  // Update immediately on ready, then cycle every 90 seconds
+  updateBotPresence();
+  setInterval(updateBotPresence, 90000);
 
   // Auto-connect to configured 24/7 VC on startup or deployment restart.
   // Gated by MUSIC_ENABLED so the voice runtime stays dormant while music is

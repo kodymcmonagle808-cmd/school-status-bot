@@ -4,7 +4,7 @@ import { EPHEMERAL_FLAG, ALL_STATUS_LABELS, STATUS_LABELS, SCHOOL_CALENDAR_EVENT
 import { formatCheckedAt, formatStatusDate, formatYmdNY, getEasternTimeStr, isInStormWindow, nextScheduledTime, formatScheduleTimeLabel } from './timeutil.js';
 import { HCPSS_URL, getStatusCards, determineStatusKey } from './scraper.js';
 import { getStatusHistory, computeIncidentStats, getYearlyStats, schoolYearLabel, INCIDENT_KEYS } from './history.js';
-import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY } from './districts.js';
+import { getDistrictStatuses, formatDistrictLines, getDistrictMeta, statusKeyToDistrictStatus, HCPSS_COUNTY, DISTRICTS } from './districts.js';
 import { buildDecisionWatchEntries, buildDecisionWatchDescription } from './decisionwatch.js';
 import { getCommandOption, getInvokerId, updateInteractionOriginal } from './discord.js';
 import { getConfig, setConfig, getEffectiveConfig, setOverride, clearOverride, getActiveOverride, canUseCommands } from './config.js';
@@ -130,7 +130,8 @@ export function runHelpCommand() {
         '• `/stats` — closure days, delays, and scraper statistics\n' +
         '• `/notify` — get a DM whenever the operating status changes (run again to stop)\n' +
         '• `/myschool` — register your school to get DMed when a notice mentions it\n' +
-        '• `/requestannouncement` — submit an announcement request (summary + optional story link) to staff\\n' +
+        '• `/searchemails` — search through archived school announcement emails\n' +
+        '• `/requestannouncement` — submit an announcement request (summary + optional story link) to staff\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
         '**Buttons on status posts:**\n' +
         '• **Check again** — re-check privately · **🔔 Notify Me** — same as `/notify`\n' +
@@ -138,6 +139,7 @@ export function runHelpCommand() {
         '**For bot staff:**\n' +
         '• `/post-status` — publish a fresh status post now\n' +
         '• `/override` — force a displayed status for 1–30 days\n' +
+        '• `/districtchannel` — route neighboring county updates to dedicated channels\n' +
         '• `/events` — add/remove custom calendar events\n' +
         '• `/announce` — post a custom announcement embed\n' +
         '• `/health` — scraper, posting, and storm-mode health at a glance\n' +
@@ -1432,4 +1434,72 @@ export async function runSearchEmailsCommand(body, env) {
   };
 
   return { embeds: [embed], flags: EPHEMERAL_FLAG };
+}
+
+export async function runDistrictChannelCommand(body, env) {
+  const guildId = body.guild_id || '';
+  if (!guildId) {
+    return { content: '❌ This command can only be used in a server.', flags: EPHEMERAL_FLAG };
+  }
+
+  const member = body.member;
+  const isAllowed = await canUseCommands(member, env, guildId);
+  if (!isAllowed) {
+    return { content: '❌ Only staff and administrators can configure district notification channels.', flags: EPHEMERAL_FLAG };
+  }
+
+  const options = body && body.data && Array.isArray(body.data.options) ? body.data.options : [];
+  let subName = '';
+  let subOpts = [];
+  if (options.length > 0 && options[0].type === 1) {
+    subName = options[0].name;
+    subOpts = Array.isArray(options[0].options) ? options[0].options : [];
+  }
+
+  const config = await getConfig(env, guildId);
+  config.district_channels = config.district_channels && typeof config.district_channels === 'object' ? config.district_channels : {};
+
+  if (subName === 'set') {
+    const district = String(getCommandOption(subOpts, 'district') || '').trim().toLowerCase();
+    const channelId = getCommandOption(subOpts, 'channel');
+    if (!district || !channelId) {
+      return { content: '❌ Please provide both a district and a channel. Example: `/districtchannel set district:bcps channel:#bcps-alerts`', flags: EPHEMERAL_FLAG };
+    }
+    const meta = getDistrictMeta(district);
+    if (!meta) {
+      const valid = DISTRICTS.map(d => `\`${d.id}\` (${d.name})`).join(', ');
+      return { content: `❌ Unknown district \`${district}\`. Available districts: ${valid}`, flags: EPHEMERAL_FLAG };
+    }
+    config.district_channels[district] = channelId;
+    await setConfig(env, guildId, config);
+    return { content: `✅ Dedicated alerts for **${meta.name}** (\`${district.toUpperCase()}\`) will now be posted to <#${channelId}> whenever a status change occurs.`, flags: EPHEMERAL_FLAG };
+  } else if (subName === 'clear') {
+    const district = String(getCommandOption(subOpts, 'district') || '').trim().toLowerCase();
+    if (district && district !== 'all') {
+      const meta = getDistrictMeta(district);
+      delete config.district_channels[district];
+      await setConfig(env, guildId, config);
+      return { content: `✅ District channel cleared for **${meta?.name || district.toUpperCase()}**.`, flags: EPHEMERAL_FLAG };
+    } else {
+      config.district_channels = {};
+      await setConfig(env, guildId, config);
+      return { content: '✅ All neighboring district channel subscriptions have been cleared.', flags: EPHEMERAL_FLAG };
+    }
+  } else {
+    const entries = Object.entries(config.district_channels).filter(([, chId]) => Boolean(chId));
+    if (entries.length === 0) {
+      return {
+        content: `🏫 **Neighboring District Channel Subscriptions**\n\nNo dedicated district channels configured yet.\n\nTo route updates from neighboring counties into dedicated channels, use:\n\`/districtchannel set district:<name> channel:<#channel>\`\n\n**Supported Districts:**\n${DISTRICTS.map(d => `• \`${d.id}\`: ${d.name}`).join('\n')}`,
+        flags: EPHEMERAL_FLAG
+      };
+    }
+    const list = entries.map(([dId, chId]) => {
+      const meta = getDistrictMeta(dId);
+      return `• **${meta?.name || dId.toUpperCase()}** (\`${dId}\`): <#${chId}>`;
+    }).join('\n');
+    return {
+      content: `🏫 **Neighboring District Channel Subscriptions**\n\n${list}\n\n*Status changes for these districts will post to their dedicated channels.*`,
+      flags: EPHEMERAL_FLAG
+    };
+  }
 }

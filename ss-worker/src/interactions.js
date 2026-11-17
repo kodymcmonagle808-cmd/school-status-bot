@@ -52,6 +52,7 @@ import {
   handlePanelRefresh,
   runSetupJoinLogsCommand,
   runEmailChannelCommand,
+  runDistrictChannelCommand,
   runSearchEmailsCommand
 } from './commands.js';
 import { handleModalSubmit } from './modals.js';
@@ -104,6 +105,77 @@ export async function handleInteraction(body, env, ctx) {
         });
       }
     }
+  }
+
+  if (body.type === 4) {
+    const cmdName = body.data?.name || '';
+    const focusedOption = body.data?.options?.find(o => o.focused) ||
+      body.data?.options?.[0]?.options?.find(o => o.focused) || null;
+    const focusedValue = String(focusedOption?.value || '').trim();
+
+    const choices = [];
+
+    if (cmdName === 'searchemails') {
+      if (env.DB) {
+        try {
+          const { searchEmailsInD1 } = await import('./db.js');
+          const results = await searchEmailsInD1(env.DB, guildId, focusedValue || 'a', 8);
+          for (const r of results) {
+            const label = String(r.subject || '').slice(0, 95);
+            if (label && !choices.some(c => c.name === label)) {
+              choices.push({ name: label, value: label });
+            }
+          }
+        } catch {}
+      }
+      if (choices.length === 0) {
+        const defaults = ['Delay', 'Closure', 'Early Dismissal', 'Newsletter', 'Bus', 'Calendar', 'Interim Reports'];
+        for (const d of defaults) {
+          if (!focusedValue || d.toLowerCase().includes(focusedValue.toLowerCase())) {
+            choices.push({ name: d, value: d });
+          }
+        }
+      }
+    } else if (cmdName === 'events') {
+      try {
+        const config = await getConfig(env, guildId);
+        const events = Array.isArray(config.calendar_events) ? config.calendar_events : [];
+        for (const ev of events.slice(0, 10)) {
+          const name = `${ev.title || 'Event'} (${ev.date || 'unknown date'})`.slice(0, 100);
+          if (!focusedValue || name.toLowerCase().includes(focusedValue.toLowerCase())) {
+            choices.push({ name, value: ev.title || 'Event' });
+          }
+        }
+      } catch {}
+    } else if (cmdName === 'manualstatus') {
+      const statuses = [
+        { name: 'Normal Operations', value: 'normal_operations' },
+        { name: 'Schools Closed', value: 'schools_closed' },
+        { name: 'Schools & Offices Closed', value: 'schools_and_offices_closed' },
+        { name: 'Schools Open 2 Hours Late', value: 'schools_open_2_hours_late' },
+        { name: 'Schools Close 3 Hours Early', value: 'schools_close_3_hours_early' }
+      ];
+      for (const s of statuses) {
+        if (!focusedValue || s.name.toLowerCase().includes(focusedValue.toLowerCase())) {
+          choices.push(s);
+        }
+      }
+    } else if (cmdName === 'districtchannel') {
+      try {
+        const { DISTRICTS } = await import('./districts.js');
+        for (const d of DISTRICTS) {
+          const label = `${d.name} (${d.id.toUpperCase()})`.slice(0, 100);
+          if (!focusedValue || label.toLowerCase().includes(focusedValue.toLowerCase()) || d.id.toLowerCase().includes(focusedValue.toLowerCase())) {
+            choices.push({ name: label, value: d.id });
+          }
+        }
+      } catch {}
+    }
+
+    return jsonResponse({
+      type: 8,
+      data: { choices: choices.slice(0, 25) }
+    });
   }
 
   if (body.type === 5) {
@@ -406,6 +478,10 @@ export async function handleInteraction(body, env, ctx) {
 
   if (body.type === 2 && body.data && (body.data.name === 'emailchannel' || body.data.name === 'setupemailchannel')) {
     return interactionResponse(await runEmailChannelCommand(body, env));
+  }
+
+  if (body.type === 2 && body.data && (body.data.name === 'districtchannel' || body.data.name === 'setupdistrictchannel')) {
+    return interactionResponse(await runDistrictChannelCommand(body, env));
   }
 
   if (body.type === 2 && body.data && (body.data.name === 'searchemails' || body.data.name === 'searchemail')) {

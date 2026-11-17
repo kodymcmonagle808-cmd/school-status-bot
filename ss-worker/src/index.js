@@ -7,6 +7,7 @@ import { getConfig } from './config.js';
 import { handleInteraction } from './interactions.js';
 import { doCheckAndPost } from './check.js';
 import { maybeSendMorningDigests } from './digest.js';
+import { maybeSendWeekAheadPreviews } from './weekahead.js';
 import { maybeSendHeadsUp } from './headsup.js';
 import { maybeSendBusAlerts } from './busalerts.js';
 import { checkNewMembersAndDM, checkLegacyJoinLogs } from './greeter.js';
@@ -80,6 +81,53 @@ export default {
       }
       if (url.pathname === '/privacy') {
         return legalPageResponse('Privacy Policy', PRIVACY_MD);
+      }
+      if (url.pathname === '/api/status' || url.pathname === '/status.json') {
+        try {
+          const { getStatusCards } = await import('./scraper.js');
+          const { getABDay, formatABDayLine } = await import('./abday.js');
+          const { getDistrictMeta } = await import('./districts.js');
+
+          const district = url.searchParams.get('district') || 'hcpss';
+          let cards = [];
+          try {
+            const res = await getStatusCards(env);
+            cards = Array.isArray(res) ? res : (Array.isArray(res?.cards) ? res.cards : []);
+          } catch {}
+
+          const activeCard = cards.find(c => (c.districtId || 'hcpss') === district) || cards[0] || null;
+          const now = new Date();
+          const todayYmd = now.toISOString().split('T')[0];
+          const abDay = getABDay(todayYmd);
+
+          const payload = {
+            ok: true,
+            district,
+            districtName: getDistrictMeta(district)?.name || 'Howard County Public Schools (HCPSS)',
+            status: activeCard?.statusKey || 'normal_operations',
+            statusText: activeCard?.status || 'Normal Operations',
+            date: activeCard?.date || todayYmd,
+            abDay: abDay || null,
+            abDayLine: formatABDayLine(abDay) || 'No A/B day scheduled today',
+            timestamp: now.toISOString(),
+            source: 'https://status.hcpss.org'
+          };
+
+          return new Response(JSON.stringify(payload, null, 2), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'public, max-age=60'
+            }
+          });
+        } catch (e) {
+          console.error('/api/status error:', e);
+          return new Response(JSON.stringify({ ok: false, error: e.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
+          });
+        }
       }
       if (url.pathname === LOGS_PATH) {
         // System Logs, read live from Cloudflare's log store. Access is the
@@ -542,6 +590,7 @@ export default {
       const watchers = [
         ['check', () => doCheckAndPost(env, { source: 'scheduled' })],
         ['digest', () => maybeSendMorningDigests(env)],
+        ['weekahead', () => maybeSendWeekAheadPreviews(env)],
         ['headsup', () => maybeSendHeadsUp(env)],
         ['busalerts', () => maybeSendBusAlerts(env)],
         ['greeter', () => checkNewMembersAndDM(env)],
