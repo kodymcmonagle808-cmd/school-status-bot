@@ -1,0 +1,33 @@
+name: Register Discord Slash Commands
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ss-worker/scripts/commands_schema.json'
+      - 'ss-worker/scripts/register_commands.mjs'
+      - '.github/workflows/register_commands.yml'
+
+concurrency:
+  group: register-commands
+  cancel-in-progress: false
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Register Slash Commands with Discord API
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+        run: |
+          node ss-worker/scripts/register_commands.mjs
