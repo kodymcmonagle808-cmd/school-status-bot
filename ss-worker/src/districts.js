@@ -298,7 +298,7 @@ export function summarizeDistrictEntries(entries) {
 // Fetches all district statuses in parallel with a shared 10-minute KV cache.
 // Never throws; failures come back as status 'unavailable'.
 export async function getDistrictStatuses(env) {
-  if (env && env.STATUS_KV) {
+  if (env && env.STATUS_KV && typeof env.STATUS_KV.get === 'function') {
     try {
       const cached = await env.STATUS_KV.get(DISTRICT_CACHE_KEY);
       if (cached) {
@@ -315,7 +315,7 @@ export async function getDistrictStatuses(env) {
     return { ...base, ...summarizeDistrictEntries(results[i].value) };
   });
 
-  if (env && env.STATUS_KV) {
+  if (env && env.STATUS_KV && typeof env.STATUS_KV.put === 'function') {
     await env.STATUS_KV.put(
       DISTRICT_CACHE_KEY,
       JSON.stringify({ at: Date.now(), districts }),

@@ -86,24 +86,55 @@ export default {
         try {
           const { getStatusCards } = await import('./scraper.js');
           const { getABDay, formatABDayLine } = await import('./abday.js');
-          const { getDistrictMeta } = await import('./districts.js');
+          const { getDistrictMeta, getDistrictStatuses, DISTRICT_STATUS_LABELS } = await import('./districts.js');
 
-          const district = url.searchParams.get('district') || 'hcpss';
+          const district = (url.searchParams.get('district') || 'hcpss').toLowerCase();
+          const now = new Date();
+          const todayYmd = now.toISOString().split('T')[0];
+
+          if (district !== 'hcpss') {
+            const distStatuses = await getDistrictStatuses(env);
+            const dist = distStatuses.find(d => d.id === district);
+            const meta = getDistrictMeta(district);
+            const statusKey = dist?.status || 'none';
+            const statusText = dist?.detail || DISTRICT_STATUS_LABELS[dist?.status] || 'No announcement';
+
+            const payload = {
+              ok: true,
+              district,
+              districtName: meta?.name || district.toUpperCase(),
+              status: statusKey,
+              statusText,
+              date: todayYmd,
+              abDay: null,
+              abDayLine: 'A/B days apply to HCPSS only',
+              timestamp: now.toISOString(),
+              source: meta?.url || 'https://status.hcpss.org'
+            };
+
+            return new Response(JSON.stringify(payload, null, 2), {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json; charset=utf-8',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=60'
+              }
+            });
+          }
+
           let cards = [];
           try {
             const res = await getStatusCards(env);
             cards = Array.isArray(res) ? res : (Array.isArray(res?.cards) ? res.cards : []);
           } catch {}
 
-          const activeCard = cards.find(c => (c.districtId || 'hcpss') === district) || cards[0] || null;
-          const now = new Date();
-          const todayYmd = now.toISOString().split('T')[0];
+          const activeCard = cards[0] || null;
           const abDay = getABDay(todayYmd);
 
           const payload = {
             ok: true,
-            district,
-            districtName: getDistrictMeta(district)?.name || 'Howard County Public Schools (HCPSS)',
+            district: 'hcpss',
+            districtName: 'Howard County Public Schools (HCPSS)',
             status: activeCard?.statusKey || 'normal_operations',
             statusText: activeCard?.status || 'Normal Operations',
             date: activeCard?.date || todayYmd,

@@ -74,7 +74,7 @@ export async function handleMapMyClass(body, env) {
   }
 
   // Do this async to not block the interaction response
-  env.ctx.waitUntil((async () => {
+  const generateRoute = (async () => {
     try {
       const schedule = JSON.parse(scheduleRaw);
 
@@ -191,7 +191,11 @@ export async function handleMapMyClass(body, env) {
         })
       });
     }
-  })());
+  })();
+
+  if (env && env.ctx && typeof env.ctx.waitUntil === 'function') {
+    env.ctx.waitUntil(generateRoute);
+  }
 
   return deferredInteractionResponse();
 }
