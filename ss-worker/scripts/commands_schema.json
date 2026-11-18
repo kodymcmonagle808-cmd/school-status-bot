@@ -8,7 +8,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "override",
@@ -83,7 +84,8 @@
         "description": "Disable the active override immediately.",
         "type": 1
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "manualstatus",
@@ -163,7 +165,8 @@
         "description": "View the currently active manual status and notes.",
         "type": 1
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "calendar",
@@ -246,7 +249,8 @@
         "description": "List all dynamic calendar events.",
         "type": 1
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "stats",
@@ -291,7 +295,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "requestannouncement",
@@ -313,7 +318,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "ownerpanel",
@@ -324,7 +330,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "backup-db",
@@ -335,7 +342,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "social-link",
@@ -358,7 +366,8 @@
         ],
         "required": true
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "terms",
@@ -574,7 +583,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "mydata",
@@ -629,7 +639,8 @@
         "type": 3,
         "required": true
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "dankmemer",
@@ -761,7 +772,8 @@
     ],
     "contexts": [
       0
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "emailchannel",
@@ -800,7 +812,8 @@
         "description": "View the current email announcement channel.",
         "type": 1
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "districtchannel",
@@ -855,7 +868,8 @@
         "description": "List all active neighboring district channel subscriptions.",
         "type": 1
       }
-    ]
+    ],
+    "default_member_permissions": "8"
   },
   {
     "name": "searchemails",

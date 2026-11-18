@@ -7,7 +7,7 @@ import {
   canMemberExecuteCommand
 } from '../src/config.js';
 
-import { buildOwnerPermsPayload, handlePanelComponent } from '../src/panelcomponents.js';
+import { buildOwnerPermsPayload, buildOwnerDisablePayload, handlePanelComponent } from '../src/panelcomponents.js';
 
 function makeKv(store = {}) {
   const map = new Map(Object.entries(store));
@@ -254,4 +254,105 @@ test('handlePanelComponent: quick action buttons (all staff, reset) return type 
   assert.equal(resetJson.type, 7);
   saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
   assert.equal(saved.command_permissions, undefined);
+});
+
+test('buildOwnerDisablePayload: builds disable embed with select menus and back button', () => {
+  const config = {
+    disabled_commands: ['snowday']
+  };
+  const payload = buildOwnerDisablePayload('guild-123', config);
+  assert.ok(payload.embeds && payload.embeds.length === 1);
+  assert.match(payload.embeds[0].title, /Disable Commands/);
+  assert.match(payload.embeds[0].description, /`\/snowday`/);
+
+  const customIds = [];
+  for (const row of payload.components) {
+    for (const comp of row.components) {
+      assert.ok(comp.custom_id, 'Component must have custom_id');
+      assert.ok(!customIds.includes(comp.custom_id), `Duplicate custom_id found: ${comp.custom_id}`);
+      customIds.push(comp.custom_id);
+    }
+  }
+  assert.ok(customIds.includes('cfg_owner_perm_toggle_disable_g1:guild-123'));
+  assert.ok(customIds.includes('cfg_owner_perm_toggle_disable_g2:guild-123'));
+  assert.ok(customIds.includes('cfg_owner_perms_enable_all:guild-123'));
+  assert.ok(customIds.includes('cfg_owner_perms_refresh:guild-123'));
+});
+
+test('handlePanelComponent: cfg_owner_perms_page_disable opens disable page', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_perms_page_disable:guild-123' }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+  assert.match(json.data.embeds[0].title, /Disable Commands/);
+});
+
+test('handlePanelComponent: toggling command in disable menu disables and then re-enables it', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({ 'config:guild-123': JSON.stringify({}) })
+  };
+
+  // 1. Toggle snowday to disabled
+  const disableBody = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'cfg_owner_perm_toggle_disable_g1:guild-123',
+      values: ['snowday']
+    }
+  };
+  const resp1 = await handlePanelComponent(disableBody, env, null, 'guild-123');
+  const json1 = await resp1.json();
+  assert.equal(json1.type, 7);
+  let saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions.snowday, 'disabled');
+  assert.ok(saved.disabled_commands.includes('snowday'));
+
+  // 2. Toggle snowday again to re-enable
+  const enableBody = {
+    member: { user: { id: 'owner-123' } },
+    data: {
+      custom_id: 'cfg_owner_perm_toggle_disable_g1:guild-123',
+      values: ['snowday']
+    }
+  };
+  const resp2 = await handlePanelComponent(enableBody, env, null, 'guild-123');
+  const json2 = await resp2.json();
+  assert.equal(json2.type, 7);
+  saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.equal(saved.command_permissions.snowday, 'everyone');
+  assert.ok(!saved.disabled_commands.includes('snowday'));
+});
+
+test('handlePanelComponent: cfg_owner_perms_enable_all re-enables all disabled commands', async () => {
+  const env = {
+    OWNER_ID: 'owner-123',
+    STATUS_KV: makeKv({
+      'config:guild-123': JSON.stringify({
+        disabled_commands: ['snowday', 'calendar'],
+        command_permissions: { snowday: 'disabled', calendar: 'disabled' }
+      })
+    })
+  };
+
+  const body = {
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_perms_enable_all:guild-123' }
+  };
+
+  const resp = await handlePanelComponent(body, env, null, 'guild-123');
+  const json = await resp.json();
+  assert.equal(json.type, 7);
+  const saved = JSON.parse(await env.STATUS_KV.get('config:guild-123'));
+  assert.deepEqual(saved.disabled_commands, []);
+  assert.equal(saved.command_permissions.snowday, 'everyone');
+  assert.equal(saved.command_permissions.calendar, 'everyone');
 });

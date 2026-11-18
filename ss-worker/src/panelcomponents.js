@@ -193,6 +193,117 @@ export function buildOwnerPermsPayload(targetGuildId, config = {}) {
           emoji: { name: '⬅️' }
         }
       ]
+    },
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 4,
+          custom_id: `cfg_owner_perms_page_disable:${targetGuildId}`,
+          label: 'Disable Commands',
+          emoji: { name: '🚫' }
+        },
+        {
+          type: 2,
+          style: 3,
+          custom_id: `cfg_owner_perms_enable_all:${targetGuildId}`,
+          label: 'Enable All Commands',
+          emoji: { name: '🟢' }
+        }
+      ]
+    }
+  ];
+
+  return {
+    embeds: [embed],
+    components,
+    flags: EPHEMERAL_FLAG
+  };
+}
+
+export function buildOwnerDisablePayload(targetGuildId, config = {}) {
+  const cfg = Array.isArray(config) ? { disabled_commands: config } : (config || {});
+  const disabledList = ALL_COMMANDS_META.filter(c => getCommandTier(cfg, c.name) === 'disabled');
+  const generalCmds = ALL_COMMANDS_META.filter(c => c.category === 'general');
+  const adminCmds = ALL_COMMANDS_META.filter(c => c.category === 'admin');
+
+  const embed = {
+    title: `🚫 Disable Commands — Server \`${targetGuildId}\``,
+    color: 0xE74C3C,
+    description: `### 🚫 Currently Disabled Commands (${disabledList.length})\n` +
+      (disabledList.length ? disabledList.map(c => `\`/${c.name}\``).join(', ') : '*(none — all commands are enabled)*') +
+      `\n\n*Select any command below to toggle it **Disabled ↔ Enabled**.*\n*Disabled commands cannot be used by members or staff (only the bot owner can run them).*`,
+    footer: { text: 'Bot Owner Permissions Panel · Changes save and apply immediately' },
+    timestamp: new Date().toISOString()
+  };
+
+  const components = [
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `cfg_owner_perm_toggle_disable_g1:${targetGuildId}`,
+        placeholder: '🚫 General Commands: Click to toggle Disabled...',
+        options: generalCmds.map(c => {
+          const tier = getCommandTier(cfg, c.name);
+          const isDisabled = tier === 'disabled';
+          return {
+            label: `/${c.name}`,
+            value: c.name,
+            description: isDisabled ? '🚫 Currently DISABLED (click to ENABLE)' : `✅ Currently ${tier.toUpperCase()} (click to DISABLE)`,
+            emoji: { name: isDisabled ? '🚫' : '✅' }
+          };
+        }),
+        min_values: 1,
+        max_values: 1
+      }]
+    },
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `cfg_owner_perm_toggle_disable_g2:${targetGuildId}`,
+        placeholder: '🚫 Staff Commands: Click to toggle Disabled...',
+        options: adminCmds.map(c => {
+          const tier = getCommandTier(cfg, c.name);
+          const isDisabled = tier === 'disabled';
+          return {
+            label: `/${c.name}`,
+            value: c.name,
+            description: isDisabled ? '🚫 Currently DISABLED (click to ENABLE)' : `✅ Currently ${tier.toUpperCase()} (click to DISABLE)`,
+            emoji: { name: isDisabled ? '🚫' : '✅' }
+          };
+        }),
+        min_values: 1,
+        max_values: 1
+      }]
+    },
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 1,
+          custom_id: `cfg_owner_perms_page_disable:${targetGuildId}`,
+          label: 'Refresh',
+          emoji: { name: '🔄' }
+        },
+        {
+          type: 2,
+          style: 3,
+          custom_id: `cfg_owner_perms_enable_all:${targetGuildId}`,
+          label: 'Enable All Commands',
+          emoji: { name: '🟢' }
+        },
+        {
+          type: 2,
+          style: 2,
+          custom_id: `cfg_owner_perms_refresh:${targetGuildId}`,
+          label: 'Back to Permissions',
+          emoji: { name: '⬅️' }
+        }
+      ]
     }
   ];
 
@@ -331,7 +442,72 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return jsonResponse({ type: 7, data: buildOwnerPermsPayload(targetGuildId, config) });
   }
 
-  if (customId.startsWith('cfg_owner_perms_reset_defaults:') || customId.startsWith('cfg_owner_perms_enable_all:')) {
+  if (customId.startsWith('cfg_owner_perms_page_disable:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
+    return jsonResponse({ type: 7, data: buildOwnerDisablePayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perm_toggle_disable_g1:') ||
+      customId.startsWith('cfg_owner_perm_toggle_disable_g2:') ||
+      customId.startsWith('cfg_owner_perm_toggle_disable:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const values = body.data?.values || [];
+    const selectedCmd = values[0];
+    const config = await getConfig(env, targetGuildId);
+    if (!config.command_permissions) config.command_permissions = {};
+
+    if (selectedCmd) {
+      const currentTier = getCommandTier(config, selectedCmd);
+      if (currentTier === 'disabled') {
+        const meta = ALL_COMMANDS_META.find(c => c.name === selectedCmd);
+        config.command_permissions[selectedCmd] = meta ? meta.defaultTier : 'everyone';
+        if (Array.isArray(config.disabled_commands)) {
+          config.disabled_commands = config.disabled_commands.filter(c => c !== selectedCmd);
+        }
+      } else {
+        config.command_permissions[selectedCmd] = 'disabled';
+        if (!Array.isArray(config.disabled_commands)) config.disabled_commands = [];
+        if (!config.disabled_commands.includes(selectedCmd)) {
+          config.disabled_commands.push(selectedCmd);
+        }
+      }
+      await setConfig(env, targetGuildId, config);
+    }
+
+    return jsonResponse({ type: 7, data: buildOwnerDisablePayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_enable_all:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetGuildId = customId.split(':')[1];
+    const config = await getConfig(env, targetGuildId);
+    config.disabled_commands = [];
+    if (config.command_permissions) {
+      for (const [k, v] of Object.entries(config.command_permissions)) {
+        if (v === 'disabled') {
+          const meta = ALL_COMMANDS_META.find(c => c.name === k);
+          config.command_permissions[k] = meta ? meta.defaultTier : 'everyone';
+        }
+      }
+    }
+    await setConfig(env, targetGuildId, config);
+
+    return jsonResponse({ type: 7, data: buildOwnerDisablePayload(targetGuildId, config) });
+  }
+
+  if (customId.startsWith('cfg_owner_perms_reset_defaults:')) {
     const ownerId = String(env.OWNER_ID || '').trim();
     if (!ownerId || getInvokerId(body) !== ownerId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
