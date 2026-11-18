@@ -90,8 +90,12 @@ async function handleScraperFailure(env, logChannelId, config, error) {
     if (!alreadyAlerted) {
       await env.STATUS_KV.put('scraper_failure_alerted', 'true');
 
-      const staffRoleId = config.staff_role_id;
-      const pingText = staffRoleId ? `<@&${staffRoleId}> ` : '';
+      const staffRoles = [
+        ...(Array.isArray(config.staff_role_ids) ? config.staff_role_ids : []),
+        ...(config.staff_role_id ? [config.staff_role_id] : [])
+      ];
+      const uniqueStaffRoles = [...new Set(staffRoles)];
+      const pingText = uniqueStaffRoles.length ? uniqueStaffRoles.map(id => `<@&${id}>`).join(' ') + ' ' : '';
       const errorMessage = error && error.message ? error.message : 'Unknown scraping error';
 
       const token = env.DISCORD_BOT_TOKEN;
@@ -106,7 +110,7 @@ async function handleScraperFailure(env, logChannelId, config, error) {
             content: `⚠️ ${pingText}**SCRAPER FAILURE ALERT!**\nThe HCPSS status scraper has failed **${currentFailures} consecutive times**.\n` +
                      `• Latest Error: \`${errorMessage}\`\n` +
                      `• This warning will not repeat until the scraper recovers.`,
-            allowed_mentions: staffRoleId ? { roles: [staffRoleId] } : { parse: [] }
+            allowed_mentions: uniqueStaffRoles.length ? { roles: uniqueStaffRoles } : { parse: [] }
           })
         }).catch(() => {});
       }
@@ -159,8 +163,12 @@ async function handleFormatDrift(env, targetGuildIds, getCfg, reason) {
   let cfg = null;
   try { cfg = firstGuild ? await getCfg(firstGuild) : getEffectiveConfig(await getConfig(env, env.DISCORD_GUILD_ID)); } catch {}
   if (cfg && cfg.toggle_error_alerts === false) return;
-  const staffRoleId = cfg && cfg.staff_role_id;
-  const pingText = staffRoleId ? `<@&${staffRoleId}> ` : '';
+  const staffRoles = [
+    ...(Array.isArray(cfg && cfg.staff_role_ids) ? cfg.staff_role_ids : []),
+    ...(cfg && cfg.staff_role_id ? [cfg.staff_role_id] : [])
+  ];
+  const uniqueStaffRoles = [...new Set(staffRoles)];
+  const pingText = uniqueStaffRoles.length ? uniqueStaffRoles.map(id => `<@&${id}>`).join(' ') + ' ' : '';
   const logChannelId = cfg && cfg.log_channel_id;
   const token = env.DISCORD_BOT_TOKEN;
   if (!token || !logChannelId) return;
@@ -171,7 +179,7 @@ async function handleFormatDrift(env, targetGuildIds, getCfg, reason) {
       content: `⚠️ ${pingText}**STATUS PAGE FORMAT DRIFT!**\nThe HCPSS status page changed shape and the bot held this check instead of posting.\n` +
                `• Reason: \`${reason}\`\n` +
                `• No status was posted. The last known good status is still shown.`,
-      allowed_mentions: staffRoleId ? { roles: [staffRoleId] } : { parse: [] }
+      allowed_mentions: uniqueStaffRoles.length ? { roles: uniqueStaffRoles } : { parse: [] }
     })
   }).catch(() => {});
 }

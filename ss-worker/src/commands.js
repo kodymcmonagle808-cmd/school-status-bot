@@ -365,7 +365,7 @@ export async function runMyDataViewCommand(env, guildId) {
         `• **Server ID**: \`${guildId || '(unknown)'}\`\n` +
         `• **Setup completed**: ${setupDone === 'true' ? 'Yes' : 'No'}\n` +
         `• **Configured channels**: alerts ${cfg.alert_channel_id ? `<#${cfg.alert_channel_id}>` : '*(not set)*'} · logs ${cfg.log_channel_id ? `<#${cfg.log_channel_id}>` : '*(not set)*'}\n` +
-        `• **Staff role**: ${stored.staff_role_id ? `<@&${stored.staff_role_id}>` : '*(none — Administrators only)*'}\n` +
+        `• **Staff role(s)**: ${(Array.isArray(stored.staff_role_ids) && stored.staff_role_ids.length > 0) ? stored.staff_role_ids.map(id => `<@&${id}>`).join(', ') : (stored.staff_role_id ? `<@&${stored.staff_role_id}>` : '*(none — Administrators only)*')}\n` +
         `• **Notification ping roles**: ${pingRoleCount} configured\n` +
         `• **Server settings**: feature toggles, check schedule, embed colors/footer\n` +
         `• **DM subscribers**: ${subscribers.length} user ID(s) (opted in via 🔔 or \`/notify\`)\n` +

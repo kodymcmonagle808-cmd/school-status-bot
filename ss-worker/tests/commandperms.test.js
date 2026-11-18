@@ -8,6 +8,7 @@ import {
 } from '../src/config.js';
 
 import { buildOwnerPermsPayload, buildOwnerDisablePayload, handlePanelComponent } from '../src/panelcomponents.js';
+import { buildControlPanelPayload, applyConfigUpdate } from '../src/panel.js';
 
 function makeKv(store = {}) {
   const map = new Map(Object.entries(store));
@@ -355,4 +356,68 @@ test('handlePanelComponent: cfg_owner_perms_enable_all re-enables all disabled c
   assert.deepEqual(saved.disabled_commands, []);
   assert.equal(saved.command_permissions.snowday, 'everyone');
   assert.equal(saved.command_permissions.calendar, 'everyone');
+});
+
+test('canMemberExecuteCommand: allows member matching any role in staff_role_ids', async () => {
+  const env = {
+    STATUS_KV: makeKv({
+      'config:g1': JSON.stringify({
+        staff_role_ids: ['role-lead', 'role-mod']
+      })
+    })
+  };
+
+  const plainMember = { user: { id: 'plain-1' }, permissions: '0', roles: ['role-student'] };
+  const leadMember = { user: { id: 'lead-1' }, permissions: '0', roles: ['role-lead'] };
+  const modMember = { user: { id: 'mod-1' }, permissions: '0', roles: ['role-mod'] };
+
+  const plainRes = await canMemberExecuteCommand('post-status', plainMember, env, 'g1');
+  assert.equal(plainRes.allowed, false);
+
+  const leadRes = await canMemberExecuteCommand('post-status', leadMember, env, 'g1');
+  assert.equal(leadRes.allowed, true);
+
+  const modRes = await canMemberExecuteCommand('post-status', modMember, env, 'g1');
+  assert.equal(modRes.allowed, true);
+});
+
+test('buildControlPanelPayload: config_commands page renders staff roles and role select menu', async () => {
+  const env = { STATUS_KV: makeKv({}) };
+  const config = {
+    staff_role_ids: ['role-111', 'role-222']
+  };
+  const payload = await buildControlPanelPayload(env, 'g1', config, 'config_commands');
+  assert.ok(payload.embeds && payload.embeds.length === 1);
+  assert.match(payload.embeds[0].title, /Command Permissions & Roles/);
+  assert.match(payload.embeds[0].description, /<@&role-111>, <@&role-222>/);
+
+  const roleSelectRow = payload.components.find(r => r.components && r.components.some(c => c.custom_id === 'cfg_staff_role'));
+  assert.ok(roleSelectRow, 'Must include cfg_staff_role component');
+  const roleSelect = roleSelectRow.components.find(c => c.custom_id === 'cfg_staff_role');
+  assert.equal(roleSelect.type, 6);
+  assert.equal(roleSelect.max_values, 10);
+});
+
+test('applyConfigUpdate: cfg_staff_role saves array to staff_role_ids and first role to staff_role_id', async () => {
+  const env = {
+    STATUS_KV: makeKv({
+      'config:g1': JSON.stringify({})
+    })
+  };
+  const body = {
+    guild_id: 'g1',
+    data: {
+      custom_id: 'cfg_staff_role',
+      values: ['role-alpha', 'role-beta']
+    }
+  };
+
+  const updatedConfig = await applyConfigUpdate(body, env);
+  assert.ok(updatedConfig);
+  assert.equal(updatedConfig.staff_role_id, 'role-alpha');
+  assert.deepEqual(updatedConfig.staff_role_ids, ['role-alpha', 'role-beta']);
+
+  const saved = JSON.parse(await env.STATUS_KV.get('config:g1'));
+  assert.equal(saved.staff_role_id, 'role-alpha');
+  assert.deepEqual(saved.staff_role_ids, ['role-alpha', 'role-beta']);
 });

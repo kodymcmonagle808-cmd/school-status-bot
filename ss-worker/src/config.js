@@ -49,6 +49,9 @@ export async function setConfig(env, guildId, next) {
 export function getEffectiveConfig(stored) {
   const next = { ...(stored || {}) };
   if (!next.staff_role_id) next.staff_role_id = DEFAULT_STAFF_ROLE_ID;
+  if (!Array.isArray(next.staff_role_ids)) {
+    next.staff_role_ids = next.staff_role_id ? [next.staff_role_id] : [];
+  }
   if (!next.log_channel_id) next.log_channel_id = DEFAULT_LOG_CHANNEL_ID;
   // `ping_role_ids` may be a flat array (legacy format, treated as the
   // "default" category) or an object keyed by alert category:
@@ -96,7 +99,11 @@ export async function canUseCommands(member, env, guildId = '') {
   if (memberIsAdmin(member)) return true;
   const stored = await getConfig(env, guildId);
   const cfg = getEffectiveConfig(stored);
-  return memberHasRole(member, cfg.staff_role_id);
+  const staffRoleIds = [
+    ...(Array.isArray(cfg.staff_role_ids) ? cfg.staff_role_ids : []),
+    ...(cfg.staff_role_id ? [cfg.staff_role_id] : [])
+  ];
+  return staffRoleIds.some(roleId => memberHasRole(member, roleId));
 }
 
 export async function canConfigure(member, env, guildId = '') {

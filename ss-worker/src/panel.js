@@ -709,7 +709,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   if (page === 'config_general') {
     const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
     const logChannel = config.log_channel_id ? `<#${config.log_channel_id}>` : '(not set)';
-    const staffRole = config.staff_role_id ? `<@&${config.staff_role_id}>` : '(not set)';
+    const staffRoles = (Array.isArray(config.staff_role_ids) && config.staff_role_ids.length > 0)
+      ? config.staff_role_ids.map(id => `<@&${id}>`).join(', ')
+      : (config.staff_role_id ? `<@&${config.staff_role_id}>` : '(not set)');
     const embedFooter = config.alert_embed_footer || '(default)';
 
     const embed = {
@@ -718,9 +720,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       description: `### 🔧 Server Settings\n` +
                    `• **Alerts Destination**: ${channel}\n` +
                    `• **System Logs Destination**: ${logChannel}\n` +
-                   `• **Moderator Staff Role**: ${staffRole}\n` +
+                   `• **Authorized Staff Roles**: ${staffRoles}\n` +
                    `• **Alert Embed Footer**: \`${embedFooter}\`\n\n` +
-                   `*Pick a channel or role below to change it — saves instantly.*\n` +
+                   `*Pick a channel or staff role(s) below to change it — saves instantly.*\n` +
                    `*Check times and feature toggles have their own pages in the 🧭 navigation menu.*`,
       timestamp: new Date().toISOString()
     };
@@ -754,9 +756,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         components: [{
           type: 6,
           custom_id: 'cfg_staff_role',
-          placeholder: 'Select staff role',
+          placeholder: 'Select staff role(s)',
           min_values: 1,
-          max_values: 1
+          max_values: 10
         }]
       },
       actionSelectRow([
@@ -1648,31 +1650,41 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   }
 
   if (page === 'config_commands') {
+    const staffRoles = (Array.isArray(config.staff_role_ids) && config.staff_role_ids.length > 0)
+      ? config.staff_role_ids.map(id => `<@&${id}>`).join(', ')
+      : (config.staff_role_id ? `<@&${config.staff_role_id}>` : '*(none — Administrators only)*');
+
     const embed = {
-      title: '📜 Control Panel — Command List',
+      title: '📜 Control Panel — Command Permissions & Roles',
       color: 0x1ABC9C,
-      description: `### 🤖 Available Slash Commands\n\n` +
-                   `• **\`/post-status\`**: Post the latest HCPSS status now.\n` +
-                   `• **\`/override set\`**: Enable a status override for 1-30 days.\n` +
-                   `• **\`/override clear\`**: Disable the active override immediately.\n` +
-                   `• **\`/calendar\`**: Show scheduled closures or events in the next 7 days.\n` +
-                   `• **\`/history\`**: Show the last 10 operating status changes.\n` +
-                   `• **\`/districts\`**: Show neighboring school districts' operating status.\n` +
-                   `• **\`/events list\`**: List all dynamic calendar events.\n` +
-                   `• **\`/events add\`**: Add a dynamic calendar event (YYYY-MM-DD).\n` +
-                   `• **\`/events remove\`**: Remove a dynamic calendar event.\n` +
-                   `• **\`/stats\`**: Show status check and operating status statistics.\n` +
-                   `• **\`/setup\`**: Initial one-time setup for the status monitor.\n` +
-                   `• **\`/announce\`**: Post a custom embed announcement in the current channel.\n` +
-                   `• **\`/refresh-panel\`**: Refresh the control panel embed in the log channel.\n\n` +
-                   `### 🔔 DM Notifications\n` +
-                   `Anyone can click the **Notify Me** button on a status message to get a DM when the operating status changes. Click again to unsubscribe.\n\n` +
-                   `*Use these commands in any channel where the bot has permission to read and send messages.*`,
+      description: `### 🛡️ Authorized Staff Roles\n` +
+                   `• **Staff Roles**: ${staffRoles}\n\n` +
+                   `*Members with these roles (plus Administrators) can run all staff commands and control panel actions.*\n` +
+                   `*Select roles below to add or update authorized staff roles.*` +
+                   `\n\n### 🤖 Staff-Only Commands\n` +
+                   `• \`/post-status\`, \`/override\`, \`/manualstatus\`, \`/events\`, \`/announce\`, \`/refresh-panel\`, \`/setup\`, \`/setupjoinlogs\`, \`/emailchannel\`, \`/districtchannel\`, \`/backup-db\`, \`/health\`, \`/addroledm\`\n\n` +
+                   `### 🌐 Everyone Commands\n` +
+                   `• \`/status\`, \`/snowday\`, \`/calendar\`, \`/history\`, \`/districts\`, \`/outages\`, \`/stats\`, \`/notify\`, \`/myschool\`, \`/setupclasses\`, \`/mapmyclass\`, \`/requestannouncement\`, \`/searchemails\`, \`/widget\`, \`/help\`\n\n` +
+                   `💡 **Making Staff Commands visible in Discord's \`/\` menu:**\n` +
+                   `Discord automatically hides staff commands from non-administrators. To make them visible to your staff roles in Discord:\n` +
+                   `1. Go to **Server Settings ➔ Integrations**\n` +
+                   `2. Click **Centennial School & Status** ➔ **Manage**\n` +
+                   `3. Under **Command Permissions**, add your staff role(s) to allow access!`,
       timestamp: new Date().toISOString()
     };
 
     const components = [
-      getNavBarRow('config_commands')
+      getNavBarRow('config_commands'),
+      {
+        type: 1,
+        components: [{
+          type: 6,
+          custom_id: 'cfg_staff_role',
+          placeholder: 'Select authorized staff role(s)...',
+          min_values: 1,
+          max_values: 10
+        }]
+      }
     ];
 
     return { embeds: [embed], components };
@@ -2253,6 +2265,7 @@ export async function applyConfigUpdate(body, env) {
     next.log_channel_id = values[0];
   } else if (customId === 'cfg_staff_role' && Array.isArray(values) && values[0]) {
     next.staff_role_id = values[0];
+    next.staff_role_ids = values;
   } else if (customId === 'cfg_music_channel' && Array.isArray(values) && values[0]) {
     next.music_channel_id = values[0];
   } else if (customId === 'cfg_music_role' && Array.isArray(values) && values[0]) {
