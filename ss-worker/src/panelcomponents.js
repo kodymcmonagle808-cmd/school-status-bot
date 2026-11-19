@@ -23,7 +23,19 @@ import { delay, formatScheduleTimeLabel } from './timeutil.js';
 import { HCPSS_URL } from './scraper.js';
 import { getConfig, setConfig, getEffectiveConfig, canConfigure, clearOverride, ALL_COMMANDS_META, getCommandTier } from './config.js';
 import { splitEmbeds } from './embeds.js';
-import { PANEL_NAV_TABS, buildControlPanelPayload, buildBotStatusPayload, buildWorkerUpdatesPayload } from './panel.js';
+import {
+  PANEL_NAV_TABS,
+  buildControlPanelPayload,
+  buildBotStatusPayload,
+  buildWorkerUpdatesPayload,
+  buildOwnerFeaturesPayload,
+  setMainGuildId,
+  isMainGuild,
+  getDisabledPanelTabs,
+  setDisabledPanelTabs,
+  getAllKnownGuildIds,
+  fetchGuildSummaries
+} from './panel.js';
 import { logAction } from './actionlog.js';
 import { isGuildBlocked, setGuildBlocked } from './blocklist.js';
 import { doCheckAndPost } from './check.js';
@@ -46,8 +58,14 @@ import {
 // deadline. `target` is passed as the page override so the render doesn't race
 // the KV write of the same key (KV is not read-your-own-write consistent).
 async function renderPanelNav(env, body, guildId, target) {
-  await env.STATUS_KV.put(`panel_page:${guildId}`, target);
-  const payload = await buildControlPanelPayload(env, guildId, null, target);
+  let effectiveTarget = target;
+  const isMain = await isMainGuild(env, guildId);
+  const disabledTabs = isMain ? [] : await getDisabledPanelTabs(env, guildId);
+  if (!isMain && disabledTabs.includes(target)) {
+    effectiveTarget = 'dashboard';
+  }
+  await env.STATUS_KV.put(`panel_page:${guildId}`, effectiveTarget);
+  const payload = await buildControlPanelPayload(env, guildId, null, effectiveTarget);
   return jsonResponse({ type: 7, data: payload });
 }
 
@@ -545,6 +563,100 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const ownerPayload = await buildWorkerUpdatesPayload(env);
     ownerPayload.content = `✅ Saved disabled commands for server ${targetGuildId}: ` + (values.length ? values.map(v => `\`${v}\``).join(', ') : 'None (all allowed)');
     return interactionResponse({ ...ownerPayload, flags: EPHEMERAL_FLAG });
+  }
+
+  if (customId === 'panel_owner_set_main_server') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Only the bot owner can set the CHS Main Server.', flags: EPHEMERAL_FLAG });
+    }
+    const values = body.data?.values || [];
+    const selectedGuildId = values[0];
+    if (selectedGuildId) {
+      await setMainGuildId(env, selectedGuildId);
+      logAction(`🏫 Set CHS Main Server to ${selectedGuildId}`, { guildId: selectedGuildId });
+    }
+    const payload = await buildWorkerUpdatesPayload(env);
+    payload.content = `✅ Successfully designated server \`${selectedGuildId}\` as the **CHS Main Server**! It exclusively runs **CHS CONTROLS** with all 19 tabs active.`;
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId === 'panel_owner_features_manage' || customId.startsWith('cfg_owner_features_refresh:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const scope = customId.startsWith('cfg_owner_features_refresh:') ? customId.split(':')[1] : 'normal';
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, scope || 'normal', servers);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_toggle_panel_feature:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.split(':')[1] || 'normal';
+    const values = body.data?.values || [];
+    const selectedTab = values[0];
+    if (selectedTab) {
+      let disabled = await getDisabledPanelTabs(env, targetScope);
+      if (disabled.includes(selectedTab)) {
+        disabled = disabled.filter(t => t !== selectedTab);
+      } else {
+        disabled = [...disabled, selectedTab];
+      }
+      await setDisabledPanelTabs(env, targetScope, disabled);
+      logAction(`🎛️ Toggled panel tab ${selectedTab} for ${targetScope}`, { guildId: targetScope });
+    }
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId === 'cfg_owner_features_scope_select') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const values = body.data?.values || [];
+    const targetScope = values[0] || 'normal';
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_features_enable_all:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.split(':')[1] || 'normal';
+    await setDisabledPanelTabs(env, targetScope, []);
+    logAction(`🎛️ Enabled all panel tabs for ${targetScope}`, { guildId: targetScope });
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_features_disable_extras:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.split(':')[1] || 'normal';
+    const extras = ['config_music', 'config_joinlogs', 'config_announcementrequests', 'config_autoreply', 'config_emails'];
+    await setDisabledPanelTabs(env, targetScope, extras);
+    logAction(`🎛️ Disabled extra panel tabs for ${targetScope}`, { guildId: targetScope });
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    return jsonResponse({ type: 7, data: payload });
   }
 
   if (customId === 'panel_owner_return') {

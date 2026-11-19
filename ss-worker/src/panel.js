@@ -111,6 +111,82 @@ export const PANEL_NAV_TABS = [
   { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, voice tests, and system tests' }
 ];
 
+export const MAIN_GUILD_KEY = 'main_guild_id';
+export const NORMAL_DISABLED_PANEL_TABS_KEY = 'disabled_panel_tabs_normal';
+
+export const TOGGLEABLE_PANEL_TABS = [
+  { value: 'config_music', label: 'Music Settings', emoji: '🎵', description: 'Music channel and VC voice controls' },
+  { value: 'config_joinlogs', label: 'Join Logs & Roles', emoji: '👋', description: 'Join channel, ping role, auto-roles' },
+  { value: 'config_announcementrequests', label: 'Announcement Requests', emoji: '📝', description: 'Student announcement approval queue' },
+  { value: 'config_autoreply', label: 'Keyword Auto-Reply', emoji: '💬', description: 'Triggered automated responses' },
+  { value: 'config_emails', label: 'School Emails', emoji: '📧', description: 'HCPSS announcement emails & channel' },
+  { value: 'config_analytics', label: 'Analytics & Trends', emoji: '📊', description: 'School closure charts & database trends' },
+  { value: 'config_calendar', label: 'Calendar Events', emoji: '📅', description: 'Closures and custom school events' },
+  { value: 'config_nws_pings', label: 'NWS Ping Roles', emoji: '⚠️', description: 'Per-hazard weather alert ping routing' },
+  { value: 'config_status', label: 'Status Theme & Pings', emoji: '🎨', description: 'Custom embed colors and pings per status' },
+  { value: 'config_schedule', label: 'Check Schedule', emoji: '🗓️', description: 'Daily check times & recurring slots' },
+  { value: 'config_stats', label: 'Stats & Override', emoji: '📈', description: 'Status overrides and scrape statistics' },
+  { value: 'config_manual_status', label: 'Manual School Status', emoji: '🏫', description: 'Set manual operations and custom notes' },
+  { value: 'config_debug', label: 'Debug & Diagnostics', emoji: '🛠️', description: 'Staff test suite and diagnostics' },
+  { value: 'dashboard_logs', label: 'Recent Logs', emoji: '📋', description: 'Recent activity logs tab' },
+  { value: 'dashboard_bot_status', label: 'Bot Health Bars', emoji: '📡', description: 'Latency, uptime, and health bars' },
+  { value: 'config_commands', label: 'Command Permissions List', emoji: '📜', description: 'List of slash commands and permissions' },
+  { value: 'config_toggles', label: 'Feature Toggles Tab', emoji: '🔔', description: 'Turn alerts and automations on/off' },
+  { value: 'config_general', label: 'General Settings', emoji: '⚙️', description: 'Alert channels and authorized staff roles' }
+];
+
+export async function getMainGuildId(env) {
+  try {
+    const fromKv = await env?.STATUS_KV?.get(MAIN_GUILD_KEY);
+    if (fromKv && fromKv.trim()) return fromKv.trim();
+  } catch {}
+  return (env?.DISCORD_GUILD_ID && String(env.DISCORD_GUILD_ID).trim()) || null;
+}
+
+export async function setMainGuildId(env, guildId) {
+  if (!env?.STATUS_KV) return;
+  if (guildId) {
+    await env.STATUS_KV.put(MAIN_GUILD_KEY, String(guildId).trim());
+  } else {
+    await env.STATUS_KV.delete(MAIN_GUILD_KEY);
+  }
+}
+
+export async function isMainGuild(env, guildId) {
+  if (!guildId) return false;
+  const mainId = await getMainGuildId(env);
+  return Boolean(mainId && String(guildId).trim() === String(mainId).trim());
+}
+
+export async function getDisabledPanelTabs(env, targetScope = 'normal') {
+  if (targetScope && targetScope !== 'normal' && await isMainGuild(env, targetScope)) {
+    return [];
+  }
+  if (targetScope && targetScope !== 'normal') {
+    try {
+      const perGuild = await env?.STATUS_KV?.get(`disabled_panel_tabs:${targetScope}`);
+      if (perGuild) {
+        const parsed = JSON.parse(perGuild);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+  }
+  try {
+    const raw = await env?.STATUS_KV?.get(NORMAL_DISABLED_PANEL_TABS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+export async function setDisabledPanelTabs(env, target = 'normal', disabledList = []) {
+  if (!env?.STATUS_KV) return;
+  const key = target === 'normal' ? NORMAL_DISABLED_PANEL_TABS_KEY : `disabled_panel_tabs:${target}`;
+  await env.STATUS_KV.put(key, JSON.stringify(disabledList));
+}
+
 function getNavTabForPage(page) {
   if (page === 'config_override_select' || page === 'config_manual_status') return 'config_manual_status';
   if (page === 'config_schedule_add') return 'config_schedule';
@@ -145,6 +221,7 @@ export const STAFF_DEBUG_OPTIONS = [
 ];
 
 export const OWNER_DEBUG_OPTIONS = [
+  { label: 'Manage Server Panel Tabs', value: 'panel_owner_features_manage', description: 'Turn control panel tabs on/off for normal servers', emoji: { name: '🎛️' } },
   { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild', emoji: { name: '🗄️' } },
   { label: 'Purge Caches', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
   { label: 'View Raw Config', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
@@ -170,8 +247,11 @@ export function debugSelectRow(options = DEBUG_DROPDOWN_OPTIONS, placeholder = '
   };
 }
 
-function getNavBarRow(activeTab) {
+export function getNavBarRow(activeTab, disabledTabs = []) {
   const activeValue = getNavTabForPage(activeTab);
+  const disabled = Array.isArray(disabledTabs) ? disabledTabs : [];
+  const visibleTabs = PANEL_NAV_TABS.filter(tab => !disabled.includes(tab.value));
+  const effectiveActive = visibleTabs.some(t => t.value === activeValue) ? activeValue : 'dashboard';
 
   return {
     type: 1,
@@ -179,12 +259,12 @@ function getNavBarRow(activeTab) {
       type: 3,
       custom_id: 'panel_nav_select',
       placeholder: '🧭 Go to panel page...',
-      options: PANEL_NAV_TABS.map(tab => ({
+      options: visibleTabs.map(tab => ({
         label: tab.label,
         value: tab.value,
         description: tab.description,
         emoji: { name: tab.emoji },
-        default: tab.value === activeValue
+        default: tab.value === effectiveActive
       })),
       min_values: 1,
       max_values: 1
@@ -252,8 +332,12 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
   const isFinal = f >= 1;
   const refreshHint = isFinal ? '' : '⏳ *Refreshing…*\n\n';
 
+  const isMain = await isMainGuild(env, guildId);
+  const disabledTabs = isMain ? [] : await getDisabledPanelTabs(env, guildId);
+  const panelPrefix = isMain ? 'CHS CONTROLS' : 'Control Panel';
+
   const embed = {
-    title: '📡 Control Panel — Bot Health',
+    title: `📡 ${panelPrefix} — Bot Health`,
     color: 0x5865F2,
     description:
       `${refreshHint}### 📡 Live Bot Health Metrics\n\n` +
@@ -276,11 +360,11 @@ export async function buildBotStatusPayload(env, guildId, fraction = 1) {
       `${barFromFilled(scale(incidentFilled))}\n` +
       `> Filled = more non-normal status events recorded`,
     timestamp: new Date().toISOString(),
-    footer: { text: 'School Status · Bot Status  •  ■ = filled  · space = empty' }
+    footer: { text: isMain ? 'CHS CONTROLS · Bot Status' : 'School Status · Bot Status  •  ■ = filled  · space = empty' }
   };
 
   const components = [
-    getNavBarRow('dashboard_bot_status'),
+    getNavBarRow('dashboard_bot_status', disabledTabs),
     actionSelectRow([
       { label: 'Refresh Metrics', value: 'panel_to_dashboard_bot_status', description: 'Re-measure and animate the health bars', emoji: { name: '🔄' } },
       { label: 'View Recent Logs', value: 'panel_to_dashboard_logs', description: 'Switch to the recent activity logs page', emoji: { name: '📋' } }
@@ -482,7 +566,28 @@ export function buildServerLines(servers, blockedIds, homeGuildId) {
 
 // Resolves guild names via the Discord API with a 1h KV cache so the owner
 // page renders inside the interaction deadline.
-async function fetchGuildSummaries(env, guildIds) {
+export async function getAllKnownGuildIds(env) {
+  let indexIds = [];
+  try {
+    const rawIndex = await env?.STATUS_KV?.get('guild_index');
+    const index = rawIndex ? JSON.parse(rawIndex) : [];
+    if (Array.isArray(index)) indexIds = index.filter(Boolean);
+  } catch {}
+
+  let blockedIds = [];
+  try { blockedIds = await getBlockedGuilds(env); } catch {}
+
+  const mainGuildId = await getMainGuildId(env);
+
+  return [...new Set([
+    ...indexIds,
+    ...blockedIds,
+    ...(env?.DISCORD_GUILD_ID ? [env.DISCORD_GUILD_ID] : []),
+    ...(mainGuildId ? [mainGuildId] : [])
+  ])];
+}
+
+export async function fetchGuildSummaries(env, guildIds) {
   let cache = {};
   try {
     const raw = await env.STATUS_KV.get('guild_names_cache');
@@ -540,13 +645,23 @@ export async function buildWorkerUpdatesPayload(env) {
   // index ∪ blocklist ∪ home guild.
   let blockedIds = [];
   try { blockedIds = await getBlockedGuilds(env); } catch {}
-  const allIds = [...new Set([
-    ...indexIds,
-    ...blockedIds,
-    ...(env.DISCORD_GUILD_ID ? [env.DISCORD_GUILD_ID] : [])
-  ])];
+  const allIds = await getAllKnownGuildIds(env);
   let servers = allIds.map(id => ({ id, name: '(name unavailable)' }));
   try { servers = await fetchGuildSummaries(env, allIds); } catch {}
+
+  const mainGuildId = await getMainGuildId(env);
+  const disabledNormal = await getDisabledPanelTabs(env, 'normal');
+  const mainServerObj = servers.find(s => s.id === mainGuildId);
+  const mainServerDisplay = mainServerObj
+    ? `⭐ **${mainServerObj.name}** (\`${mainGuildId}\`)`
+    : (mainGuildId ? `⭐ Guild ID \`${mainGuildId}\`` : '*(none set — select below)*');
+
+  const disabledDesc = disabledNormal.length > 0
+    ? `**${disabledNormal.length} tabs hidden** (${disabledNormal.map(t => {
+        const match = TOGGLEABLE_PANEL_TABS.find(x => x.value === t);
+        return match ? match.label : t;
+      }).join(', ')})`
+    : 'All tabs visible';
 
   let stats = {};
   try {
@@ -618,6 +733,14 @@ export async function buildWorkerUpdatesPayload(env) {
       lastCheckLatencyMs
     }).concat([
       ...storageFields,
+      {
+        name: '🏫 CHS Main Server & Server Panel Settings',
+        value: `• **CHS Main Server**: ${mainServerDisplay}\n` +
+               `• **CHS Panel**: Runs full **CHS CONTROLS** (all 19 tabs active)\n` +
+               `• **Normal Servers**: Standard Control Panel (${disabledDesc})\n` +
+               `*Set your CHS Main Server below, or click **Panel Tabs** to turn options on/off.*`,
+        inline: false
+      },
       { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false },
       { name: '🌐 Servers', value: buildServerLines(servers, blockedIds, env.DISCORD_GUILD_ID || ''), inline: false }
     ]),
@@ -625,40 +748,66 @@ export async function buildWorkerUpdatesPayload(env) {
     footer: { text: 'School Status · Worker Updates  •  visible to the bot owner only' }
   };
 
+  const components = [];
+
   // Lock/unlock select: every server except the home guild (several cron
   // paths force-include it, so blocking it would half-work at best).
-  const lockable = servers.filter(s => s.id !== env.DISCORD_GUILD_ID).slice(0, 25);
-  const components = lockable.length ? [{
-    type: 1,
-    components: [{
-      type: 3,
-      custom_id: 'panel_owner_lock_select',
-      placeholder: '🔐 Lock down / unlock a server...',
-      options: lockable.map(s => ({
-        label: s.name.slice(0, 100),
-        value: s.id,
-        description: blockedIds.includes(s.id) ? 'Locked — select to unlock' : 'Select to lock down (no posts, no commands)',
-        emoji: { name: blockedIds.includes(s.id) ? '🔒' : '🟢' }
-      })),
-      min_values: 1,
-      max_values: 1
-    }]
-  }] : [];
+  const lockable = servers.filter(s => s.id !== env.DISCORD_GUILD_ID && s.id !== mainGuildId).slice(0, 25);
+  if (lockable.length) {
+    components.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'panel_owner_lock_select',
+        placeholder: '🔐 Lock down / unlock a server...',
+        options: lockable.map(s => ({
+          label: s.name.slice(0, 100),
+          value: s.id,
+          description: blockedIds.includes(s.id) ? 'Locked — select to unlock' : 'Select to lock down (no posts, no commands)',
+          emoji: { name: blockedIds.includes(s.id) ? '🔒' : '🟢' }
+        })),
+        min_values: 1,
+        max_values: 1
+      }]
+    });
+  }
+
+  // Set CHS Main Server dropdown
+  const selectableServers = servers.slice(0, 25);
+  if (selectableServers.length) {
+    components.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'panel_owner_set_main_server',
+        placeholder: '🏫 Set CHS Main Server (for CHS CONTROLS)...',
+        options: selectableServers.map(s => ({
+          label: s.name.slice(0, 100),
+          value: s.id,
+          description: s.id === mainGuildId ? '⭐ Currently set as CHS Main Server' : 'Set as CHS Main Server',
+          emoji: { name: s.id === mainGuildId ? '⭐' : '🏫' },
+          default: s.id === mainGuildId
+        })),
+        min_values: 1,
+        max_values: 1
+      }]
+    });
+  }
 
   const permServers = servers.slice(0, 25);
-    if (permServers.length) {
-      components.push({
-        type: 1,
-        components: [{
-          type: 3,
-          custom_id: 'panel_owner_perms_select',
-          placeholder: '⚙️ Manage Command Permissions...',
-          options: permServers.map(s => ({
-            label: s.name.slice(0, 100),
-            value: s.id,
-            description: 'View all commands & configure Staff vs Everyone',
-            emoji: { name: '⚙️' }
-          })),
+  if (permServers.length) {
+    components.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'panel_owner_perms_select',
+        placeholder: '⚙️ Manage Command Permissions...',
+        options: permServers.map(s => ({
+          label: s.name.slice(0, 100),
+          value: s.id,
+          description: 'View all commands & configure Staff vs Everyone',
+          emoji: { name: '⚙️' }
+        })),
         min_values: 1,
         max_values: 1
       }]
@@ -668,7 +817,7 @@ export async function buildWorkerUpdatesPayload(env) {
   // Owner debug & diagnostics dropdown — full suite including owner tools
   components.push(debugSelectRow(DEBUG_DROPDOWN_OPTIONS, '🛠️ Owner Diagnostics & Test Suite...'));
 
-  // Owner action buttons
+  // Owner action buttons (max 5 per row)
   components.push({
     type: 1,
     components: [
@@ -681,16 +830,23 @@ export async function buildWorkerUpdatesPayload(env) {
       },
       {
         type: 2,
+        style: 1,
+        custom_id: 'panel_owner_features_manage',
+        label: 'Panel Tabs',
+        emoji: { name: '🎛️' }
+      },
+      {
+        type: 2,
         style: 2,
         custom_id: 'panel_owner_backup_d1',
-        label: 'Backup DB to R2',
+        label: 'Backup DB',
         emoji: { name: '💾' }
       },
       {
         type: 2,
         style: 4,
         custom_id: 'panel_owner_force_check_all',
-        label: 'Force Check All Servers',
+        label: 'Force Check All',
         emoji: { name: '⚡' }
       },
       {
@@ -699,13 +855,134 @@ export async function buildWorkerUpdatesPayload(env) {
         custom_id: 'panel_owner_view_kv_stats',
         label: 'KV Analytics',
         emoji: { name: '📊' }
+      }
+    ]
+  });
+
+  // Keep within Discord's 5 action rows ceiling
+  if (components.length > 5) {
+    components.length = 5;
+  }
+
+  return { embeds: [embed], components };
+}
+
+export async function buildOwnerFeaturesPayload(env, targetScope = 'normal', servers = []) {
+  const isNormalDefault = targetScope === 'normal';
+  const mainGuildId = await getMainGuildId(env);
+  const disabledTabs = await getDisabledPanelTabs(env, targetScope);
+
+  const targetName = isNormalDefault
+    ? 'All Normal Servers (Global Default)'
+    : (servers.find(s => s.id === targetScope)?.name || `Server ${targetScope}`);
+
+  const isTargetMain = Boolean(mainGuildId && targetScope === mainGuildId);
+
+  const enabledTabs = TOGGLEABLE_PANEL_TABS.filter(t => !disabledTabs.includes(t.value));
+  const disabledList = TOGGLEABLE_PANEL_TABS.filter(t => disabledTabs.includes(t.value));
+
+  const mainNotice = isTargetMain
+    ? '\n\n⭐ **Notice**: This server is designated as the **CHS Main Server**! It always runs **CHS CONTROLS** with all 19 tabs active.'
+    : '';
+
+  const embed = {
+    title: `🎛️ Server Control Panel Features — ${targetName}`,
+    color: 0x9B59B6,
+    description: `### 🏫 Main Server vs Normal Servers\n` +
+      `• **CHS Main Server**: Uses **CHS CONTROLS** with all features permanently enabled.\n` +
+      `• **Normal Servers**: Only display tabs that are marked 🟢 **ENABLED** below. Features marked 🔴 **DISABLED** are completely hidden from their control panel navigation.${mainNotice}\n\n` +
+      `### 🟢 Enabled Features (${enabledTabs.length})\n` +
+      (enabledTabs.length ? enabledTabs.map(t => `${t.emoji} **${t.label}**`).join(' · ') : '*(none)*') +
+      `\n\n### 🔴 Disabled / Hidden Features (${disabledList.length})\n` +
+      (disabledList.length ? disabledList.map(t => `${t.emoji} **${t.label}**`).join(' · ') : '*(none — all features visible)*') +
+      `\n\n*Select any feature tab from the dropdown below to toggle it **Enabled ↔ Disabled**.*`,
+    footer: { text: 'Owner Panel · Control Panel Feature Manager' },
+    timestamp: new Date().toISOString()
+  };
+
+  const components = [
+    {
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `cfg_owner_toggle_panel_feature:${targetScope}`,
+        placeholder: '⚡ Select a feature to toggle Enabled ↔ Disabled...',
+        options: TOGGLEABLE_PANEL_TABS.map(t => {
+          const isDisabled = disabledTabs.includes(t.value);
+          return {
+            label: t.label,
+            value: t.value,
+            description: isDisabled ? 'Currently: DISABLED (hidden) — click to ENABLE' : 'Currently: ENABLED (visible) — click to DISABLE',
+            emoji: { name: isDisabled ? '🔴' : '🟢' }
+          };
+        }),
+        min_values: 1,
+        max_values: 1
+      }]
+    }
+  ];
+
+  if (Array.isArray(servers) && servers.length > 0) {
+    const scopeOptions = [
+      {
+        label: '🌐 Normal Servers (Global Default)',
+        value: 'normal',
+        description: 'Set default enabled/disabled tabs for all non-main servers',
+        emoji: { name: '🌐' },
+        default: isNormalDefault
+      },
+      ...servers.slice(0, 24).map(s => ({
+        label: s.name.slice(0, 100),
+        value: s.id,
+        description: s.id === mainGuildId ? '⭐ CHS Main Server (Always full features)' : `Customize tabs for ${s.name.slice(0, 40)}`,
+        emoji: { name: s.id === mainGuildId ? '⭐' : '🏫' },
+        default: targetScope === s.id
+      }))
+    ];
+
+    components.push({
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: 'cfg_owner_features_scope_select',
+        placeholder: '🌐 Change Server / Scope...',
+        options: scopeOptions,
+        min_values: 1,
+        max_values: 1
+      }]
+    });
+  }
+
+  components.push({
+    type: 1,
+    components: [
+      {
+        type: 2,
+        style: 3,
+        custom_id: `cfg_owner_features_enable_all:${targetScope}`,
+        label: 'Enable All Tabs',
+        emoji: { name: '🟢' }
+      },
+      {
+        type: 2,
+        style: 4,
+        custom_id: `cfg_owner_features_disable_extras:${targetScope}`,
+        label: 'Disable Extra Features',
+        emoji: { name: '🔴' }
+      },
+      {
+        type: 2,
+        style: 1,
+        custom_id: `cfg_owner_features_refresh:${targetScope}`,
+        label: 'Refresh',
+        emoji: { name: '🔄' }
       },
       {
         type: 2,
         style: 2,
-        custom_id: 'panel_owner_view_all_configs',
-        label: 'View All Configs',
-        emoji: { name: '📋' }
+        custom_id: 'panel_owner_return',
+        label: 'Back to Owner Panel',
+        emoji: { name: '⬅️' }
       }
     ]
   });
@@ -719,7 +996,17 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   // right after a save can return stale cached data for up to 60 seconds.
   const stored = configOverride || await getConfig(env, guildId);
   const config = getEffectiveConfig(stored);
-  const page = pageOverride || await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
+  const isMain = await isMainGuild(env, guildId);
+  const disabledTabs = isMain ? [] : await getDisabledPanelTabs(env, guildId);
+  const panelPrefix = isMain ? 'CHS CONTROLS' : 'Control Panel';
+
+  let page = pageOverride || await env.STATUS_KV.get(`panel_page:${guildId}`) || 'dashboard';
+  let disabledNotice = '';
+
+  if (!isMain && disabledTabs.includes(page)) {
+    page = 'dashboard';
+    disabledNotice = '⚠️ **Notice**: That control panel section has been disabled for this server by the bot administrator.\n\n';
+  }
 
   if (page === 'config_general') {
     const channel = config.alert_channel_id ? `<#${config.alert_channel_id}>` : '(not set)';
@@ -730,7 +1017,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const embedFooter = config.alert_embed_footer || '(default)';
 
     const embed = {
-      title: '⚙️ Control Panel — Settings',
+      title: `⚙️ ${panelPrefix} — Settings`,
       color: 0x3498DB,
       description: `### 🔧 Server Settings\n` +
                    `• **Alerts Destination**: ${channel}\n` +
@@ -743,7 +1030,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_general'),
+      getNavBarRow('config_general', disabledTabs),
       {
         type: 1,
         components: [{
@@ -797,7 +1084,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : '*No auto-reply rules yet. Add one below.*';
 
     const embed = {
-      title: '💬 Control Panel — Keyword Auto-Reply',
+      title: `💬 ${panelPrefix} — Keyword Auto-Reply`,
       color: 0x9B59B6,
       description: `### 💬 Keyword Auto-Reply\n` +
                    `When a user sends one of a rule's keywords **in that rule's channel**, the bot replies with the rule's message and auto-deletes it after a few seconds.\n\n` +
@@ -807,7 +1094,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_autoreply'),
+      getNavBarRow('config_autoreply', disabledTabs),
       actionSelectRow([
         { label: 'Add Auto-Reply Rule', value: 'panel_btn_add_keyword', description: 'Pick a channel, keywords, and reply message', emoji: { name: '➕' } },
         ...(rules.length
@@ -846,7 +1133,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const vcChannel = config.music_vc_id ? `<#${config.music_vc_id}>` : 'All Voice Channels';
 
     const embed = {
-      title: '🎵 Control Panel — Music Settings',
+      title: `🎵 ${panelPrefix} — Music Settings`,
       color: 0x1DB954,
       description: `### 🎵 Music Settings\n` +
                    `• **Music Channel**: ${channel}\n` +
@@ -859,7 +1146,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_music'),
+      getNavBarRow('config_music', disabledTabs),
       {
         type: 1,
         components: [{
@@ -929,7 +1216,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
     const embed = {
-      title: '🔔 Control Panel — Feature Toggles',
+      title: `🔔 ${panelPrefix} — Feature Toggles`,
       color: 0x3498DB,
       description: `### 🚨 Feature Toggles\n` +
                    `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
@@ -1126,7 +1413,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     ];
 
     const components = [
-      getNavBarRow('config_toggles'),
+      getNavBarRow('config_toggles', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1179,7 +1466,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }).join('\n');
 
     const embed = {
-      title: '🎨 Control Panel — Status Theme',
+      title: `🎨 ${panelPrefix} — Status Theme`,
       color: 0xE74C3C,
       description: `### 🔔 Roles & Embed Themes\n` +
                    `Select a status from the dropdown to edit its **mention role** and **embed color**.\n\n` +
@@ -1189,7 +1476,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_status'),
+      getNavBarRow('config_status', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1240,7 +1527,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }).join('\n');
 
     const embed = {
-      title: 'Control Panel - NWS Ping Roles',
+      title: `${panelPrefix} - NWS Ping Roles`,
       color: 0xF39C12,
       description: '### NWS Alert Ping Roles\n' +
                    'Choose which Discord roles get pinged when NWS alerts are issued.\n\n' +
@@ -1251,7 +1538,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_nws_pings'),
+      getNavBarRow('config_nws_pings', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1294,7 +1581,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const jlRemove = joinlogs && joinlogs.removeRole ? `<@&${joinlogs.removeRole}>` : '(none)';
 
     const embed = {
-      title: 'Control Panel - Join Logs',
+      title: `${panelPrefix} - Join Logs`,
       color: 0x57F287,
       description: '### Join Logs & Verification\n' +
                    'When a user joins, the bot posts a card in the join channel and pings staff. ' +
@@ -1308,7 +1595,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_joinlogs'),
+      getNavBarRow('config_joinlogs', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1361,7 +1648,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : '(not set)';
 
     const embed = {
-      title: 'Control Panel - Announcement Requests',
+      title: `${panelPrefix} - Announcement Requests`,
       color: 0xF1C40F,
       description: '### Announcement Requests\n' +
                    'Members can submit announcement requests via `/requestannouncement`. ' +
@@ -1372,7 +1659,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_announcementrequests'),
+      getNavBarRow('config_announcementrequests', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1415,7 +1702,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }
 
     const embed = {
-      title: '📧 Control Panel — School Announcement Emails',
+      title: `📧 ${panelPrefix} — School Announcement Emails`,
       color: 0x3498DB,
       description: '### 📬 HCPSS & Centennial Email Settings\n' +
                    `• **Email Channel**: ${emailChannel}\n` +
@@ -1427,7 +1714,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_emails'),
+      getNavBarRow('config_emails', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1485,7 +1772,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const earlyCount = incidentStats.byStatus?.schools_close_3_hours_early || 0;
 
     const embed = {
-      title: '📊 Control Panel — Analytics & Trends',
+      title: `📊 ${panelPrefix} — Analytics & Trends`,
       color: 0x9B59B6,
       description: `### 📈 School Impact Trends (${syLabel})\n` +
                    `• **Total Weather / Emergency Incidents**: **${incidentStats.totalIncidents}**\n` +
@@ -1505,7 +1792,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_analytics'),
+      getNavBarRow('config_analytics', disabledTabs),
       actionSelectRow([
         {
           label: 'Refresh Analytics',
@@ -1526,7 +1813,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       .join('\n');
 
     const embed = {
-      title: '🗓️ Control Panel — Check Schedule',
+      title: `🗓️ ${panelPrefix} — Check Schedule`,
       color: 0x2ECC71,
       description: `### ⏱️ Daily Check Times (Eastern)\n` +
                    `The bot checks the HCPSS status website at these times every day:\n\n` +
@@ -1538,7 +1825,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_schedule'),
+      getNavBarRow('config_schedule', disabledTabs),
       ...(currentSchedule.length ? [{
         type: 1,
         components: [{
@@ -1572,7 +1859,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const pickedLabel = formatScheduleTimeLabel(pickedTime);
 
     const embed = {
-      title: '🗓️ Control Panel — Add Check Time',
+      title: `🗓️ ${panelPrefix} — Add Check Time`,
       color: 0x2ECC71,
       description: `## ${clockEmojiForTime(pickedTime)}  ${pickedLabel}\n\n` +
                    `Dial in a time with the three pickers below, then confirm with **Add** in the bottom dropdown.\n` +
@@ -1644,7 +1931,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : '';
 
     const embed = {
-      title: '📅 Control Panel — Calendar',
+      title: `📅 ${panelPrefix} — Calendar`,
       color: 0xE67E22,
       description: `### 🗓️ Upcoming Closures (Next 7 Days)\n` +
                    `${calendarList}` +
@@ -1654,7 +1941,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_calendar'),
+      getNavBarRow('config_calendar', disabledTabs),
       actionSelectRow([
         { label: 'Add Event', value: 'panel_btn_add_event', description: 'Add a closure or custom event for a date', emoji: { name: '➕' } },
         { label: 'Remove Event', value: 'panel_btn_remove_event', description: 'Remove a custom event by date', emoji: { name: '➖' } }
@@ -1670,7 +1957,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : (config.staff_role_id ? `<@&${config.staff_role_id}>` : '*(none — Administrators only)*');
 
     const embed = {
-      title: '📜 Control Panel — Command Permissions & Roles',
+      title: `📜 ${panelPrefix} — Command Permissions & Roles`,
       color: 0x1ABC9C,
       description: `### 🛡️ Authorized Staff Roles\n` +
                    `• **Staff Roles**: ${staffRoles}\n\n` +
@@ -1689,7 +1976,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_commands'),
+      getNavBarRow('config_commands', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1748,7 +2035,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const activeOverride = await getActiveOverride(env, guildId);
     let overrideInfo = '';
     let components = [
-      getNavBarRow('config_stats')
+      getNavBarRow('config_stats', disabledTabs)
     ];
 
     if (activeOverride) {
@@ -1771,7 +2058,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     }
 
     const embed = {
-      title: '📈 Control Panel — Stats & Override',
+      title: `📈 ${panelPrefix} — Stats & Override`,
       color: 0x9B59B6,
       description: `### 📊 Scraper Diagnostics (all servers)\n` +
                    `• **Total Scrapes**: \`${scrapesTotal}\` checks\n` +
@@ -1832,7 +2119,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     });
 
     const embed = {
-      title: '🏫 Control Panel — Manual School Status',
+      title: `🏫 ${panelPrefix} — Manual School Status`,
       color: activeOverride ? 0xF1C40F : 0x3498DB,
       description: `Manually set your school district's operating status and announcement notes (e.g. for snow days, emergency closures, or delays).\n\n` +
                    `${currentStatusInfo}\n\n` +
@@ -1844,7 +2131,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_manual_status'),
+      getNavBarRow('config_manual_status', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1873,7 +2160,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const ownerMention = env.OWNER_ID ? `<@${env.OWNER_ID}>` : '*(unset)*';
 
     const embed = {
-      title: '🛠️ Control Panel — Debug & Diagnostics',
+      title: `🛠️ ${panelPrefix} — Debug & Diagnostics`,
       color: 0x5865F2,
       description: `### 🛠️ Bot Diagnostics & Test Suite\n` +
                    `Run real-time diagnostics, health checks, simulated alerts, and voice tests across the server.\n\n` +
@@ -1893,7 +2180,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const actionOptions = STAFF_DEBUG_OPTIONS;
 
     const components = [
-      getNavBarRow('config_debug'),
+      getNavBarRow('config_debug', disabledTabs),
       actionSelectRow(actionOptions, '🛠️ Select a diagnostic test...')
     ];
 
@@ -1905,7 +2192,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const editingLabel = STATUS_LABELS[editingKey] || 'Normal Operations';
 
     const embed = {
-      title: '🛠️ Control Panel — Set Status Override',
+      title: `🛠️ ${panelPrefix} — Set Status Override`,
       color: 0xF1C40F,
       description: `### ⚠️ Select Status to Override\n` +
                    `Choose the status you want to force from the select menu below, then pick **Set Duration & Details** in the actions dropdown to enter how long the override should last.\n\n` +
@@ -1914,7 +2201,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('config_stats'),
+      getNavBarRow('config_stats', disabledTabs),
       {
         type: 1,
         components: [{
@@ -1953,7 +2240,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const logsContent = renderPanelLogLines(logs);
 
     const embed = {
-      title: '📋 Control Panel — Recent Logs',
+      title: `📋 ${panelPrefix} — Recent Logs`,
       color: 0x9B59B6,
       description:
         `### 📋 Status Posts & Alerts (most recent ${PANEL_LOG_DISPLAY_LINES})\n` +
@@ -1964,7 +2251,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     };
 
     const components = [
-      getNavBarRow('dashboard_logs'),
+      getNavBarRow('dashboard_logs', disabledTabs),
       actionSelectRow([
         { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📜' } },
         { label: 'Clear Logs', value: 'panel_clear_logs', description: 'Wipe this list (the web log is unaffected)', emoji: { name: '🗑️' } }
@@ -2041,9 +2328,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       : '⚪ Standby (no storm alerts)';
 
   const embed = {
-    title: '🏠 Control Panel — Dashboard',
+    title: `🏠 ${panelPrefix} — Dashboard`,
     color: 0x9B59B6,
     description:
+      disabledNotice +
       `### 📊 System Status\n` +
       `• **Bot**: 🟢 Online\n` +
       `• **Database**: ${kvConnected}\n` +
@@ -2056,11 +2344,12 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       `• **Last Posted Message**: ${lastPostStr}\n` +
       (panelMsgId ? `• **Panel Message ID**: \`${panelMsgId}\`\n` : '') +
       `\n🧭 *Every panel page is in the navigation dropdown below — pick one to jump straight to it.*`,
+    footer: { text: isMain ? 'CHS CONTROLS · HCPSS School Status' : 'School Status · Control Panel' },
     timestamp: new Date().toISOString()
   };
 
   const components = [
-    getNavBarRow('dashboard'),
+    getNavBarRow('dashboard', disabledTabs),
     actionSelectRow([
       { label: 'Run Status Check', value: 'panel_check', description: 'Fetch HCPSS status and post to alert channel', emoji: { name: '🔍' } },
       { label: 'Refresh Panel', value: 'panel_refresh', description: 'Refresh the control panel embed in the log channel', emoji: { name: '🔄' } },

@@ -520,6 +520,19 @@ export async function handleInteraction(body, env, ctx) {
     return deferredInteractionResponse();
   }
 
+  if (body.type === 2 && body.data && (body.data.name === 'panel' || body.data.name === 'controlpanel' || body.data.name === 'chscontrols' || body.data.name === 'chscontrolls')) {
+    ctx.waitUntil((async () => {
+      try {
+        const payload = await buildControlPanelPayload(env, guildId);
+        await updateInteractionOriginal(env, body.token, payload);
+      } catch (e) {
+        console.error('panel command failed:', e);
+        await updateInteractionOriginal(env, body.token, { content: '❌ Failed to load control panel: ' + e.message });
+      }
+    })());
+    return deferredInteractionResponse(true);
+  }
+
   if (body.type === 2 && body.data && body.data.name === 'refresh-panel') {
     ctx.waitUntil(handlePanelRefresh(body, env));
     return deferredInteractionResponse();

@@ -140,6 +140,8 @@ export const ALL_COMMANDS_META = [
   { name: 'announce', label: '/announce', category: 'admin', defaultTier: 'staff', description: 'Post announcement embed' },
   { name: 'health', label: '/health', category: 'admin', defaultTier: 'staff', description: 'Bot health & diagnostics snapshot' },
   { name: 'refresh-panel', label: '/refresh-panel', category: 'admin', defaultTier: 'staff', description: 'Refresh log panel embed' },
+  { name: 'panel', label: '/panel', category: 'admin', defaultTier: 'staff', description: 'Interactive control panel' },
+  { name: 'chscontrols', label: '/chscontrols', category: 'admin', defaultTier: 'staff', description: 'CHS interactive control panel' },
   { name: 'setup', label: '/setup', category: 'admin', defaultTier: 'staff', description: 'Initial setup wizard' },
   { name: 'setupjoinlogs', label: '/setupjoinlogs', category: 'admin', defaultTier: 'staff', description: 'Configure join logs & auto-roles' },
   { name: 'emailchannel', label: '/emailchannel', category: 'admin', defaultTier: 'staff', description: 'Configure school email channel' },
