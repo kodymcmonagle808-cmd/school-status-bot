@@ -7,6 +7,28 @@
 // Automatically falls back to STATUS_KV for legacy keys not yet migrated,
 // ensuring zero-downtime backward compatibility.
 
+let _kvTableEnsured = false;
+
+/**
+ * Ensures the kv_store table exists in D1 SQLite.
+ */
+export async function ensureKvTable(db) {
+  if (!db || _kvTableEnsured) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS kv_store (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        expires_at INTEGER
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_kv_store_expires ON kv_store(expires_at)').run();
+    _kvTableEnsured = true;
+  } catch (err) {
+    console.error('ensureKvTable error:', err);
+  }
+}
+
 /**
  * Creates a KV-compatible adapter backed by Cloudflare D1 (SQLite).
  *
@@ -19,6 +41,7 @@ export function createD1KvAdapter(db, fallbackKv = null) {
     async get(key, options = {}) {
       if (!key) return null;
       try {
+        await ensureKvTable(db);
         const nowSec = Math.floor(Date.now() / 1000);
         const row = await db.prepare(
           'SELECT value, expires_at FROM kv_store WHERE key = ?'
@@ -56,6 +79,7 @@ export function createD1KvAdapter(db, fallbackKv = null) {
 
     async put(key, value, options = {}) {
       if (!key) return;
+      await ensureKvTable(db);
       let expiresAt = null;
       const nowSec = Math.floor(Date.now() / 1000);
       if (options?.expirationTtl) {
@@ -84,6 +108,7 @@ export function createD1KvAdapter(db, fallbackKv = null) {
 
     async delete(key) {
       if (!key) return;
+      await ensureKvTable(db);
       try {
         await db.prepare('DELETE FROM kv_store WHERE key = ?').bind(String(key)).run();
       } catch (err) {
@@ -95,6 +120,7 @@ export function createD1KvAdapter(db, fallbackKv = null) {
     },
 
     async list(options = {}) {
+      await ensureKvTable(db);
       const prefix = options.prefix || '';
       const limit = Math.min(Number(options.limit) || 1000, 1000);
       const nowSec = Math.floor(Date.now() / 1000);
@@ -184,6 +210,7 @@ export function formatBytes(bytes) {
 export async function getD1Stats(db) {
   if (!db) return null;
   try {
+    await ensureKvTable(db);
     const row = await db.prepare(
       'SELECT count(*) AS total_keys, coalesce(sum(length(value)), 0) AS total_bytes FROM kv_store'
     ).first();

@@ -258,19 +258,23 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
   // A/B day rotation — shows which letter day it is. Snow days and closures
   // freeze the rotation so the letter doesn't advance when school is cancelled.
   const abDayEnabled = !config || config.toggle_ab_day !== false;
-  if (abDayEnabled && embeds[0] && env && env.STATUS_KV) {
+  // Fetch status history once — used for A/B day rotation (today + tomorrow).
+  let closureDates = new Set();
+  if (abDayEnabled && env && env.STATUS_KV) {
     try {
-      const todayYmd = realTodayYmd;
       const history = await getStatusHistory(env);
-      const closureDates = closureDatesFromHistory(history);
-      // On a closure day (including today's announced closure), the A/B day
-      // still shows — it tells families which day it will be when they return.
-      const abDay = getABDay(todayYmd, closureDates);
-      const abLine = formatABDayLine(abDay);
-      if (abLine) {
-        addField(embeds[0], '📅 Day Rotation', abLine);
-      }
+      closureDates = closureDatesFromHistory(history);
     } catch {}
+  }
+
+  if (abDayEnabled && embeds[0] && env && env.STATUS_KV) {
+    // On a closure day (including today's announced closure), the A/B day
+    // still shows — it tells families which day it will be when they return.
+    const abDay = getABDay(realTodayYmd, closureDates);
+    const abLine = formatABDayLine(abDay);
+    if (abLine) {
+      addField(embeds[0], '📅 Day Rotation', abLine);
+    }
   }
 
   // Outdated status warning — only when the website's date is behind today.
@@ -392,6 +396,15 @@ export async function buildStatusEmbeds(env, footer = 'School Status', cards = n
     if (!calEvent) calEvent = SCHOOL_CALENDAR_EVENTS[tomorrowYmd] || null;
     if (calEvent) {
       outlookLines.push(`📅 **${formatStatusDate(tomorrow)}**: ${calEvent}`);
+    }
+
+    // Tomorrow's A/B day rotation
+    if (abDayEnabled) {
+      const tomorrowAB = getABDay(tomorrowYmd, closureDates);
+      const tomorrowABLine = formatABDayLine(tomorrowAB);
+      if (tomorrowABLine) {
+        outlookLines.push(`Tomorrow: ${tomorrowABLine}`);
+      }
     }
 
     if (weatherEnabled) {

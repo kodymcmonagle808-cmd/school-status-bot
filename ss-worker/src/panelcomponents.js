@@ -648,6 +648,10 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       return interactionResponse(payload);
     }
     if (action === 'panel_kv_debug') {
+      const ownerId = String(env.OWNER_ID || '').trim();
+      if (!ownerId || getInvokerId(body) !== ownerId) {
+        return interactionResponse({ content: '🔒 KV Store Diagnostic is restricted to the bot owner.', flags: EPHEMERAL_FLAG });
+      }
       ctx.waitUntil(handlePanelKvDebug(body, env));
       return deferredInteractionResponse();
     }
@@ -728,6 +732,15 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
 
   if (customId === 'panel_clear_logs') {
     ctx.waitUntil(handlePanelClearLogs(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_kv_debug') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 KV Store Diagnostic is restricted to the bot owner.', flags: EPHEMERAL_FLAG });
+    }
+    ctx.waitUntil(handlePanelKvDebug(body, env));
     return deferredInteractionResponse();
   }
 

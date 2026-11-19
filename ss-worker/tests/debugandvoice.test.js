@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatchVoiceAnnouncement } from '../src/voice.js';
-import { buildControlPanelPayload, PANEL_NAV_TABS } from '../src/panel.js';
+import { buildControlPanelPayload, buildWorkerUpdatesPayload, PANEL_NAV_TABS } from '../src/panel.js';
 import { handlePanelComponent } from '../src/panelcomponents.js';
 
 function mockKv(initial = {}) {
@@ -99,10 +99,10 @@ test('control panel renders Debug & Diagnostics page with staff and owner sectio
   assert.ok(payload.embeds && payload.embeds[0]);
   assert.match(payload.embeds[0].title, /Control Panel — Debug & Diagnostics/);
   assert.match(payload.embeds[0].description, /Staff Diagnostics/);
-  assert.match(payload.embeds[0].description, /Owner-Only Sensitive Diagnostics/);
+  assert.match(payload.embeds[0].description, /Owner Panel/);
   assert.match(payload.embeds[0].description, /ss-backups/);
 
-  // Check action row has debug options
+  // Check action row has staff debug options, but NO owner-only options
   const actionRow = payload.components[1];
   assert.ok(actionRow);
   const options = actionRow.components[0].options;
@@ -110,8 +110,18 @@ test('control panel renders Debug & Diagnostics page with staff and owner sectio
   assert.ok(options.some(o => o.value === 'panel_btn_debug_test_weather_voice'));
   assert.ok(options.some(o => o.value === 'panel_btn_debug_canary'));
   assert.ok(options.some(o => o.value === 'panel_btn_debug_backup'));
-  assert.ok(options.some(o => o.value === 'panel_btn_debug_purge_cache'));
-  assert.ok(options.some(o => o.value === 'panel_btn_debug_raw_config'));
+  assert.ok(!options.some(o => o.value === 'panel_btn_debug_purge_cache'));
+  assert.ok(!options.some(o => o.value === 'panel_btn_debug_raw_config'));
+  assert.ok(!options.some(o => o.value === 'panel_kv_debug'));
+
+  // Verify owner panel has the owner diagnostics and debug options
+  const ownerPayload = await buildWorkerUpdatesPayload(env);
+  const ownerDebugSelect = ownerPayload.components.find(r => r.components?.[0]?.custom_id === 'panel_debug_select');
+  assert.ok(ownerDebugSelect, 'Owner panel should contain debug & diagnostics select row');
+  const ownerOpts = ownerDebugSelect.components[0].options;
+  assert.ok(ownerOpts.some(o => o.value === 'panel_kv_debug'));
+  assert.ok(ownerOpts.some(o => o.value === 'panel_btn_debug_purge_cache'));
+  assert.ok(ownerOpts.some(o => o.value === 'panel_btn_debug_raw_config'));
 });
 
 test('debug actions: staff can test voice, non-owner is blocked from owner actions, owner allowed', async () => {
@@ -198,6 +208,28 @@ test('debug actions: staff can test voice, non-owner is blocked from owner actio
   const ownerConfigResp = await handlePanelComponent(ownerConfigBody, env, ctx, 'g1');
   const ownerConfigJson = await ownerConfigResp.json();
   assert.equal(ownerConfigJson.type, 5);
+
+  // 6. Non-owner tries KV store diagnostic
+  const nonOwnerKvBody = {
+    guild_id: 'g1',
+    token: 'tok-staff',
+    member: { user: { id: 'staff-user' }, permissions: '8' },
+    data: { custom_id: 'panel_kv_debug' }
+  };
+  const deniedKvResp = await handlePanelComponent(nonOwnerKvBody, env, ctx, 'g1');
+  const deniedKvJson = await deniedKvResp.json();
+  assert.match(deniedKvJson.data.content, /Owner Only|restricted to the bot owner/);
+
+  // 7. Owner triggers KV store diagnostic
+  const ownerKvBody = {
+    guild_id: 'g1',
+    token: 'tok-owner',
+    member: { user: { id: 'owner-123' }, permissions: '8' },
+    data: { custom_id: 'panel_kv_debug' }
+  };
+  const ownerKvResp = await handlePanelComponent(ownerKvBody, env, ctx, 'g1');
+  const ownerKvJson = await ownerKvResp.json();
+  assert.equal(ownerKvJson.type, 5);
 
   globalThis.fetch = origFetch;
 });

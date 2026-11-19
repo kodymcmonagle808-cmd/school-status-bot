@@ -135,18 +135,25 @@ function actionSelectRow(options, placeholder = '⚡ Actions...', disabled = fal
   };
 }
 
-export const DEBUG_DROPDOWN_OPTIONS = [
+export const STAFF_DEBUG_OPTIONS = [
   { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active VCs (no beeps)', emoji: { name: '🎙️' } },
   { label: 'Test Emergency Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS Tornado Warning with EAS emergency beeps 3x', emoji: { name: '🌪️' } },
   { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and KV feeds', emoji: { name: '⚡' } },
   { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
   { label: 'Simulate Status Alert (No Pings)', value: 'panel_btn_debug_simulate_status', description: 'Post test status embed (zero pings sent)', emoji: { name: '📣' } },
-  { label: 'Simulate Weather Alert (No Pings)', value: 'panel_btn_debug_simulate_weather', description: 'Post test NWS alert embed (zero pings sent)', emoji: { name: '⚠️' } },
-  { label: 'Purge Caches (Owner Only)', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
-  { label: 'View Raw Config (Owner Only)', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
-  { label: 'View KV Analytics (Owner Only)', value: 'panel_owner_view_kv_stats', description: 'Inspect Cloudflare KV daily operation budget', emoji: { name: '📊' } },
-  { label: 'Open System Logs (Owner Only)', value: 'panel_logs', description: 'Mint signed link to Cloudflare Observability logs', emoji: { name: '📜' } }
+  { label: 'Simulate Weather Alert (No Pings)', value: 'panel_btn_debug_simulate_weather', description: 'Post test NWS alert embed (zero pings sent)', emoji: { name: '⚠️' } }
 ];
+
+export const OWNER_DEBUG_OPTIONS = [
+  { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild', emoji: { name: '🗄️' } },
+  { label: 'Purge Caches', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
+  { label: 'View Raw Config', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
+  { label: 'View KV Analytics', value: 'panel_owner_view_kv_stats', description: 'Inspect Cloudflare KV daily operation budget', emoji: { name: '📊' } },
+  { label: 'Open System Logs', value: 'panel_logs', description: 'Mint signed link to Cloudflare Observability logs', emoji: { name: '📜' } }
+];
+
+// Combined for backward compat (used by debugSelectRow and owner panel)
+export const DEBUG_DROPDOWN_OPTIONS = [...STAFF_DEBUG_OPTIONS, ...OWNER_DEBUG_OPTIONS];
 
 export function debugSelectRow(options = DEBUG_DROPDOWN_OPTIONS, placeholder = '🛠️ Debug & Diagnostics...', disabled = false) {
   return {
@@ -652,6 +659,9 @@ export async function buildWorkerUpdatesPayload(env) {
       }]
     });
   }
+
+  // Owner debug & diagnostics dropdown — full suite including owner tools
+  components.push(debugSelectRow(DEBUG_DROPDOWN_OPTIONS, '🛠️ Owner Diagnostics & Test Suite...'));
 
   // Owner action buttons
   components.push({
@@ -1871,27 +1881,11 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• **Run Health Canary**: Measures live latency to HCPSS status, NWS weather API, and BGE outage feeds.\n` +
                    `• **Test Cloudflare R2 Backup**: Immediately snapshots KV data to the R2 backup bucket.\n` +
                    `• **Simulate Status / Weather Alerts**: Delivers test watermarked embeds to verify channel delivery.\n\n` +
-                   `### 🔒 Owner-Only Sensitive Diagnostics\n` +
-                   `*Protected commands reserved exclusively for the bot owner:*\n` +
-                   `• **Purge System Caches**: Clears transient weather and outage caches in KV.\n` +
-                   `• **View Raw Server Config**: Inspects complete unmasked configuration stored in KV.\n` +
-                   `• **KV Analytics Budget**: Cloudflare KV daily reads/writes usage meter.\n` +
-                   `• **System Logs Link**: Generates a signed private link to Cloudflare Observability logs.`,
+                   `*Owner-only diagnostics (cache purge, raw config, KV analytics, system logs) are in the **Owner Panel** (\`/ownerpanel\`).*`,
       timestamp: new Date().toISOString()
     };
 
-    const actionOptions = [
-      { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active VCs (no beeps)', emoji: { name: '🎙️' } },
-      { label: 'Test Emergency Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS Tornado Warning with EAS emergency beeps 3x', emoji: { name: '🌪️' } },
-      { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and BGE feeds', emoji: { name: '⚡' } },
-      { label: 'Test Cloudflare R2 Backup', value: 'panel_btn_debug_backup', description: 'Trigger immediate KV snapshot to R2 bucket', emoji: { name: '💾' } },
-      { label: 'Simulate Status Alert', value: 'panel_btn_debug_simulate_status', description: 'Post a watermarked test status embed', emoji: { name: '📣' } },
-      { label: 'Simulate Weather Alert', value: 'panel_btn_debug_simulate_weather', description: 'Post a watermarked test NWS weather warning', emoji: { name: '⚠️' } },
-      { label: 'Purge Caches (Owner Only)', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
-      { label: 'View Raw Config (Owner Only)', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
-      { label: 'View KV Analytics (Owner Only)', value: 'panel_owner_view_kv_stats', description: 'Inspect Cloudflare KV daily operation budget', emoji: { name: '📊' } },
-      { label: 'Open System Logs (Owner Only)', value: 'panel_logs', description: 'Mint signed link to Cloudflare Observability logs', emoji: { name: '📜' } }
-    ];
+    const actionOptions = STAFF_DEBUG_OPTIONS;
 
     const components = [
       getNavBarRow('config_debug'),
@@ -2068,10 +2062,9 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       { label: 'Test Scraper Speed', value: 'panel_speed', description: 'Measure HCPSS page fetch time and response size', emoji: { name: '⚡' } },
       { label: 'View Status History', value: 'panel_history', description: 'Show last 10 operating status changes (private)', emoji: { name: '📜' } },
       { label: 'Open System Logs', value: 'panel_logs', description: 'Full Worker activity on the web (private link)', emoji: { name: '📋' } },
-      { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild (private)', emoji: { name: '🗄️' } },
       { label: 'Clear All Logs', value: 'panel_clear_logs', description: 'Wipe the panel list (the web log is unaffected)', emoji: { name: '🗑️' } }
     ], '⚡ Quick Actions...'),
-    debugSelectRow(DEBUG_DROPDOWN_OPTIONS, '🛠️ Debug & Diagnostics...'),
+    debugSelectRow(STAFF_DEBUG_OPTIONS, '🛠️ Debug & Diagnostics...'),
     {
       type: 1,
       components: [{
