@@ -727,18 +727,35 @@ export async function buildWorkerUpdatesPayload(env) {
     fetchCloudflareDeployments(env).catch(() => null)
   ]);
 
-  const vectorStatus = env.VECTORIZE ? '🟢 **Active** (`school-status-index` · 384d)' : '⚪ **Standby Mode** (Ready to bind)';
-  const queueStatus = env.ALERT_QUEUE ? '🟢 **Active** (`ss-alerts-queue` · Decoupled)' : '⚪ **Standby Mode** (Direct HTTP fallback)';
+  const vectorStatus = env.VECTORIZE ? '🟢 **Active** (`school-status-index` · 384d)' : '⚪ **Standby Mode**';
+  const queueStatus = env.ALERT_QUEUE ? '🟢 **Active** (`ss-alerts-queue` · Decoupled)' : '⚪ **Standby Mode**';
+  const browserStatus = env.BROWSER ? '🟢 **Active** (Live status screenshots)' : '⚪ **Standby Mode**';
+  const analyticsStatus = env.ANALYTICS ? '🟢 **Active** (`school_status_analytics`)' : '⚪ **Standby Mode**';
+  const aiGwStatus = env.AI_GATEWAY_ID ? `🟢 **Active** (\`${env.AI_GATEWAY_ID}\`)` : '⚪ **Standby Mode**';
+  const r2Status = env.BACKUPS_BUCKET ? '🟢 **Active** (`ss-backups`)' : '⚪ **Standby Mode**';
+  const aiStatus = env.AI ? '🟢 **Active** (Llama 3.1 & BGE)' : '⚪ **Standby Mode**';
+
+  const cfServicesField = {
+    name: '⚡ Cloudflare Free Services',
+    value: `• **Browser Rendering**: ${browserStatus}\n` +
+           `• **Analytics Engine**: ${analyticsStatus}\n` +
+           `• **AI Gateway**: ${aiGwStatus}\n` +
+           `• **Vectorize**: ${vectorStatus}\n` +
+           `• **Queues**: ${queueStatus}\n` +
+           `• **R2 Backups**: ${r2Status}\n` +
+           `• **Workers AI**: ${aiStatus}`,
+    inline: false
+  };
 
   const storageFields = d1Stats
     ? [
         { name: '🗄️ Primary Database: Cloudflare D1', value: buildD1Section(d1Stats, kvUsage), inline: false },
-        { name: '⚡ Cloudflare Free Services', value: `• **Vectorize (Semantic Search)**: ${vectorStatus}\n• **Queues (Alert Dispatch)**: ${queueStatus}\n• **R2 Backups**: ${env.BACKUPS_BUCKET ? '🟢 Active (`ss-backups`)' : '⚪ Standby'}\n• **Workers AI**: ${env.AI ? '🟢 Active' : '⚪ Standby'}`, inline: false },
+        cfServicesField,
         { name: '💾 Legacy KV (Standby Fallback)', value: '🟢 **Standby Mode** — Legacy KV fallback ready; 0 writes needed.', inline: false }
       ]
     : [
         { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false },
-        { name: '⚡ Cloudflare Free Services', value: `• **Vectorize (Semantic Search)**: ${vectorStatus}\n• **Queues (Alert Dispatch)**: ${queueStatus}`, inline: false }
+        cfServicesField
       ];
 
   const activeUpdates = (cfDeployments && cfDeployments.length) ? cfDeployments : updates;

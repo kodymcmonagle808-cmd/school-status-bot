@@ -8,6 +8,41 @@ export const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
 export const MIN_SUMMARY_BODY_LENGTH = 140;
 
 /**
+ * Executes a Workers AI model call, routing through Cloudflare AI Gateway
+ * for edge caching and rate limiting when configured, with automatic fallback
+ * to direct execution if the gateway is unavailable.
+ *
+ * @param {object} env - Cloudflare Worker environment object
+ * @param {string} model - AI model identifier
+ * @param {object} input - Input parameters for the model
+ * @param {object} [options={}] - Additional call options
+ * @returns {Promise<any>} Model output response or null
+ */
+export async function runWorkersAiWithGateway(env, model, input, options = {}) {
+  if (!env || !env.AI || typeof env.AI.run !== 'function') return null;
+
+  const gatewayId = env.AI_GATEWAY_ID || 'school-status-gateway';
+  const enableGateway = env.USE_AI_GATEWAY !== 'false';
+
+  if (enableGateway && gatewayId) {
+    try {
+      return await env.AI.run(model, input, {
+        gateway: {
+          id: gatewayId,
+          skipCache: false,
+          cacheTtl: 3600
+        },
+        ...options
+      });
+    } catch (gwErr) {
+      console.warn(`Workers AI Gateway "${gatewayId}" warning, falling back to direct run:`, gwErr && gwErr.message ? gwErr.message : gwErr);
+    }
+  }
+
+  return await env.AI.run(model, input, options);
+}
+
+/**
  * Generates a 2-3 bullet point summary of a school announcement email.
  *
  * @param {object} env - Cloudflare Worker environment object
@@ -28,7 +63,7 @@ export async function generateEmailSummary(env, { subject = '', body = '' } = {}
   const promptInput = `Subject: ${cleanSubject}\n\nEmail Content:\n${cleanBody.slice(0, 3000)}`;
 
   try {
-    const response = await env.AI.run(AI_MODEL, {
+    const response = await runWorkersAiWithGateway(env, AI_MODEL, {
       messages: [
         {
           role: 'system',

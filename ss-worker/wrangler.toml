@@ -44,6 +44,7 @@ KV_NAMESPACE_ID = "f0ecd441d95a4cbca41035b619a94705"
 # Worker moves to a custom domain, change it here — a wrong value produces a
 # dead link, and an empty one makes the panel say the page isn't configured.
 PUBLIC_BASE_URL = "https://ss-worker.kodymcmonagle808.workers.dev"
+AI_GATEWAY_ID = "school-status-gateway"
 
 [[kv_namespaces]]
 binding = "STATUS_KV"
@@ -67,6 +68,15 @@ binding = "BROWSER"
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "school-status-index"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "school_status_analytics"
+
+[[workflows]]
+name = "storm-watchdog"
+binding = "STORM_WORKFLOW"
+class_name = "StormWatchdogWorkflow"
 
 [[queues.producers]]
 binding = "ALERT_QUEUE"

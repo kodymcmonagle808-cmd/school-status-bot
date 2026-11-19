@@ -77,11 +77,22 @@ import { handleGreeterInteraction } from './greeter.js';
 import { isGuildBlocked } from './blocklist.js';
 import { handleSetupClasses, handleMapMyClass } from './mapcommands.js';
 import { handleScreenshotInteraction } from './screenshot.js';
+import { recordAnalyticsEvent } from './analytics.js';
 
 export async function handleInteraction(body, env, ctx) {
   if (body.type === 1) return jsonResponse({ type: 1 });
 
   const guildId = body.guild_id || '';
+  const actionName = body.data?.name || body.data?.custom_id || '';
+  if (actionName) {
+    const interType = body.type === 2 ? 'slash' : (body.type === 3 ? 'button' : (body.type === 5 ? 'modal' : 'other'));
+    recordAnalyticsEvent(env, {
+      event: 'interaction',
+      status: interType,
+      guildId,
+      detail: actionName
+    });
+  }
 
   // Owner lockdown: blocked servers get no interactions (the owner stays
   // exempt so they can still look around and unblock from the panel).

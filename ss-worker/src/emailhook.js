@@ -18,6 +18,42 @@ import { indexEmailVector } from './vectorize.js';
 // worker ack was lost, so a week of memory is plenty.
 const SEEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+/**
+ * Extracts plain text from raw RFC 822 email content, stripping MIME boundaries
+ * and metadata headers.
+ *
+ * @param {string} raw - Raw email message text
+ * @returns {string} Clean plain text body
+ */
+export function extractEmailBodyFromRaw(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+
+  const parts = raw.split(/\r?\n\r?\n/);
+  if (parts.length < 2) return raw.trim();
+
+  const bodyContent = parts.slice(1).join('\n\n');
+  const lines = bodyContent.split(/\r?\n/);
+  const cleanLines = [];
+  let inHeader = false;
+
+  for (const line of lines) {
+    if (line.startsWith('--')) {
+      inHeader = true;
+      continue;
+    }
+    if (inHeader) {
+      if (!line.trim()) {
+        inHeader = false;
+      }
+      continue;
+    }
+    cleanLines.push(line);
+  }
+
+  const result = cleanLines.join('\n').trim();
+  return result.replace(/<[^>]+>/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
 function clamp(text, limit) {
   const s = String(text || '').trim();
   return s.length <= limit ? s : `${s.slice(0, limit - 1).trimEnd()}…`;

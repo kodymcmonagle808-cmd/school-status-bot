@@ -9,6 +9,7 @@
 // is not bound, maintaining 100% backward compatibility.
 
 import { searchEmailsInD1 } from './db.js';
+import { runWorkersAiWithGateway } from './ai.js';
 
 export const EMBEDDING_MODEL = '@cf/baai/bge-small-en-v1.5';
 export const VECTOR_DIMENSION = 384;
@@ -27,7 +28,7 @@ export async function generateEmbedding(env, text) {
   if (!cleanText) return null;
 
   try {
-    const res = await env.AI.run(EMBEDDING_MODEL, {
+    const res = await runWorkersAiWithGateway(env, EMBEDDING_MODEL, {
       text: [cleanText]
     });
 

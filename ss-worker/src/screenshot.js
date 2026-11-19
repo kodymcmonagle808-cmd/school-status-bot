@@ -6,6 +6,7 @@
 import puppeteer from '@cloudflare/puppeteer';
 import { updateInteractionOriginal } from './discord.js';
 import { HCPSS_URL } from './scraper.js';
+import { recordAnalyticsEvent } from './analytics.js';
 
 export const SCREENSHOT_CACHE_KEY = 'cache/status_screenshot_latest.png';
 export const SCREENSHOT_TTL_MS = 10 * 60 * 1000; // 10 minutes cache to preserve browser execution quota
@@ -152,6 +153,7 @@ export function buildScreenshotEmbed(result, url = HCPSS_URL) {
  * Responds 100% ephemerally so only the clicking user sees it.
  */
 export async function handleScreenshotInteraction(body, env, options = {}) {
+  const start = Date.now();
   const applicationId = env && env.DISCORD_APPLICATION_ID;
   const token = body && body.token;
   if (!applicationId || !token) return;
@@ -159,6 +161,13 @@ export async function handleScreenshotInteraction(body, env, options = {}) {
   const targetUrl = options.url || HCPSS_URL;
   try {
     const result = await captureStatusPageScreenshot(env, options);
+
+    recordAnalyticsEvent(env, {
+      event: 'screenshot',
+      status: result.cached ? 'cached' : 'fresh',
+      durationMs: Date.now() - start,
+      detail: targetUrl
+    });
 
     const payload = {
       embeds: [buildScreenshotEmbed(result, targetUrl)],
@@ -199,6 +208,12 @@ export async function handleScreenshotInteraction(body, env, options = {}) {
     }
   } catch (err) {
     console.error('Failed to capture or deliver screenshot:', err);
+    recordAnalyticsEvent(env, {
+      event: 'screenshot',
+      status: 'error',
+      durationMs: Date.now() - start,
+      detail: (err && err.message) || 'error'
+    });
     await updateInteractionOriginal(env, body.token, {
       content: '⚠️ Unable to capture live website screenshot right now. You can view the live status page directly at https://status.hcpss.org',
       embeds: [],

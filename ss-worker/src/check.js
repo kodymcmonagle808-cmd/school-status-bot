@@ -16,6 +16,7 @@ import { getBlockedGuilds } from './blocklist.js';
 import { noSchoolReason } from './session.js';
 import { dispatchVoiceAnnouncement } from './voice.js';
 import { ALL_STATUS_LABELS } from './constants.js';
+import { recordAnalyticsEvent } from './analytics.js';
 
 const MAX_FAILURES_THRESHOLD = 3;
 
@@ -511,6 +512,12 @@ export async function doCheckAndPost(env, options = {}) {
   // tweaks, typo fixes — ends here.)
   if ((isStormCheck || isHook) && !statusChanged && changedDistricts.size === 0) {
     await handleScraperSuccessOrFailure(env, scrapeFailed, fetched.error, targetGuildIds);
+    recordAnalyticsEvent(env, {
+      event: 'scrape',
+      status: 'unchanged',
+      durationMs: Date.now() - start,
+      detail: isHook ? 'hook' : 'storm'
+    });
     return { ok: true, skipped: true, message: `${isHook ? 'Hook' : 'Storm'} check: status unchanged.` };
   }
 
@@ -705,6 +712,13 @@ export async function doCheckAndPost(env, options = {}) {
   const isErr = liveStatusResult.isError || failureCount > 0;
 
   const firstSuccessId = results.find(r => r.ok && r.id)?.id || null;
+
+  recordAnalyticsEvent(env, {
+    event: 'scrape',
+    status: isErr ? 'error' : (liveStatusResult.statusKey || 'ok'),
+    durationMs: Date.now() - start,
+    detail: `guilds:${targetGuildIds.length},ok:${successCount},err:${failureCount}`
+  });
 
   return {
     ok: failureCount === 0,

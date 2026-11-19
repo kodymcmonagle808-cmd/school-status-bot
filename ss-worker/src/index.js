@@ -661,5 +661,45 @@ export default {
   async queue(batch, env, ctx) {
     initEnv(env);
     await processAlertQueueBatch(batch, env, ctx);
+  },
+
+  async email(message, env, ctx) {
+    initEnv(env);
+    try {
+      const subject = (message.headers && message.headers.get('subject')) || 'HCPSS School Notice';
+      const from = message.from || 'unknown';
+      const messageId = (message.headers && message.headers.get('message-id')) || `cf_email_${Date.now()}`;
+
+      let bodyText = '';
+      if (message.raw) {
+        try {
+          const rawText = await new Response(message.raw).text();
+          const { extractEmailBodyFromRaw } = await import('./emailhook.js');
+          bodyText = extractEmailBodyFromRaw(rawText);
+        } catch (readErr) {
+          console.warn('Failed to read raw email stream:', readErr);
+        }
+      }
+
+      if (!bodyText) {
+        bodyText = `School notification received from ${from}.\nSubject: ${subject}`;
+      }
+
+      const payload = {
+        id: messageId,
+        subject,
+        body: bodyText,
+        receivedAt: Date.now(),
+        from
+      };
+
+      const result = await handleEmailHook(env, payload);
+      logAction(`Inbound email processed via Cloudflare Email Routing: "${subject.slice(0, 60)}" (sent: ${result?.sent || 0})`);
+    } catch (err) {
+      console.error('Inbound Email worker failed:', err);
+      logActionError(`Inbound email handler threw: ${err && err.message ? err.message : err}`);
+    }
   }
 };
+
+export { StormWatchdogWorkflow } from './stormworkflow.js';
