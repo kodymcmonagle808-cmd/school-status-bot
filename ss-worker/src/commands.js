@@ -197,10 +197,12 @@ export function runHelpCommand() {
         '• `/myschool` — register your school to get DMed when a notice mentions it\n' +
         '• `/searchemails` — search through archived school announcement emails\n' +
         '• `/widget` — set up live school status on your iPhone / iOS Home Screen\n' +
+        '• `/screenshot` — view a live screenshot of the official HCPSS status website\n' +
         '• `/requestannouncement` — submit an announcement request (summary + optional story link) to staff\n' +
         '• `/terms` · `/privacy` — the bot\'s Terms and Privacy Policy\n\n' +
         '**Buttons on status posts:**\n' +
         '• **Check again** — re-check privately · **🔔 Notify Me** — same as `/notify`\n' +
+        '• **📸 Official Screenshot** — view live website screenshot (only you see it)\n' +
         '• **Role dropdown** — pick which status changes ping you\n\n' +
         '**For bot staff:**\n' +
         '• `/post-status` — publish a fresh status post now\n' +

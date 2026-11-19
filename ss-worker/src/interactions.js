@@ -76,6 +76,7 @@ import {
 import { handleGreeterInteraction } from './greeter.js';
 import { isGuildBlocked } from './blocklist.js';
 import { handleSetupClasses, handleMapMyClass } from './mapcommands.js';
+import { handleScreenshotInteraction } from './screenshot.js';
 
 export async function handleInteraction(body, env, ctx) {
   if (body.type === 1) return jsonResponse({ type: 1 });
@@ -225,6 +226,10 @@ export async function handleInteraction(body, env, ctx) {
     if (name === 'mapmyclass') {
       env.ctx = ctx; // Hack to pass ctx to handler without changing signature
       return await handleMapMyClass(body, env);
+    }
+    if (name === 'screenshot') {
+      ctx.waitUntil(handleScreenshotInteraction(body, env));
+      return deferredInteractionResponse();
     }
 
     if (name === REQUEST_ANNOUNCEMENT_COMMAND) {
@@ -845,6 +850,11 @@ export async function handleInteraction(body, env, ctx) {
       return interactionResponse({ ...payload, flags: EPHEMERAL_FLAG });
     }
 
+    if (selected === 'status_opt_screenshot') {
+      ctx.waitUntil(handleScreenshotInteraction(body, env));
+      return deferredInteractionResponse();
+    }
+
     return interactionResponse({
       content: '❌ Unknown option selected.',
       flags: EPHEMERAL_FLAG
@@ -1115,6 +1125,11 @@ export async function handleInteraction(body, env, ctx) {
         components: []
       }
     });
+  }
+
+  if (body.type === 3 && body.data && body.data.custom_id === 'btn_status_screenshot') {
+    ctx.waitUntil(handleScreenshotInteraction(body, env));
+    return deferredInteractionResponse();
   }
 
   if (body.type === 3 && body.data && body.data.custom_id === 'check_again') {

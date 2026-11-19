@@ -61,6 +61,9 @@ database_id = "9276705a-f50c-4bd9-9d85-6ac565c55469"
 [ai]
 binding = "AI"
 
+[browser]
+binding = "BROWSER"
+
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "school-status-index"

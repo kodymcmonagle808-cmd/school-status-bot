@@ -11,6 +11,7 @@
     "eslint": "^10.7.0"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^2.0.1",
     "upng-js": "^2.1.0"
   }
 }

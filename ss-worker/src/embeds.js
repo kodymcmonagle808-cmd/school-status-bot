@@ -99,7 +99,8 @@ export function buildCheckAgainComponents(config = null) {
     type: 1,
     components: [
       { type: 2, style: 1, label: 'Check again', custom_id: 'check_again' },
-      { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } }
+      { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } },
+      { type: 2, style: 2, label: 'Official Screenshot', custom_id: 'btn_status_screenshot', emoji: { name: '📸' } }
     ]
   }];
 

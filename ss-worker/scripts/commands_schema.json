@@ -904,5 +904,19 @@
       1,
       2
     ]
+  },
+  {
+    "name": "screenshot",
+    "description": "View a live screenshot of the official HCPSS operating status website.",
+    "type": 1,
+    "integration_types": [
+      0,
+      1
+    ],
+    "contexts": [
+      0,
+      1,
+      2
+    ]
   }
 ]
