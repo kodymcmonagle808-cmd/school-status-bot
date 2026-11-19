@@ -61,6 +61,20 @@ database_id = "9276705a-f50c-4bd9-9d85-6ac565c55469"
 [ai]
 binding = "AI"
 
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "school-status-index"
+
+[[queues.producers]]
+binding = "ALERT_QUEUE"
+queue = "ss-alerts-queue"
+
+[[queues.consumers]]
+queue = "ss-alerts-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+
 # Cron fires every minute; the worker matches each guild's configured check
 # times (Eastern, any minute of the day) and dedupes so each slot runs once.
 [triggers]

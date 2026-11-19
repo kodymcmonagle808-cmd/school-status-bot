@@ -12,6 +12,7 @@ import { logAction } from './actionlog.js';
 import { postLog } from './panel.js';
 import { generateEmailSummary } from './ai.js';
 import { recordEmailToD1 } from './db.js';
+import { indexEmailVector } from './vectorize.js';
 
 // Dedupe window for Gmail message ids. The Apps Script only re-sends when a
 // worker ack was lost, so a week of memory is plenty.
@@ -141,6 +142,21 @@ export async function handleEmailHook(env, payload) {
             });
           } catch (err) {
             console.error('Failed to record email to D1:', err);
+          }
+        }
+
+        if (env.VECTORIZE) {
+          try {
+            await indexEmailVector(env, {
+              id,
+              guildId: gid,
+              subject,
+              body,
+              ts: Date.now(),
+              url: payload.webLink || null
+            });
+          } catch (err) {
+            console.error('Failed to index email in Vectorize:', err);
           }
         }
 

@@ -1451,10 +1451,25 @@ export async function runSearchEmailsCommand(body, env) {
   }
 
   let results = [];
-  if (env && env.DB) {
+  let searchSource = 'Cloudflare D1 Archive';
+  if (env && env.VECTORIZE && env.AI) {
+    try {
+      const { semanticSearchEmails } = await import('./vectorize.js');
+      const searchRes = await semanticSearchEmails(env, query, { guildId, topK: 5 });
+      if (searchRes?.results?.length) {
+        results = searchRes.results;
+        searchSource = searchRes.source === 'vector' ? 'Cloudflare Vectorize (Semantic Search)' : 'Cloudflare D1 Archive';
+      }
+    } catch (err) {
+      console.error('semanticSearchEmails error:', err);
+    }
+  }
+
+  if ((!results || results.length === 0) && env && env.DB) {
     try {
       const { searchEmailsInD1 } = await import('./db.js');
       results = await searchEmailsInD1(env.DB, guildId, query, 5);
+      if (results?.length) searchSource = 'Cloudflare D1 Archive';
     } catch (err) {
       console.error('searchEmailsInD1 error:', err);
     }
@@ -1468,6 +1483,7 @@ export async function runSearchEmailsCommand(body, env) {
         const logs = JSON.parse(rawLogs) || [];
         const q = query.toLowerCase();
         results = logs.filter(l => l.subject && l.subject.toLowerCase().includes(q)).slice(0, 5);
+        if (results?.length) searchSource = 'Cloudflare KV Logs';
       }
     } catch {}
   }
@@ -1495,7 +1511,7 @@ export async function runSearchEmailsCommand(body, env) {
     title: `🔍 School Announcement Search: "${query.slice(0, 50)}"`,
     color: 0x3498DB,
     description: lines.join('\n\n'),
-    footer: { text: `Found ${results.length} result(s) · Cloudflare D1 Archive` },
+    footer: { text: `Found ${results.length} result(s) · ${searchSource}` },
     timestamp: new Date().toISOString()
   };
 

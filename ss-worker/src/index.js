@@ -36,6 +36,7 @@ import { isHeartbeatMinute } from './timeutil.js';
 import { maybeRunKvBackup, runKvBackup } from './backup.js';
 import { handleEmailHook } from './emailhook.js';
 import { initEnv } from './db.js';
+import { processAlertQueueBatch } from './queue.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -655,5 +656,10 @@ export default {
         }
       }
     })());
+  },
+
+  async queue(batch, env, ctx) {
+    initEnv(env);
+    await processAlertQueueBatch(batch, env, ctx);
   }
 };

@@ -585,13 +585,18 @@ export async function buildWorkerUpdatesPayload(env) {
     fetchCloudflareDeployments(env).catch(() => null)
   ]);
 
+  const vectorStatus = env.VECTORIZE ? '🟢 **Active** (`school-status-index` · 384d)' : '⚪ **Standby Mode** (Ready to bind)';
+  const queueStatus = env.ALERT_QUEUE ? '🟢 **Active** (`ss-alerts-queue` · Decoupled)' : '⚪ **Standby Mode** (Direct HTTP fallback)';
+
   const storageFields = d1Stats
     ? [
         { name: '🗄️ Primary Database: Cloudflare D1', value: buildD1Section(d1Stats, kvUsage), inline: false },
+        { name: '⚡ Cloudflare Free Services', value: `• **Vectorize (Semantic Search)**: ${vectorStatus}\n• **Queues (Alert Dispatch)**: ${queueStatus}\n• **R2 Backups**: ${env.BACKUPS_BUCKET ? '🟢 Active (`ss-backups`)' : '⚪ Standby'}\n• **Workers AI**: ${env.AI ? '🟢 Active' : '⚪ Standby'}`, inline: false },
         { name: '💾 Legacy KV (Standby Fallback)', value: '🟢 **Standby Mode** — Legacy KV fallback ready; 0 writes needed.', inline: false }
       ]
     : [
-        { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false }
+        { name: '💾 KV usage (free plan)', value: buildKvUsageSection(kvUsage), inline: false },
+        { name: '⚡ Cloudflare Free Services', value: `• **Vectorize (Semantic Search)**: ${vectorStatus}\n• **Queues (Alert Dispatch)**: ${queueStatus}`, inline: false }
       ];
 
   const activeUpdates = (cfDeployments && cfDeployments.length) ? cfDeployments : updates;
@@ -1491,11 +1496,11 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• **Total Archived Announcements:** ${emailStats.total}\n` +
                    `• **Past 7 Days:** ${emailStats.past7Days} email(s)\n` +
                    `• **Past 30 Days:** ${emailStats.past30Days} email(s)\n\n` +
-                   `### ⚡ Database Performance & Capacity\n` +
-                   `• **Active Storage:** Cloudflare D1 (SQLite)\n` +
-                   `• **Write Capacity:** 100,000 writes/day (Free Tier)\n` +
-                   `• **Read Capacity:** 5,000,000 reads/day\n` +
-                   `• **Max Storage:** 5 GB`,
+                   `### ⚡ Cloudflare Free Tier Architecture\n` +
+                   `• **Database (D1 SQLite):** 100,000 writes/day · 5M reads/day · 5 GB\n` +
+                   `• **Vector Search (Vectorize):** 30,000 queries/month · 384d semantic search\n` +
+                   `• **Message Queue (Queues):** 1,000,000 ops/month · decoupled alert delivery\n` +
+                   `• **Object Storage (R2):** 10 GB free snapshots · $0 egress fees`,
       timestamp: new Date().toISOString()
     };
 
