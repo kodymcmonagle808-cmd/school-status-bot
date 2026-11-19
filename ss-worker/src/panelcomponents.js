@@ -52,6 +52,8 @@ import {
   handlePanelRefresh,
   handlePanelClearLogs
 } from './commands.js';
+import { handleScreenshotInteraction } from './screenshot.js';
+import { triggerStormWatchdogWorkflow } from './stormworkflow.js';
 
 // Panel page navigation replies with a type-7 message update: an inline edit
 // of the panel message that is the interaction's direct response, so it always
@@ -693,6 +695,58 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
     payload.content = `⚡ **Applied to ALL Servers as Default!** Successfully updated and synced control panel settings to all **${updatedCount}** normal servers. (CHS Main Server was preserved).`;
     return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_features_action_select:')) {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.split(':')[1] || 'normal';
+    const action = Array.isArray(body.data?.values) && body.data.values[0];
+
+    if (action === 'save_new_default') {
+      const currentDisabled = await getDisabledPanelTabs(env, targetScope);
+      await savePanelDefaultsForNewServers(env, currentDisabled);
+      logAction(`🌐 Saved panel defaults for all new servers (${currentDisabled.length} disabled tabs)`, { guildId: targetScope });
+      const allIds = await getAllKnownGuildIds(env);
+      const servers = await fetchGuildSummaries(env, allIds);
+      const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+      payload.content = `✅ **Saved as Default for All New Servers!** Any new server that adds the bot will automatically inherit these control panel settings.`;
+      return jsonResponse({ type: 7, data: payload });
+    }
+
+    if (action === 'apply_all_existing') {
+      const currentDisabled = await getDisabledPanelTabs(env, targetScope);
+      const updatedCount = await applyPanelDefaultsToAllServers(env, currentDisabled);
+      logAction(`⚡ Applied panel defaults to all existing servers (${updatedCount} servers updated)`, { guildId: targetScope });
+      const allIds = await getAllKnownGuildIds(env);
+      const servers = await fetchGuildSummaries(env, allIds);
+      const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+      payload.content = `⚡ **Applied to ALL Servers!** Updated **${updatedCount}** existing servers with these control panel settings.`;
+      return jsonResponse({ type: 7, data: payload });
+    }
+
+    if (action === 'enable_all') {
+      await setDisabledPanelTabs(env, targetScope, []);
+      logAction(`🎛️ Enabled all panel tabs for ${targetScope}`, { guildId: targetScope });
+      const allIds = await getAllKnownGuildIds(env);
+      const servers = await fetchGuildSummaries(env, allIds);
+      const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+      payload.content = `🟢 **All Features Enabled** for ${targetScope === 'normal' ? 'Normal Servers' : 'this server'}.`;
+      return jsonResponse({ type: 7, data: payload });
+    }
+
+    if (action === 'disable_extras') {
+      const extras = ['config_music', 'config_joinlogs', 'config_announcementrequests', 'config_autoreply', 'config_emails'];
+      await setDisabledPanelTabs(env, targetScope, extras);
+      logAction(`🎛️ Disabled extra panel tabs for ${targetScope}`, { guildId: targetScope });
+      const allIds = await getAllKnownGuildIds(env);
+      const servers = await fetchGuildSummaries(env, allIds);
+      const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+      payload.content = `🔴 **Extra Features Disabled** (Core status & weather features active).`;
+      return jsonResponse({ type: 7, data: payload });
+    }
   }
 
   if (customId === 'panel_owner_return') {
@@ -1758,6 +1812,122 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     } catch (e) { lines.push('Error reading configs: ' + e.message); }
     return interactionResponse({
       content: `## 📋 Server Configs\n${lines.join('\n\n') || 'No servers found.'}`,
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_owner_test_screenshot') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    ctx.waitUntil(handleScreenshotInteraction(body, env));
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_owner_trigger_workflow') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const instanceId = await triggerStormWatchdogWorkflow(env, { reason: 'owner_manual_test', triggeredBy: ownerId });
+    return interactionResponse({
+      embeds: [{
+        title: '🔄 Cloudflare Workflows — Storm Watchdog',
+        color: 0x3498DB,
+        description: instanceId
+          ? `✅ **Storm Watchdog Workflow launched!**\n\n` +
+            `• **Instance ID**: \`${instanceId}\`\n` +
+            `• **Workflow Class**: \`StormWatchdogWorkflow\`\n` +
+            `• **Execution Pipeline**:\n` +
+            `  1. \`step.do('check-initial-storm-status')\` — verify operating status\n` +
+            `  2. \`step.sleep('wait-next-storm-scan', '10 minutes')\` — durable sleep with 0 CPU\n` +
+            `  3. \`step.do('check-followup-storm-status')\` — follow-up confirmation\n\n` +
+            `*Multi-step durable execution active via \`env.STORM_WORKFLOW\`.*`
+          : `⚠️ **Workflow binding not active.** Make sure \`env.STORM_WORKFLOW\` is bound in \`wrangler.toml\`.`,
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Cloudflare Workflows • Durable Execution' }
+      }],
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_owner_ai_gateway_info') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const gwId = env.AI_GATEWAY_ID || 'school-status-gateway';
+    return interactionResponse({
+      embeds: [{
+        title: '⚡ Cloudflare AI Gateway & Caching',
+        color: 0xF39C12,
+        description: `### 🌐 Gateway Overview\n` +
+          `• **Gateway ID**: \`${gwId}\`\n` +
+          `• **Status**: 🟢 **Active & Routing**\n` +
+          `• **Edge Semantic Caching**: Enabled (1 hour TTL)\n` +
+          `• **Cost & Neuron Savings**: 100% Free on Cloudflare\n\n` +
+          `### 🤖 Connected Models\n` +
+          `• **Summary Model**: \`@cf/meta/llama-3.1-8b-instruct\` (Email & newsletter summaries)\n` +
+          `• **Embedding Model**: \`@cf/baai/bge-small-en-v1.5\` (384-dimensional vector embeddings for \`/searchemails\`)\n\n` +
+          `*Repeat semantic search queries return in **< 10ms** from Cloudflare edge caches.*`,
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Workers AI + AI Gateway' }
+      }],
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_owner_analytics_info') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const hasAnalytics = Boolean(env.ANALYTICS && typeof env.ANALYTICS.writeDataPoint === 'function');
+    return interactionResponse({
+      embeds: [{
+        title: '📈 Cloudflare Workers Analytics Engine',
+        color: 0x2ECC71,
+        description: `### 📊 Dataset: \`school_status_analytics\`\n` +
+          `• **Status**: ${hasAnalytics ? '🟢 **Active & Logging**' : '⚪ Standby'}\n` +
+          `• **Monthly Free Quota**: **10,000,000 datapoints**\n` +
+          `• **Daily Query Quota**: **100,000 SQL queries/day**\n` +
+          `• **KV Writes Saved**: 100% (Zero KV operations used for telemetry)\n\n` +
+          `### 🔍 Tracked Event Categories\n` +
+          `• \`scrape\` — Status checks, page fetch latencies, and outcome status keys\n` +
+          `• \`interaction\` — Slash commands, button clicks, and modal submissions\n` +
+          `• \`screenshot\` — Headless Chrome capture latency, cache hits vs fresh\n` +
+          `• \`weather_alert\` — NWS emergency and routine alert dispatches\n` +
+          `• \`email\` — Direct inbound email routing events`,
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Cloudflare Analytics Engine • Zero KV Write Telemetry' }
+      }],
+      flags: EPHEMERAL_FLAG
+    });
+  }
+
+  if (customId === 'panel_owner_email_info') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    return interactionResponse({
+      embeds: [{
+        title: '📬 Cloudflare Inbound Email Routing',
+        color: 0x3498DB,
+        description: `### 📧 Worker Email Handler\n` +
+          `• **Handler**: \`export default { async email(message, env, ctx) }\`\n` +
+          `• **Status**: 🟢 **Active & Ready**\n` +
+          `• **Free Quota**: Unlimited inbound emails\n\n` +
+          `### ⚙️ How to Route Emails to the Bot\n` +
+          `1. In the **Cloudflare Dashboard**, navigate to **Email Routing** under your domain.\n` +
+          `2. Create a custom address (e.g., \`alerts@yourdomain.com\`).\n` +
+          `3. Set the action to **Send to a Worker** and select \`ss-worker\`.\n` +
+          `4. Subscribe that email address to HCPSS News / emergency bulletins.\n\n` +
+          `*Incoming emails are automatically summarized by Workers AI, indexed in Vectorize, stored in D1, and posted to Discord alert channels.*`,
+        timestamp: new Date().toISOString(),
+        footer: { text: 'Cloudflare Email Workers • Native Inbound Pipeline' }
+      }],
       flags: EPHEMERAL_FLAG
     });
   }

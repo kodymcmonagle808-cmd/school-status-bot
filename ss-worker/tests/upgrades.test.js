@@ -205,3 +205,55 @@ test('StormWatchdogWorkflow runs multi-step sequence with sleep and do', async (
   assert.ok(stepsRan.includes('sleep:wait-next-storm-scan:10 minutes'));
   assert.ok(stepsRan.includes('do:check-followup-storm-status'));
 });
+
+// --- Owner Panel Tool Tests ---
+
+test('handlePanelComponent responds to owner tools (workflow, AI gateway, analytics, email)', async () => {
+  const { handlePanelComponent } = await import('../src/panelcomponents.js');
+
+  const mockKv = {
+    async get() { return null; },
+    async put() {}
+  };
+  const mockEnv = {
+    OWNER_ID: 'owner-42',
+    STATUS_KV: mockKv,
+    AI_GATEWAY_ID: 'school-status-gateway',
+    ANALYTICS: { writeDataPoint() {} }
+  };
+
+  const baseBody = {
+    type: 3,
+    member: { user: { id: 'owner-42' } }
+  };
+
+  // 1. AI Gateway info
+  const gwResp = await handlePanelComponent({ ...baseBody, data: { custom_id: 'panel_owner_ai_gateway_info' } }, mockEnv, {}, 'g1');
+  const gwData = await gwResp.json();
+  assert.match(gwData.data.embeds[0].title, /AI Gateway/);
+  assert.match(gwData.data.embeds[0].description, /school-status-gateway/);
+
+  // 2. Analytics info
+  const anResp = await handlePanelComponent({ ...baseBody, data: { custom_id: 'panel_owner_analytics_info' } }, mockEnv, {}, 'g1');
+  const anData = await anResp.json();
+  assert.match(anData.data.embeds[0].title, /Analytics Engine/);
+  assert.match(anData.data.embeds[0].description, /Active & Logging/);
+
+  // 3. Email info
+  const emResp = await handlePanelComponent({ ...baseBody, data: { custom_id: 'panel_owner_email_info' } }, mockEnv, {}, 'g1');
+  const emData = await emResp.json();
+  assert.match(emData.data.embeds[0].title, /Email Routing/);
+  assert.match(emData.data.embeds[0].description, /Send to a Worker/);
+
+  // 4. Batch presets dropdown
+  const actionResp = await handlePanelComponent({
+    ...baseBody,
+    data: {
+      custom_id: 'cfg_owner_features_action_select:normal',
+      values: ['enable_all']
+    }
+  }, mockEnv, {}, 'g1');
+  const actionData = await actionResp.json();
+  assert.equal(actionData.type, 7);
+  assert.match(actionData.data.content, /All Features Enabled/);
+});

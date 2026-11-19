@@ -246,9 +246,16 @@ export const STAFF_DEBUG_OPTIONS = [
 ];
 
 export const OWNER_DEBUG_OPTIONS = [
+  { label: 'Capture Website Screenshot', value: 'panel_owner_test_screenshot', description: 'Take live screenshot of status.hcpss.org with Browser Rendering', emoji: { name: '📸' } },
+  { label: 'Trigger Storm Watchdog Workflow', value: 'panel_owner_trigger_workflow', description: 'Launch durable multi-step storm monitoring workflow', emoji: { name: '🔄' } },
+  { label: 'Cloudflare AI Gateway & Cache', value: 'panel_owner_ai_gateway_info', description: 'View AI Gateway status, edge caching, and model routing', emoji: { name: '⚡' } },
+  { label: 'Cloudflare Analytics Engine', value: 'panel_owner_analytics_info', description: 'View 10M free telemetry events and query stats', emoji: { name: '📈' } },
+  { label: 'Cloudflare Inbound Email Routing', value: 'panel_owner_email_info', description: 'View native email routing configuration and status', emoji: { name: '📬' } },
   { label: 'Manage Server Panel Tabs', value: 'panel_owner_features_manage', description: 'Turn control panel tabs on/off for normal servers', emoji: { name: '🎛️' } },
   { label: 'Apply Panel Defaults to All Servers', value: 'panel_owner_apply_defaults_all', description: 'Sync normal panel settings across all existing servers', emoji: { name: '⚡' } },
   { label: 'Apply Panel Defaults to All New Servers', value: 'panel_owner_save_defaults_new', description: 'Lock in current settings as default for any new server', emoji: { name: '🌐' } },
+  { label: 'Backup Database to R2', value: 'panel_owner_backup_d1', description: 'Export full D1 database snapshot to R2 bucket', emoji: { name: '💾' } },
+  { label: 'Force Check All Servers', value: 'panel_owner_force_check_all', description: 'Trigger immediate status check across all servers', emoji: { name: '⚡' } },
   { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild', emoji: { name: '🗄️' } },
   { label: 'Purge Caches', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
   { label: 'View Raw Config', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
@@ -1034,22 +1041,39 @@ export async function buildOwnerFeaturesPayload(env, targetScope = 'normal', ser
 
   components.push({
     type: 1,
-    components: [
-      {
-        type: 2,
-        style: 1,
-        custom_id: `cfg_owner_features_save_new_default:${targetScope}`,
-        label: 'Apply to All New Servers as Default',
-        emoji: { name: '🌐' }
-      },
-      {
-        type: 2,
-        style: 4,
-        custom_id: `cfg_owner_features_apply_all_existing:${targetScope}`,
-        label: 'Apply to All Servers as Default',
-        emoji: { name: '⚡' }
-      }
-    ]
+    components: [{
+      type: 3,
+      custom_id: `cfg_owner_features_action_select:${targetScope}`,
+      placeholder: '⚡ Presets & Default Actions...',
+      options: [
+        {
+          label: 'Apply to All New Servers as Default',
+          value: 'save_new_default',
+          description: 'Save current settings as default for any new server',
+          emoji: { name: '🌐' }
+        },
+        {
+          label: 'Apply to All Servers as Default',
+          value: 'apply_all_existing',
+          description: 'Force-sync current settings to all existing servers',
+          emoji: { name: '⚡' }
+        },
+        {
+          label: 'Enable All Tabs',
+          value: 'enable_all',
+          description: 'Turn on all 18 configurable tabs for this server',
+          emoji: { name: '🟢' }
+        },
+        {
+          label: 'Disable Extra Features (Core Only)',
+          value: 'disable_extras',
+          description: 'Keep only core school status and weather tabs active',
+          emoji: { name: '🔴' }
+        }
+      ],
+      min_values: 1,
+      max_values: 1
+    }]
   });
 
   return { embeds: [embed], components };
