@@ -8,6 +8,8 @@ import {
   isMainGuild,
   getDisabledPanelTabs,
   setDisabledPanelTabs,
+  applyPanelDefaultsToAllServers,
+  savePanelDefaultsForNewServers,
   getNavBarRow,
   buildControlPanelPayload,
   buildOwnerFeaturesPayload
@@ -199,4 +201,50 @@ test('handlePanelComponent: owner can set CHS main server and toggle features', 
   const enableAllData = await enableAllResp.json();
   assert.strictEqual(enableAllData.type, 7);
   assert.deepStrictEqual(await getDisabledPanelTabs(env, 'normal'), []);
+});
+
+test('apply to all new servers as default & apply to all servers as default', async () => {
+  const env = createMockEnv({
+    guild_index: JSON.stringify(['chs-main', 'guild-1', 'guild-2', 'guild-3'])
+  });
+  await setMainGuildId(env, 'chs-main');
+
+  // Test savePanelDefaultsForNewServers directly
+  await savePanelDefaultsForNewServers(env, ['config_music', 'config_emails']);
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'normal'), ['config_music', 'config_emails']);
+
+  // Set individual override on guild-1
+  await setDisabledPanelTabs(env, 'guild-1', ['config_joinlogs']);
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'guild-1'), ['config_joinlogs']);
+
+  // Test applyPanelDefaultsToAllServers
+  const updatedCount = await applyPanelDefaultsToAllServers(env, ['config_music']);
+  assert.strictEqual(updatedCount, 4); // all 4 known guilds except chs-main
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'normal'), ['config_music']);
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'guild-1'), ['config_music']);
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'guild-2'), ['config_music']);
+  assert.deepStrictEqual(await getDisabledPanelTabs(env, 'chs-main'), []); // main server preserved
+
+  // Test via handlePanelComponent buttons
+  // 1. Apply to all new servers as default
+  const newDefaultResp = await handlePanelComponent({
+    type: 3,
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_features_save_new_default:normal' }
+  }, env, { waitUntil: () => {} }, 'normal');
+
+  const newDefaultData = await newDefaultResp.json();
+  assert.strictEqual(newDefaultData.type, 7);
+  assert.match(newDefaultData.data.content, /Saved as Default for All New Servers/);
+
+  // 2. Apply to all servers as default
+  const applyAllResp = await handlePanelComponent({
+    type: 3,
+    member: { user: { id: 'owner-123' } },
+    data: { custom_id: 'cfg_owner_features_apply_all_existing:normal' }
+  }, env, { waitUntil: () => {} }, 'normal');
+
+  const applyAllData = await applyAllResp.json();
+  assert.strictEqual(applyAllData.type, 7);
+  assert.match(applyAllData.data.content, /Applied to ALL Servers as Default/);
 });

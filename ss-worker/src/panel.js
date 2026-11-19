@@ -187,6 +187,31 @@ export async function setDisabledPanelTabs(env, target = 'normal', disabledList 
   await env.STATUS_KV.put(key, JSON.stringify(disabledList));
 }
 
+export async function applyPanelDefaultsToAllServers(env, disabledList = null) {
+  let list = disabledList;
+  if (list === null) {
+    list = await getDisabledPanelTabs(env, 'normal');
+  }
+  await setDisabledPanelTabs(env, 'normal', list);
+
+  const allIds = await getAllKnownGuildIds(env);
+  const mainGuildId = await getMainGuildId(env);
+  let updatedCount = 0;
+
+  for (const gid of allIds) {
+    if (gid && gid !== mainGuildId) {
+      await setDisabledPanelTabs(env, gid, list);
+      updatedCount++;
+    }
+  }
+  return updatedCount;
+}
+
+export async function savePanelDefaultsForNewServers(env, disabledList) {
+  await setDisabledPanelTabs(env, 'normal', disabledList);
+  return disabledList.length;
+}
+
 function getNavTabForPage(page) {
   if (page === 'config_override_select' || page === 'config_manual_status') return 'config_manual_status';
   if (page === 'config_schedule_add') return 'config_schedule';
@@ -222,6 +247,8 @@ export const STAFF_DEBUG_OPTIONS = [
 
 export const OWNER_DEBUG_OPTIONS = [
   { label: 'Manage Server Panel Tabs', value: 'panel_owner_features_manage', description: 'Turn control panel tabs on/off for normal servers', emoji: { name: '🎛️' } },
+  { label: 'Apply Panel Defaults to All Servers', value: 'panel_owner_apply_defaults_all', description: 'Sync normal panel settings across all existing servers', emoji: { name: '⚡' } },
+  { label: 'Apply Panel Defaults to All New Servers', value: 'panel_owner_save_defaults_new', description: 'Lock in current settings as default for any new server', emoji: { name: '🌐' } },
   { label: 'KV Store Diagnostic', value: 'panel_kv_debug', description: 'Dump all KV keys and values for this guild', emoji: { name: '🗄️' } },
   { label: 'Purge Caches', value: 'panel_btn_debug_purge_cache', description: 'Clear weather, outage, and scraper KV caches', emoji: { name: '🧹' } },
   { label: 'View Raw Config', value: 'panel_btn_debug_raw_config', description: 'Dump complete JSON config for this guild', emoji: { name: '📄' } },
@@ -738,7 +765,8 @@ export async function buildWorkerUpdatesPayload(env) {
         value: `• **CHS Main Server**: ${mainServerDisplay}\n` +
                `• **CHS Panel**: Runs full **CHS CONTROLS** (all 19 tabs active)\n` +
                `• **Normal Servers**: Standard Control Panel (${disabledDesc})\n` +
-               `*Set your CHS Main Server below, or click **Panel Tabs** to turn options on/off.*`,
+               `• **Default for New Servers**: ${disabledNormal.length > 0 ? `${disabledNormal.length} tabs hidden by default` : 'All tabs enabled by default'}\n` +
+               `*Set your CHS Main Server below, or click **Panel Tabs** to manage defaults.*`,
         inline: false
       },
       { name: '🩺 Watcher errors', value: formatWatcherErrors(watcherErrors), inline: false },
@@ -983,6 +1011,26 @@ export async function buildOwnerFeaturesPayload(env, targetScope = 'normal', ser
         custom_id: 'panel_owner_return',
         label: 'Back to Owner Panel',
         emoji: { name: '⬅️' }
+      }
+    ]
+  });
+
+  components.push({
+    type: 1,
+    components: [
+      {
+        type: 2,
+        style: 1,
+        custom_id: `cfg_owner_features_save_new_default:${targetScope}`,
+        label: 'Apply to All New Servers as Default',
+        emoji: { name: '🌐' }
+      },
+      {
+        type: 2,
+        style: 4,
+        custom_id: `cfg_owner_features_apply_all_existing:${targetScope}`,
+        label: 'Apply to All Servers as Default',
+        emoji: { name: '⚡' }
       }
     ]
   });

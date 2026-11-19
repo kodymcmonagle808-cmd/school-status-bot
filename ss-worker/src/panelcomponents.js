@@ -33,6 +33,8 @@ import {
   isMainGuild,
   getDisabledPanelTabs,
   setDisabledPanelTabs,
+  applyPanelDefaultsToAllServers,
+  savePanelDefaultsForNewServers,
   getAllKnownGuildIds,
   fetchGuildSummaries
 } from './panel.js';
@@ -656,6 +658,40 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     const allIds = await getAllKnownGuildIds(env);
     const servers = await fetchGuildSummaries(env, allIds);
     const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_features_save_new_default:') || customId === 'panel_owner_save_defaults_new') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.startsWith('cfg_owner_features_save_new_default:') ? (customId.split(':')[1] || 'normal') : 'normal';
+    const currentDisabled = await getDisabledPanelTabs(env, targetScope);
+    await savePanelDefaultsForNewServers(env, currentDisabled);
+    logAction(`🌐 Saved panel defaults for all new servers (${currentDisabled.length} disabled tabs)`, { guildId: targetScope });
+
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    payload.content = `✅ **Saved as Default for All New Servers!** Any new server that adds the bot will automatically inherit these control panel settings (${currentDisabled.length ? `${currentDisabled.length} tabs hidden` : 'all tabs visible'}).`;
+    return jsonResponse({ type: 7, data: payload });
+  }
+
+  if (customId.startsWith('cfg_owner_features_apply_all_existing:') || customId === 'panel_owner_apply_defaults_all') {
+    const ownerId = String(env.OWNER_ID || '').trim();
+    if (!ownerId || getInvokerId(body) !== ownerId) {
+      return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
+    }
+    const targetScope = customId.startsWith('cfg_owner_features_apply_all_existing:') ? (customId.split(':')[1] || 'normal') : 'normal';
+    const currentDisabled = await getDisabledPanelTabs(env, targetScope);
+    const updatedCount = await applyPanelDefaultsToAllServers(env, currentDisabled);
+    logAction(`⚡ Applied panel defaults to all existing servers (${updatedCount} servers updated)`, { guildId: targetScope });
+
+    const allIds = await getAllKnownGuildIds(env);
+    const servers = await fetchGuildSummaries(env, allIds);
+    const payload = await buildOwnerFeaturesPayload(env, targetScope, servers);
+    payload.content = `⚡ **Applied to ALL Servers as Default!** Successfully updated and synced control panel settings to all **${updatedCount}** normal servers. (CHS Main Server was preserved).`;
     return jsonResponse({ type: 7, data: payload });
   }
 
