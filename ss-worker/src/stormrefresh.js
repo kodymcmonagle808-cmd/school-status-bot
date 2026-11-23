@@ -12,6 +12,7 @@ import { buildStatusPayload } from './embeds.js';
 import { discordFetch } from './discord.js';
 import { clearOutageCaches, getCachedOutageTotal } from './outages.js';
 import { clearRoadsCache } from './roads.js';
+import { triggerStormWatchdogWorkflow } from './stormworkflow.js';
 
 const SLOT_KEY = 'last_storm_refresh_slot';
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -192,6 +193,18 @@ export async function maybeRefreshStormEmbeds(env, now = new Date(), opts = {}) 
   // the original arm time forward untouched, so the tail expires an hour after
   // the storm rather than an hour after the last push.
   await env.STATUS_KV.put(SLOT_KEY, `${slot}@${warranted ? now.getTime() : lastArmedAt}`);
+
+  if (warranted && env?.STORM_WORKFLOW) {
+    try {
+      const active = await env.STATUS_KV?.get('storm_workflow_active');
+      if (!active) {
+        await triggerStormWatchdogWorkflow(env, { reason: 'power_threat_detected', slot });
+        await env.STATUS_KV?.put('storm_workflow_active', '1', { expirationTtl: 1800 });
+      }
+    } catch (e) {
+      console.warn('Failed to dispatch storm watchdog workflow:', e);
+    }
+  }
 
   // Only once a refresh is definitely happening: drop the data caches the
   // caller flagged as stale, so the rebuild fetches live. Clearing before

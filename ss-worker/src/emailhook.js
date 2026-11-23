@@ -13,6 +13,7 @@ import { postLog } from './panel.js';
 import { generateEmailSummary } from './ai.js';
 import { recordEmailToD1 } from './db.js';
 import { indexEmailVector } from './vectorize.js';
+import { recordAnalyticsEvent } from './analytics.js';
 
 // Dedupe window for Gmail message ids. The Apps Script only re-sends when a
 // worker ack was lost, so a week of memory is plenty.
@@ -157,6 +158,12 @@ export async function handleEmailHook(env, payload) {
       });
       if (resp.ok) {
         sent++;
+        recordAnalyticsEvent(env, {
+          event: 'email',
+          status: 'posted',
+          guildId: gid,
+          detail: id
+        });
         const postData = await resp.json().catch(() => null);
         const messageId = postData && postData.id;
         const jumpUrl = messageId ? `https://discord.com/channels/${gid}/${targetChannelId}/${messageId}` : '';

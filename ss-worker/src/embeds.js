@@ -95,13 +95,17 @@ export function splitEmbeds(title, description, url, color, footer, checkedAt = 
 }
 
 export function buildCheckAgainComponents(config = null) {
+  const primaryButtons = [
+    { type: 2, style: 1, label: 'Check again', custom_id: 'check_again' },
+    { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } }
+  ];
+  if (!config || config.toggle_status_screenshot !== false) {
+    primaryButtons.push({ type: 2, style: 2, label: 'Official Screenshot', custom_id: 'btn_status_screenshot', emoji: { name: '📸' } });
+  }
+
   const rows = [{
     type: 1,
-    components: [
-      { type: 2, style: 1, label: 'Check again', custom_id: 'check_again' },
-      { type: 2, style: 2, label: 'Notify Me', custom_id: 'dm_subscribe', emoji: { name: '🔔' } },
-      { type: 2, style: 2, label: 'Official Screenshot', custom_id: 'btn_status_screenshot', emoji: { name: '📸' } }
-    ]
+    components: primaryButtons
   }];
 
   // Options / quick commands dropdown on status alerts

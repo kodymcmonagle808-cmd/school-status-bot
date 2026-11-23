@@ -960,6 +960,20 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
     return renderPanelNav(env, body, guildId, 'config_emails');
   }
 
+  if (customId === 'panel_toggle_status_screenshot') {
+    const config = await getConfig(env, guildId);
+    config.toggle_status_screenshot = config.toggle_status_screenshot === false;
+    await setConfig(env, guildId, config);
+    return renderPanelNav(env, body, guildId, 'config_status');
+  }
+
+  if (customId === 'panel_toggle_analytics_logging') {
+    const config = await getConfig(env, guildId);
+    config.toggle_analytics_logging = config.toggle_analytics_logging === false;
+    await setConfig(env, guildId, config);
+    return renderPanelNav(env, body, guildId, 'config_analytics');
+  }
+
   if (customId === 'panel_clear_email_channel') {
     const config = await getConfig(env, guildId);
     delete config.email_channel_id;
@@ -1421,6 +1435,11 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       }
     })());
     
+    return deferredInteractionResponse();
+  }
+
+  if (customId === 'panel_btn_debug_screenshot') {
+    ctx.waitUntil(handleScreenshotInteraction(body, env));
     return deferredInteractionResponse();
   }
 

@@ -248,3 +248,48 @@ test('apply to all new servers as default & apply to all servers as default', as
   assert.strictEqual(applyAllData.type, 7);
   assert.match(applyAllData.data.content, /Applied to ALL Servers as Default/);
 });
+
+test('buildControlPanelPayload config_toggles includes new Cloudflare feature toggles and dual menus', async () => {
+  const env = createMockEnv();
+  const payload = await buildControlPanelPayload(env, 'guild-1', null, 'config_toggles');
+  assert.ok(payload.embeds && payload.embeds.length === 1);
+  assert.match(payload.embeds[0].description, /Official Screenshots/);
+  assert.match(payload.embeds[0].description, /AI Email Summaries/);
+  assert.match(payload.embeds[0].description, /Storm Watchdog Workflow/);
+  assert.match(payload.embeds[0].description, /Analytics Engine Telemetry/);
+
+  // Check components: Nav bar, core toggles, notices toggles, primary district
+  assert.strictEqual(payload.components.length, 4);
+  const coreSelect = payload.components[1].components[0];
+  assert.strictEqual(coreSelect.custom_id, 'cfg_toggle_select_core');
+  assert.ok(coreSelect.options.some(o => o.value === 'toggle_status_screenshot'));
+  assert.ok(coreSelect.options.some(o => o.value === 'toggle_ai_summary'));
+  assert.ok(coreSelect.options.some(o => o.value === 'toggle_storm_workflow'));
+  assert.ok(coreSelect.options.some(o => o.value === 'toggle_analytics_logging'));
+
+  const noticesSelect = payload.components[2].components[0];
+  assert.strictEqual(noticesSelect.custom_id, 'cfg_toggle_select_notices');
+  assert.ok(noticesSelect.options.some(o => o.value === 'toggle_bus_alerts'));
+  assert.ok(noticesSelect.options.some(o => o.value === 'toggle_voice_announcements'));
+});
+
+test('handlePanelComponent toggles screenshot and analytics buttons', async () => {
+  const env = createMockEnv();
+
+  // 1. Toggle screenshot button
+  const screenshotResp = await handlePanelComponent({
+    type: 3,
+    member: { user: { id: 'admin-1' }, roles: ['staff-role'] },
+    data: { custom_id: 'panel_toggle_status_screenshot' }
+  }, env, { waitUntil: () => {} }, 'guild-1');
+  assert.strictEqual(screenshotResp.status, 200);
+
+  // 2. Toggle analytics logging
+  const analyticsResp = await handlePanelComponent({
+    type: 3,
+    member: { user: { id: 'admin-1' }, roles: ['staff-role'] },
+    data: { custom_id: 'panel_toggle_analytics_logging' }
+  }, env, { waitUntil: () => {} }, 'guild-1');
+  assert.strictEqual(analyticsResp.status, 200);
+});
+

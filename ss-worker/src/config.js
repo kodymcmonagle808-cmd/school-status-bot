@@ -90,6 +90,10 @@ export function getEffectiveConfig(stored) {
   if (typeof next.toggle_email_alerts !== 'boolean') next.toggle_email_alerts = true;
   if (typeof next.toggle_session_gate !== 'boolean') next.toggle_session_gate = true;
   if (typeof next.toggle_voice_announcements !== 'boolean') next.toggle_voice_announcements = false;
+  if (typeof next.toggle_status_screenshot !== 'boolean') next.toggle_status_screenshot = true;
+  if (typeof next.toggle_ai_summary !== 'boolean') next.toggle_ai_summary = true;
+  if (typeof next.toggle_storm_workflow !== 'boolean') next.toggle_storm_workflow = true;
+  if (typeof next.toggle_analytics_logging !== 'boolean') next.toggle_analytics_logging = true;
   if (!next.district_channels || typeof next.district_channels !== 'object') next.district_channels = {};
   if (!next.primary_district) next.primary_district = 'hcpss';
   return next;
@@ -129,6 +133,7 @@ export const ALL_COMMANDS_META = [
   { name: 'searchemails', label: '/searchemails', category: 'general', defaultTier: 'everyone', description: 'Search archived school emails' },
   { name: 'terms', label: '/terms', category: 'general', defaultTier: 'everyone', description: 'Terms and Conditions' },
   { name: 'privacy', label: '/privacy', category: 'general', defaultTier: 'everyone', description: 'Privacy Policy' },
+  { name: 'screenshot', label: '/screenshot', category: 'general', defaultTier: 'everyone', description: 'Capture live screenshot of official HCPSS school status page' },
   { name: 'widget', label: '/widget', category: 'general', defaultTier: 'everyone', description: 'Setup live school status widget on iPhone / iOS' },
   { name: 'help', label: '/help', category: 'general', defaultTier: 'everyone', description: 'Command list & help' },
 

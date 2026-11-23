@@ -97,8 +97,8 @@ export const PANEL_NAV_TABS = [
   { label: 'Settings', value: 'config_general', emoji: '⚙️', description: 'Channels, staff role, and embed footer' },
   { label: 'Music Settings', value: 'config_music', emoji: '🎵', description: 'Configure music channel and controls' },
   { label: 'Check Schedule', value: 'config_schedule', emoji: '🗓️', description: 'Daily status check times' },
-  { label: 'Feature Toggles', value: 'config_toggles', emoji: '🔔', description: 'Turn bot features on or off' },
-  { label: 'Status Theme', value: 'config_status', emoji: '🎨', description: 'Embed colors and ping roles per status' },
+  { label: 'Feature Toggles', value: 'config_toggles', emoji: '🔔', description: 'Turn alerts, automations, and Cloudflare features on or off' },
+  { label: 'Status Theme & Screenshot', value: 'config_status', emoji: '🎨', description: 'Embed colors, ping roles, and official website screenshot' },
   { label: 'Calendar', value: 'config_calendar', emoji: '📅', description: 'Upcoming closures and custom events' },
   { label: 'Stats & Override', value: 'config_stats', emoji: '📈', description: 'Check statistics and status overrides' },
   { label: 'Auto-Reply', value: 'config_autoreply', emoji: '💬', description: 'Keyword-triggered auto replies' },
@@ -106,9 +106,9 @@ export const PANEL_NAV_TABS = [
   { label: 'NWS Ping Roles', value: 'config_nws_pings', emoji: '⚠️', description: 'Roles pinged for winter/heat/default weather alerts' },
   { label: 'Join Logs', value: 'config_joinlogs', emoji: '👋', description: 'Join channel, ping role, give and remove roles' },
   { label: 'Announcement Requests', value: 'config_announcementrequests', emoji: '📝', description: 'Set the channel where announcement requests are posted' },
-  { label: 'School Emails', value: 'config_emails', emoji: '📧', description: 'Recent HCPSS announcement emails and channel settings' },
-  { label: 'Analytics & Trends', value: 'config_analytics', emoji: '📊', description: 'School closure trends, email volume, and database analytics' },
-  { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, voice tests, and system tests' }
+  { label: 'School Emails & AI', value: 'config_emails', emoji: '📧', description: 'Recent HCPSS announcement emails, AI summaries, and channel settings' },
+  { label: 'Analytics & Telemetry', value: 'config_analytics', emoji: '📊', description: 'School closure trends, email volume, and telemetry engine' },
+  { label: 'Debug', value: 'config_debug', emoji: '🛠️', description: 'Run bot diagnostics, screenshot test, voice tests, and canary tests' }
 ];
 
 export const MAIN_GUILD_KEY = 'main_guild_id';
@@ -119,19 +119,19 @@ export const TOGGLEABLE_PANEL_TABS = [
   { value: 'config_joinlogs', label: 'Join Logs & Roles', emoji: '👋', description: 'Join channel, ping role, auto-roles' },
   { value: 'config_announcementrequests', label: 'Announcement Requests', emoji: '📝', description: 'Student announcement approval queue' },
   { value: 'config_autoreply', label: 'Keyword Auto-Reply', emoji: '💬', description: 'Triggered automated responses' },
-  { value: 'config_emails', label: 'School Emails', emoji: '📧', description: 'HCPSS announcement emails & channel' },
-  { value: 'config_analytics', label: 'Analytics & Trends', emoji: '📊', description: 'School closure charts & database trends' },
+  { value: 'config_emails', label: 'School Emails & AI', emoji: '📧', description: 'HCPSS announcement emails, AI summaries & channel' },
+  { value: 'config_analytics', label: 'Analytics & Telemetry', emoji: '📊', description: 'School closure charts, database & telemetry engine' },
   { value: 'config_calendar', label: 'Calendar Events', emoji: '📅', description: 'Closures and custom school events' },
   { value: 'config_nws_pings', label: 'NWS Ping Roles', emoji: '⚠️', description: 'Per-hazard weather alert ping routing' },
-  { value: 'config_status', label: 'Status Theme & Pings', emoji: '🎨', description: 'Custom embed colors and pings per status' },
+  { value: 'config_status', label: 'Status Theme & Screenshots', emoji: '🎨', description: 'Custom embed colors, pings & screenshots' },
   { value: 'config_schedule', label: 'Check Schedule', emoji: '🗓️', description: 'Daily check times & recurring slots' },
   { value: 'config_stats', label: 'Stats & Override', emoji: '📈', description: 'Status overrides and scrape statistics' },
   { value: 'config_manual_status', label: 'Manual School Status', emoji: '🏫', description: 'Set manual operations and custom notes' },
-  { value: 'config_debug', label: 'Debug & Diagnostics', emoji: '🛠️', description: 'Staff test suite and diagnostics' },
+  { value: 'config_debug', label: 'Debug & Diagnostics', emoji: '🛠️', description: 'Staff test suite, screenshots and diagnostics' },
   { value: 'dashboard_logs', label: 'Recent Logs', emoji: '📋', description: 'Recent activity logs tab' },
   { value: 'dashboard_bot_status', label: 'Bot Health Bars', emoji: '📡', description: 'Latency, uptime, and health bars' },
   { value: 'config_commands', label: 'Command Permissions List', emoji: '📜', description: 'List of slash commands and permissions' },
-  { value: 'config_toggles', label: 'Feature Toggles Tab', emoji: '🔔', description: 'Turn alerts and automations on/off' },
+  { value: 'config_toggles', label: 'Feature Toggles Tab', emoji: '🔔', description: 'Turn alerts, automations, and Cloudflare features on/off' },
   { value: 'config_general', label: 'General Settings', emoji: '⚙️', description: 'Alert channels and authorized staff roles' }
 ];
 
@@ -237,6 +237,7 @@ function actionSelectRow(options, placeholder = '⚡ Actions...', disabled = fal
 }
 
 export const STAFF_DEBUG_OPTIONS = [
+  { label: 'Capture Website Screenshot', value: 'panel_btn_debug_screenshot', description: 'Take live screenshot of status.hcpss.org with Browser Rendering', emoji: { name: '📸' } },
   { label: 'Test Status Voice Announcement', value: 'panel_btn_debug_test_voice', description: 'Speak HCPSS status 3x in active VCs (no beeps)', emoji: { name: '🎙️' } },
   { label: 'Test Emergency Voice Alert', value: 'panel_btn_debug_test_weather_voice', description: 'Speak NWS Tornado Warning with EAS emergency beeps 3x', emoji: { name: '🌪️' } },
   { label: 'Run Health Canary', value: 'panel_btn_debug_canary', description: 'Test live response of HCPSS, NWS, and KV feeds', emoji: { name: '⚡' } },
@@ -1301,6 +1302,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
     const sessionGate = config.toggle_session_gate !== false;
     const voiceAnnounce = config.toggle_voice_announcements === true;
     const abDay = config.toggle_ab_day !== false;
+    const statusScreenshot = config.toggle_status_screenshot !== false;
+    const aiSummary = config.toggle_ai_summary !== false;
+    const stormWorkflow = config.toggle_storm_workflow !== false;
+    const analyticsLogging = config.toggle_analytics_logging !== false;
     const primaryDistrict = config.primary_district || 'hcpss';
     const primaryChoice = PRIMARY_DISTRICT_CHOICES.find(c => c.id === primaryDistrict) || PRIMARY_DISTRICT_CHOICES[0];
 
@@ -1308,36 +1313,70 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       title: `🔔 ${panelPrefix} — Feature Toggles`,
       color: 0x3498DB,
       description: `### 🚨 Feature Toggles\n` +
-                   `Select which features are **enabled** from the dropdown. Deselected options are automatically **disabled**.\n\n` +
+                   `Select which features are **enabled** from the dropdowns below. Deselected options are automatically **disabled**.\n\n` +
+                   `### ⚡ Cloudflare & Core Features\n` +
+                   `• ${statusScreenshot ? '🟢' : '🔴'} **Official Screenshots** — live Browser Rendering button on status embeds\n` +
+                   `• ${aiSummary ? '🟢' : '🔴'} **AI Email Summaries** — Workers AI bullet points on school announcement emails\n` +
+                   `• ${stormWorkflow ? '🟢' : '🔴'} **Storm Watchdog Workflow** — durable background monitoring during winter storms\n` +
+                   `• ${analyticsLogging ? '🟢' : '🔴'} **Analytics Engine Telemetry** — record real-time latency and status events\n` +
                    `• ${pings ? '🟢' : '🔴'} **Role Mentions** — ping roles on status changes\n` +
                    `• ${errorAlerts ? '🟢' : '🔴'} **Scraper Failure Alerts** — warn staff on consecutive scraper errors\n` +
                    `• ${weather ? '🟢' : '🔴'} **Weather Alerts** — show active NWS alerts for Howard County on status embeds\n` +
                    `• ${abDay ? '🟢' : '🔴'} **A/B Day** — show the A/B day schedule for high schools on status embeds\n` +
-                   `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts, posting only on changes\n` +
-                   `• ${decisionWatch ? '🟢' : '🔴'} **Decision Watch** — live board of every district's morning announcements on storm mornings\n` +
-                   `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status on embeds during storm alerts\n` +
+                   `• ${stormMode ? '🟢' : '🔴'} **Storm Mode** — extra checks every 15 min (4:30–7:30 AM ET) during storm alerts\n` +
+                   `• ${decisionWatch ? '🟢' : '🔴'} **Decision Watch** — live morning announcement board on storm mornings\n` +
+                   `• ${districts ? '🟢' : '🔴'} **Nearby Districts** — show neighboring districts' status during storm alerts\n` +
                    `• ${outlook ? '🟢' : '🔴'} **Closure Outlook** — estimate closing/delay likelihood during storm alerts\n` +
-                   `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with the status page\n` +
+                   `• ${crosscheck ? '🟢' : '🔴'} **Source Cross-Check** — warn when HCPSS News disagrees with status page\n` +
                    `• ${digest ? '🟢' : '🔴'} **Morning Digest** — daily 6:00 AM ET summary post (status, calendar, weather)\n` +
-                   `• ${headsUp ? '🟢' : '🔴'} **Night-Before Heads-Up** — 7:00 PM ET alert when the Closure Outlook hits High/Very High\n` +
+                   `• ${headsUp ? '🟢' : '🔴'} **Night-Before Heads-Up** — 7:00 PM ET alert when Outlook hits High/Very High\n\n` +
+                   `### 📢 Feeds, Notices & Emergency Features\n` +
                    `• ${busAlerts ? '🟢' : '🔴'} **Bus & Transportation Alerts** — post HCPSS News transportation service alerts\n` +
-                   `• ${activityAlerts ? '🟢' : '🔴'} **Activities & Athletics Alerts** — post after-school/athletics cancellations (no pings)\n` +
+                   `• ${activityAlerts ? '🟢' : '🔴'} **Activities & Athletics Alerts** — post after-school cancellations (no pings)\n` +
                    `• ${schoolNotices ? '🟢' : '🔴'} **School-Specific Notices** — post single-school announcements (no pings)\n` +
                    `• ${outages ? '🟢' : '🔴'} **Power Outages** — show BGE county outage counts during storm alerts\n` +
                    `• ${roads ? '🟢' : '🔴'} **Road Conditions** — show MD CHART road incidents during storm alerts\n` +
                    `• ${yearRecap ? '🟢' : '🔴'} **Year Recap** — end-of-school-year summary post each June\n` +
-                   `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI hits Code Orange or worse\n` +
-                   `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat watch, warning, or advisory is issued\n` +
-                   `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — a big yellow take-shelter post for the alerts NWS pushes to phones (tornado warning, destructive winds), any hour\n` +
-                   `• ${emergencyPing ? '🟢' : '🔴'} **Emergency @everyone Ping** — let those emergency alerts ping @everyone (needs the bot to have *Mention Everyone*)\n` +
+                   `• ${aqiAlerts ? '🟢' : '🔴'} **Air Quality Alerts** — post when the AQI reaches Code Orange or worse\n` +
+                   `• ${nwsAlerts ? '🟢' : '🔴'} **NWS Issuance Notices** — post when a winter/heat advisory or warning is issued\n` +
+                   `• ${emergencyAlerts ? '🟢' : '🔴'} **Emergency Alerts** — big yellow take-shelter post for EAS/NWS alerts\n` +
+                   `• ${emergencyPing ? '🟢' : '🔴'} **Emergency @everyone Ping** — let emergency alerts ping @everyone\n` +
                    `• ${sessionGate ? '🟢' : '🔴'} **Skip Non-School Days** — hold storm alerts on weekends, breaks, and holidays\n` +
-                   `• ${voiceAnnounce ? '🟢' : '🔴'} **Voice Announcements** — join active voice channels and announce status & weather updates 3x\n\n` +
+                   `• ${voiceAnnounce ? '🟢' : '🔴'} **Voice Announcements** — join active voice channels and announce status 3x\n\n` +
                    `🏫 **Primary District**: ${primaryChoice.name} — the district this server's status posts follow\n\n` +
-                   `*Select the toggles you want **ON** in the dropdown and submit. Unselected = OFF.*`,
+                   `*Select the toggles you want **ON** in the dropdowns below and submit. Unselected = OFF.*`,
       timestamp: new Date().toISOString()
     };
 
-    const toggleOptions = [
+    const coreToggleOptions = [
+      {
+        label: 'Website Screenshot Button',
+        value: 'toggle_status_screenshot',
+        description: 'Show the 📸 Official Screenshot button on status embeds',
+        emoji: { name: '📸' },
+        default: statusScreenshot
+      },
+      {
+        label: 'AI Email Summaries',
+        value: 'toggle_ai_summary',
+        description: 'Generate 2-3 bullet point AI summaries on school emails',
+        emoji: { name: '🤖' },
+        default: aiSummary
+      },
+      {
+        label: 'Storm Watchdog Workflow',
+        value: 'toggle_storm_workflow',
+        description: 'Durable background monitoring during winter storm alerts',
+        emoji: { name: '🔄' },
+        default: stormWorkflow
+      },
+      {
+        label: 'Analytics Engine Telemetry',
+        value: 'toggle_analytics_logging',
+        description: 'Record real-time telemetry to Cloudflare Analytics Engine',
+        emoji: { name: '📈' },
+        default: analyticsLogging
+      },
       {
         label: 'Role Mentions',
         value: 'toggle_pings',
@@ -1414,7 +1453,10 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         description: '7:00 PM ET alert when a closing/delay looks likely tomorrow',
         emoji: { name: '🌙' },
         default: headsUp
-      },
+      }
+    ];
+
+    const noticesToggleOptions = [
       {
         label: 'Bus & Transportation Alerts',
         value: 'toggle_bus_alerts',
@@ -1507,11 +1549,22 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         type: 1,
         components: [{
           type: 3,
-          custom_id: 'cfg_toggle_select',
-          placeholder: 'Select which features are ON...',
-          options: toggleOptions,
+          custom_id: 'cfg_toggle_select_core',
+          placeholder: '⚡ Cloudflare & Core Alert Features (select to toggle)...',
+          options: coreToggleOptions,
           min_values: 0,
-          max_values: toggleOptions.length
+          max_values: coreToggleOptions.length
+        }]
+      },
+      {
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: 'cfg_toggle_select_notices',
+          placeholder: '📢 Feeds, Notices & Emergency Features (select to toggle)...',
+          options: noticesToggleOptions,
+          min_values: 0,
+          max_values: noticesToggleOptions.length
         }]
       },
       {
@@ -1541,6 +1594,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
   if (page === 'config_status') {
     const editingKey = config.editing_status_key || 'normal_operations';
     const editingLabel = ALL_STATUS_LABELS[editingKey] || 'Normal Operations';
+    const toggleScreenshot = config.toggle_status_screenshot !== false;
 
     const statusPings = Object.entries(ALL_STATUS_LABELS).map(([key, label]) => {
       const roleId = config.status_ping_roles && config.status_ping_roles[key];
@@ -1560,6 +1614,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       description: `### 🔔 Roles & Embed Themes\n` +
                    `Select a status from the dropdown to edit its **mention role** and **embed color**.\n\n` +
                    `**Current Mapping:**\n${statusPings}\n\n` +
+                   `• **Website Screenshot Button**: ${toggleScreenshot ? '🟢 Enabled' : '🔴 Disabled'} (live headless Chrome page capture)\n\n` +
                    `👉 *Currently editing: **${editingLabel}***`,
       timestamp: new Date().toISOString()
     };
@@ -1592,7 +1647,13 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
         }]
       },
       actionSelectRow([
-        { label: `Set Color for ${editingLabel}`, value: 'panel_btn_set_color', description: 'Enter a HEX embed color for this status', emoji: { name: '🎨' } }
+        { label: `Set Color for ${editingLabel}`, value: 'panel_btn_set_color', description: 'Enter a HEX embed color for this status', emoji: { name: '🎨' } },
+        {
+          label: toggleScreenshot ? 'Disable Screenshot Button' : 'Enable Screenshot Button',
+          value: 'panel_toggle_status_screenshot',
+          description: toggleScreenshot ? 'Hide the 📸 Official Screenshot button on status posts' : 'Show the 📸 Official Screenshot button on status posts',
+          emoji: { name: '📸' }
+        }
       ])
     ];
 
@@ -1856,6 +1917,7 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       } catch {}
     }
 
+    const toggleAnalytics = config.toggle_analytics_logging !== false;
     const closureCount = (incidentStats.byStatus?.schools_closed || 0) + (incidentStats.byStatus?.schools_and_offices_closed || 0);
     const delayCount = incidentStats.byStatus?.schools_open_2_hours_late || 0;
     const earlyCount = incidentStats.byStatus?.schools_close_3_hours_early || 0;
@@ -1872,7 +1934,11 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `• **Total Archived Announcements:** ${emailStats.total}\n` +
                    `• **Past 7 Days:** ${emailStats.past7Days} email(s)\n` +
                    `• **Past 30 Days:** ${emailStats.past30Days} email(s)\n\n` +
-                   `### ⚡ Cloudflare Free Tier Architecture\n` +
+                   `### ⚡ Cloudflare Architecture & Telemetry\n` +
+                   `• **Analytics Engine:** 10M datapoints/month · dataset \`school_status_analytics\` (${toggleAnalytics ? '🟢 Active' : '🔴 Paused'})\n` +
+                   `• **Browser Rendering:** Headless Chrome screenshot captures with R2 cache\n` +
+                   `• **Workers AI & Gateway:** 10,000 neurons/day · Llama 3.1 & BGE Small embeddings\n` +
+                   `• **Storm Workflow:** Durable state machine execution during storm warnings\n` +
                    `• **Database (D1 SQLite):** 100,000 writes/day · 5M reads/day · 5 GB\n` +
                    `• **Vector Search (Vectorize):** 30,000 queries/month · 384d semantic search\n` +
                    `• **Message Queue (Queues):** 1,000,000 ops/month · decoupled alert delivery\n` +
@@ -1888,6 +1954,12 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
           value: 'panel_to_config_analytics',
           description: 'Re-query latest incident and email metrics',
           emoji: { name: '🔄' }
+        },
+        {
+          label: toggleAnalytics ? 'Pause Analytics Engine Logging' : 'Resume Analytics Engine Logging',
+          value: 'panel_toggle_analytics_logging',
+          description: toggleAnalytics ? 'Temporarily pause sending telemetry datapoints' : 'Enable sending telemetry datapoints to Analytics Engine',
+          emoji: { name: toggleAnalytics ? '⏸️' : '▶️' }
         }
       ])
     ];
@@ -2697,6 +2769,37 @@ export async function applyConfigUpdate(body, env) {
   } else if (customId === 'cfg_schedremove_select' && Array.isArray(values) && values[0]) {
     const cur = Array.isArray(next.check_schedule) ? next.check_schedule : [...DEFAULT_CHECK_SCHEDULE];
     next.check_schedule = cur.filter(t => t !== values[0]);
+  } else if (customId === 'cfg_toggle_select_core') {
+    const selected = Array.isArray(values) ? values : [];
+    next.toggle_status_screenshot = selected.includes('toggle_status_screenshot');
+    next.toggle_ai_summary = selected.includes('toggle_ai_summary');
+    next.toggle_storm_workflow = selected.includes('toggle_storm_workflow');
+    next.toggle_analytics_logging = selected.includes('toggle_analytics_logging');
+    next.toggle_pings = selected.includes('toggle_pings');
+    next.toggle_error_alerts = selected.includes('toggle_error_alerts');
+    next.toggle_weather = selected.includes('toggle_weather');
+    next.toggle_ab_day = selected.includes('toggle_ab_day');
+    next.toggle_storm_mode = selected.includes('toggle_storm_mode');
+    next.toggle_decision_watch = selected.includes('toggle_decision_watch');
+    next.toggle_districts = selected.includes('toggle_districts');
+    next.toggle_outlook = selected.includes('toggle_outlook');
+    next.toggle_crosscheck = selected.includes('toggle_crosscheck');
+    next.toggle_digest = selected.includes('toggle_digest');
+    next.toggle_heads_up = selected.includes('toggle_heads_up');
+  } else if (customId === 'cfg_toggle_select_notices') {
+    const selected = Array.isArray(values) ? values : [];
+    next.toggle_bus_alerts = selected.includes('toggle_bus_alerts');
+    next.toggle_activity_alerts = selected.includes('toggle_activity_alerts');
+    next.toggle_school_notices = selected.includes('toggle_school_notices');
+    next.toggle_outages = selected.includes('toggle_outages');
+    next.toggle_roads = selected.includes('toggle_roads');
+    next.toggle_year_recap = selected.includes('toggle_year_recap');
+    next.toggle_aqi_alerts = selected.includes('toggle_aqi_alerts');
+    next.toggle_nws_alerts = selected.includes('toggle_nws_alerts');
+    next.toggle_emergency_alerts = selected.includes('toggle_emergency_alerts');
+    next.toggle_emergency_ping = selected.includes('toggle_emergency_ping');
+    next.toggle_session_gate = selected.includes('toggle_session_gate');
+    next.toggle_voice_announcements = selected.includes('toggle_voice_announcements');
   } else if (customId === 'cfg_toggle_select') {
     // Multi-select: selected values = ON, absent values = OFF
     const selected = Array.isArray(values) ? values : [];
@@ -2723,6 +2826,10 @@ export async function applyConfigUpdate(body, env) {
     next.toggle_emergency_ping = selected.includes('toggle_emergency_ping');
     next.toggle_session_gate = selected.includes('toggle_session_gate');
     next.toggle_voice_announcements = selected.includes('toggle_voice_announcements');
+    if (selected.includes('toggle_status_screenshot')) next.toggle_status_screenshot = true;
+    if (selected.includes('toggle_ai_summary')) next.toggle_ai_summary = true;
+    if (selected.includes('toggle_storm_workflow')) next.toggle_storm_workflow = true;
+    if (selected.includes('toggle_analytics_logging')) next.toggle_analytics_logging = true;
   } else if (customId === 'cfg_primary_district' && Array.isArray(values) && values[0]) {
     if (PRIMARY_DISTRICT_CHOICES.some(c => c.id === values[0])) {
       next.primary_district = values[0];
