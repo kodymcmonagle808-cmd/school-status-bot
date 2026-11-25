@@ -1,7 +1,7 @@
 /* global ReadableStream */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recordAnalyticsEvent } from '../src/analytics.js';
+import { recordAnalyticsEvent, parseAnalyticsSqlResults, queryAnalyticsSummary, formatAnalyticsLines } from '../src/analytics.js';
 import { runWorkersAiWithGateway } from '../src/ai.js';
 import { generateEmbedding } from '../src/vectorize.js';
 import { extractEmailBodyFromRaw } from '../src/emailhook.js';
@@ -257,3 +257,73 @@ test('handlePanelComponent responds to owner tools (workflow, AI gateway, analyt
   assert.equal(actionData.type, 7);
   assert.match(actionData.data.content, /All Features Enabled/);
 });
+
+// --- Analytics Engine SQL Query Tests ---
+
+test('parseAnalyticsSqlResults aggregates events, weighted averages, and top commands', () => {
+  const summaryRows = [
+    { event: 'scrape', status: 'ok', count: 10, avg_ms: 100 },
+    { event: 'scrape', status: 'error', count: 2, avg_ms: 400 },
+    { event: 'screenshot', status: 'cached', count: 3, avg_ms: 5 },
+    { event: 'screenshot', status: 'fresh', count: 1, avg_ms: 1200 },
+    { event: 'interaction', status: 'slash', count: 8, avg_ms: 0 }
+  ];
+  const topRows = [
+    { detail: 'status', count: 5 },
+    { detail: 'screenshot', count: 3 }
+  ];
+
+  const parsed = parseAnalyticsSqlResults(summaryRows, topRows);
+  assert.equal(parsed.totalEvents24h, 24);
+  assert.equal(parsed.byEvent.scrape.total, 12);
+  assert.equal(parsed.byEvent.scrape.avgMs, 150);
+  assert.equal(parsed.byEvent.scrape.statuses.error, 2);
+  assert.equal(parsed.topCommands.length, 2);
+  assert.equal(parsed.topCommands[0].detail, 'status');
+
+  const formatted = formatAnalyticsLines({ configured: true, ...parsed });
+  assert.match(formatted, /24h Total Datapoints:\*\* \*\*24\*\*/);
+  assert.match(formatted, /75% cache hits/);
+  assert.match(formatted, /`status` \(5\)/);
+});
+
+test('queryAnalyticsSummary returns standby when CF creds missing and caches valid SQL results', async () => {
+  const standby = await queryAnalyticsSummary({});
+  assert.equal(standby.configured, false);
+  assert.match(formatAnalyticsLines(standby), /standby/);
+
+  const kvStore = new Map();
+  let fetchCount = 0;
+  const mockEnv = {
+    CF_API_TOKEN: 'tok',
+    CF_ACCOUNT_ID: 'acct',
+    STATUS_KV: {
+      get: async k => kvStore.get(k) || null,
+      put: async (k, v) => kvStore.set(k, v)
+    }
+  };
+  const mockFetch = async (_url, init) => {
+    fetchCount++;
+    const isSummary = String(init?.body || '').includes('GROUP BY event');
+    return {
+      ok: true,
+      json: async () => ({
+        data: isSummary
+          ? [{ event: 'scrape', status: 'ok', count: 4, avg_ms: 50 }]
+          : [{ detail: 'snowday', count: 2 }]
+      })
+    };
+  };
+
+  const first = await queryAnalyticsSummary(mockEnv, { fetch: mockFetch, now: 1000000 });
+  assert.equal(first.configured, true);
+  assert.equal(first.totalEvents24h, 4);
+  assert.equal(fetchCount, 2);
+  assert.ok(kvStore.has('analytics_sql_cache'));
+
+  // Cached hit should avoid calling fetch again
+  const second = await queryAnalyticsSummary(mockEnv, { fetch: mockFetch, now: 1000500 });
+  assert.equal(second.totalEvents24h, 4);
+  assert.equal(fetchCount, 2);
+});
+

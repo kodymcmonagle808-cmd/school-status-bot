@@ -54,6 +54,7 @@ import {
 } from './commands.js';
 import { handleScreenshotInteraction } from './screenshot.js';
 import { triggerStormWatchdogWorkflow } from './stormworkflow.js';
+import { queryAnalyticsSummary, formatAnalyticsLines } from './analytics.js';
 
 // Panel page navigation replies with a type-7 message update: an inline edit
 // of the panel message that is the interaction's direct response, so it always
@@ -1903,6 +1904,7 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
       return interactionResponse({ content: '🔒 Access denied.', flags: EPHEMERAL_FLAG });
     }
     const hasAnalytics = Boolean(env.ANALYTICS && typeof env.ANALYTICS.writeDataPoint === 'function');
+    const sqlStats = await queryAnalyticsSummary(env);
     return interactionResponse({
       embeds: [{
         title: '📈 Cloudflare Workers Analytics Engine',
@@ -1912,6 +1914,8 @@ export async function handlePanelComponent(body, env, ctx, guildId) {
           `• **Monthly Free Quota**: **10,000,000 datapoints**\n` +
           `• **Daily Query Quota**: **100,000 SQL queries/day**\n` +
           `• **KV Writes Saved**: 100% (Zero KV operations used for telemetry)\n\n` +
+          `### 📈 Live 24-Hour SQL Telemetry\n` +
+          `${formatAnalyticsLines(sqlStats)}\n\n` +
           `### 🔍 Tracked Event Categories\n` +
           `• \`scrape\` — Status checks, page fetch latencies, and outcome status keys\n` +
           `• \`interaction\` — Slash commands, button clicks, and modal submissions\n` +

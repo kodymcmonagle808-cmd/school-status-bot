@@ -37,6 +37,8 @@ import { maybeRunKvBackup, runKvBackup } from './backup.js';
 import { handleEmailHook } from './emailhook.js';
 import { initEnv } from './db.js';
 import { processAlertQueueBatch } from './queue.js';
+import { SCREENSHOT_CACHE_KEY, captureStatusPageScreenshot } from './screenshot.js';
+import { recordAnalyticsEvent } from './analytics.js';
 
 function getManualTriggerToken(request) {
   const auth = request.headers.get('authorization') || '';
@@ -159,6 +161,45 @@ export default {
             status: 500,
             headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
           });
+        }
+      }
+      if (url.pathname === '/screenshot.png') {
+        try {
+          if (env && env.BACKUPS_BUCKET) {
+            const obj = await env.BACKUPS_BUCKET.get(SCREENSHOT_CACHE_KEY);
+            if (obj) {
+              const ab = await obj.arrayBuffer();
+              recordAnalyticsEvent(env, { event: 'screenshot', status: 'web_r2', detail: '/screenshot.png' });
+              return new Response(ab, {
+                status: 200,
+                headers: {
+                  'Content-Type': 'image/png',
+                  'Cache-Control': 'public, max-age=300',
+                  'X-Screenshot-Cache': 'r2'
+                }
+              });
+            }
+          }
+          if (env && env.BROWSER) {
+            const shot = await captureStatusPageScreenshot(env);
+            recordAnalyticsEvent(env, {
+              event: 'screenshot',
+              status: shot.cached ? 'web_mem' : 'web_fresh',
+              detail: '/screenshot.png'
+            });
+            return new Response(shot.buffer, {
+              status: 200,
+              headers: {
+                'Content-Type': 'image/png',
+                'Cache-Control': 'public, max-age=300',
+                'X-Screenshot-Cache': shot.cached ? 'memory' : 'fresh'
+              }
+            });
+          }
+          return new Response('No screenshot cached yet.', { status: 404 });
+        } catch (e) {
+          console.error('/screenshot.png failed:', e);
+          return new Response('Screenshot unavailable.', { status: 500 });
         }
       }
       if (url.pathname === LOGS_PATH) {

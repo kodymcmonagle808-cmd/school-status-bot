@@ -918,5 +918,29 @@
       1,
       2
     ]
+  },
+  {
+    "name": "panel",
+    "description": "Open the interactive server Control Panel.",
+    "type": 1,
+    "integration_types": [
+      0
+    ],
+    "contexts": [
+      0
+    ],
+    "default_member_permissions": "8"
+  },
+  {
+    "name": "chscontrols",
+    "description": "Open the CHS interactive Control Panel.",
+    "type": 1,
+    "integration_types": [
+      0
+    ],
+    "contexts": [
+      0
+    ],
+    "default_member_permissions": "8"
   }
 ]

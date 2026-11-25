@@ -21,6 +21,7 @@ import { logAction } from './actionlog.js';
 import { discordFetch } from './discord.js';
 import { KV_FREE_LIMITS, getKvUsage } from './kvanalytics.js';
 import { getD1Stats, buildD1Section, getEmailStats } from './db.js';
+import { queryAnalyticsSummary, formatAnalyticsLines } from './analytics.js';
 
 // NWS alert categories for ping-role routing. Order matches the check
 // order in alertCategory(): specific hazards win over the generic storm
@@ -1917,10 +1918,18 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
       } catch {}
     }
 
+    const [sqlStats] = await Promise.all([
+      queryAnalyticsSummary(env).catch(() => null)
+    ]);
+
     const toggleAnalytics = config.toggle_analytics_logging !== false;
     const closureCount = (incidentStats.byStatus?.schools_closed || 0) + (incidentStats.byStatus?.schools_and_offices_closed || 0);
     const delayCount = incidentStats.byStatus?.schools_open_2_hours_late || 0;
     const earlyCount = incidentStats.byStatus?.schools_close_3_hours_early || 0;
+
+    const liveTelemetryBlock = sqlStats && sqlStats.configured
+      ? `\n\n### 📡 Live 24-Hour Telemetry\n${formatAnalyticsLines(sqlStats)}`
+      : '';
 
     const embed = {
       title: `📊 ${panelPrefix} — Analytics & Trends`,
@@ -1933,16 +1942,17 @@ export async function buildControlPanelPayload(env, guildId, configOverride = nu
                    `### 📧 Announcement Email Volume\n` +
                    `• **Total Archived Announcements:** ${emailStats.total}\n` +
                    `• **Past 7 Days:** ${emailStats.past7Days} email(s)\n` +
-                   `• **Past 30 Days:** ${emailStats.past30Days} email(s)\n\n` +
-                   `### ⚡ Cloudflare Architecture & Telemetry\n` +
+                   `• **Past 30 Days:** ${emailStats.past30Days} email(s)` +
+                   liveTelemetryBlock +
+                   `\n\n### ⚡ Cloudflare Architecture & Telemetry\n` +
                    `• **Analytics Engine:** 10M datapoints/month · dataset \`school_status_analytics\` (${toggleAnalytics ? '🟢 Active' : '🔴 Paused'})\n` +
                    `• **Browser Rendering:** Headless Chrome screenshot captures with R2 cache\n` +
                    `• **Workers AI & Gateway:** 10,000 neurons/day · Llama 3.1 & BGE Small embeddings\n` +
                    `• **Storm Workflow:** Durable state machine execution during storm warnings\n` +
                    `• **Database (D1 SQLite):** 100,000 writes/day · 5M reads/day · 5 GB\n` +
-                   `• **Vector Search (Vectorize):** 30,000 queries/month · 384d semantic search\n` +
-                   `• **Message Queue (Queues):** 1,000,000 ops/month · decoupled alert delivery\n` +
-                   `• **Object Storage (R2):** 10 GB free snapshots · $0 egress fees`,
+                   `• **Vector Search (Vectorize):** 30,000 queries/month · semantic search\n` +
+                   `• **Message Queue (Queues):** 1,000,000 ops/month · decoupled delivery\n` +
+                   `• **Object Storage (R2):** 10 GB snapshots · $0 egress fees`,
       timestamp: new Date().toISOString()
     };
 

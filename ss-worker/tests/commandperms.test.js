@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   ALL_COMMANDS_META,
@@ -421,3 +424,15 @@ test('applyConfigUpdate: cfg_staff_role saves array to staff_role_ids and first 
   assert.equal(saved.staff_role_id, 'role-alpha');
   assert.deepEqual(saved.staff_role_ids, ['role-alpha', 'role-beta']);
 });
+
+test('commands_schema.json includes every command in ALL_COMMANDS_META', () => {
+  const testDir = path.dirname(fileURLToPath(import.meta.url));
+  const schemaPath = path.join(testDir, '..', 'scripts', 'commands_schema.json');
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  const schemaNames = new Set(schema.map(c => c.name));
+
+  for (const meta of ALL_COMMANDS_META) {
+    assert.ok(schemaNames.has(meta.name), `Missing command /${meta.name} from commands_schema.json`);
+  }
+});
+
